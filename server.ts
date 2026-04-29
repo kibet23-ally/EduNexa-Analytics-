@@ -1,712 +1,557 @@
-import express, { Request, Response, NextFunction } from "express";
+import express from "express";
 import { createServer as createViteServer } from "vite";
+import compression from "compression";
 import path from "path";
-import cors from "cors";
-import jwt from "jsonwebtoken";
-import bcrypt from "bcryptjs";
-import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
+import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
 
-const SUPABASE_URL_RAW = process.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY_RAW = process.env.VITE_SUPABASE_ANON_KEY;
-
-// Clean up URL if it has /rest/v1/ suffix
-const SUPABASE_URL = SUPABASE_URL_RAW ? SUPABASE_URL_RAW.replace(/\/rest\/v1\/?$/, '').replace(/\/$/, '') : null;
-const SUPABASE_ANON_KEY = SUPABASE_ANON_KEY_RAW || null;
-
-// Only initialize if credentials exist to prevent crash
-const supabase = SUPABASE_URL && SUPABASE_ANON_KEY 
-  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-  : null;
-
-const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key";
-
-// Types
-interface AuthRequest extends Request {
-  user?: UserPayload;
-}
-
-interface UserPayload {
-  id: number;
-  email: string;
-  role: string;
-  name: string;
-  school_id: number;
-}
+// Initialize Supabase Admin with the Service Role Key for high-privilege tasks
+const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://zclwokyzsqzitqwmugtt.supabase.co';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseAdmin = supabaseServiceKey ? createClient(supabaseUrl, supabaseServiceKey) : null;
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(cors());
+  // Essential Middleware
+  app.use(compression());
   app.use(express.json());
 
-  // Auth Middleware
-  const authenticateToken = (req: AuthRequest, res: Response, next: NextFunction) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-    if (!token) return res.sendStatus(401);
+  // Performance Logger Middleware
+  app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+      const duration = Date.now() - start;
+      if (duration > 500) {
+        console.warn(`[PERF ALERT] SLOW REQUEST: ${req.method} ${req.path} took ${duration}ms`);
+      }
+    });
+    next();
+  });
 
-    jwt.verify(token, JWT_SECRET, (err, user) => {
-      if (err) return res.sendStatus(403);
-      req.user = user as UserPayload;
+  /**
+   * Middleware: Subscription Access Control
+   * 1. Fetches school data
+   * 2. Checks expiry
+   * 3. Blocks non-GET requests if expired
+   */
+  const checkSubscription = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    // Skip non-API and static routes
+    if (!req.path.startsWith('/api')) return next();
+    
+    // Always allow health checks
+    if (req.path === '/api/health') return next();
+
+    // Skip verification for login/auth routes to prevent loops
+    const authRoutes = ['/api/auth/teacher-login', '/api/admin/reset-password', '/api/admin/create-school-admin'];
+    if (authRoutes.includes(req.path)) return next();
+
+    try {
+      let schoolId = req.body.schoolId || req.body.school_id;
+      
+      // 1. Try to get schoolId from sessionToken (DB_SESSION_ style)
+      const sessionToken = req.body.sessionToken || req.headers['x-session-token'];
+      if (!schoolId && sessionToken && typeof sessionToken === 'string' && sessionToken.startsWith('DB_SESSION_')) {
+        const parts = sessionToken.split('_');
+        const tId = parts[2];
+        const { data: teacher } = await supabaseAdmin!.from('teachers').select('school_id').eq('id', tId).maybeSingle();
+        schoolId = teacher?.school_id;
+      }
+
+      // 2. Try to get schoolId from Auth Header (JWT style)
+      if (!schoolId && req.headers.authorization) {
+        const token = req.headers.authorization.replace('Bearer ', '');
+        const { data: { user } } = await supabaseAdmin!.auth.getUser(token);
+        if (user) {
+          schoolId = user.user_metadata?.school_id || user.app_metadata?.school_id;
+          if (!schoolId) {
+             const { data: profile } = await supabaseAdmin!.from('users').select('school_id').eq('id', user.id).maybeSingle();
+             schoolId = profile?.school_id;
+          }
+        }
+      }
+
+      if (!schoolId) {
+        // If we can't find a schoolId, we can't enforce subscription.
+        // For production, you might want to block or allow. We'll allow for now.
+        return next();
+      }
+
+      const { data: school, error } = await supabaseAdmin!
+        .from('schools')
+        .select('subscription_status, subscription_expiry')
+        .eq('id', schoolId)
+        .maybeSingle();
+
+      if (error || !school) {
+        console.warn(`[Subscription] School ${schoolId} not found or error occurred`);
+        return next();
+      }
+
+      const now = new Date();
+      const expiry = school.subscription_expiry ? new Date(school.subscription_expiry) : null;
+      
+      // LOGGING AS REQUESTED
+      console.log(`[Subscription Log]
+  Path: ${req.path}
+  Method: ${req.method}
+  School: ${schoolId}
+  Status: ${school.subscription_status}
+  Expiry Date: ${expiry ? expiry.toISOString() : 'N/A'}
+  Current Date: ${now.toISOString()}
+      `);
+
+      // Auto-update status to "expired" if date passed but still marked active
+      if (expiry && now > expiry && (school.subscription_status?.toLowerCase() === 'active' || school.subscription_status === 'Active')) {
+        console.log(`[Subscription] Auto-updating school ${schoolId} to expired`);
+        await supabaseAdmin!
+          .from('schools')
+          .update({ subscription_status: 'expired' })
+          .eq('id', schoolId);
+        school.subscription_status = 'expired';
+      }
+
+      const isExpired = (expiry && now > expiry) || school.subscription_status?.toLowerCase() === 'expired' || school.subscription_status === 'Expired';
+      
+      if (isExpired) {
+        // Block mutations (non-GET)
+        const isGetRequest = req.method === 'GET' || req.path.includes('/fetch');
+        const isMutation = !isGetRequest;
+        
+        if (isMutation) {
+          console.warn(`[Subscription BLOCKED] Request to ${req.path} for expired school ${schoolId}`);
+          return res.status(403).json({ 
+            error: "Subscription expired. Your account is in read-only mode. Please contact support or your school administrator.",
+            expired: true 
+          });
+        }
+      }
+
       next();
+    } catch (err) {
+      console.error("[Subscription Middleware Error]:", err);
+      next();
+    }
+  };
+
+  // Apply checkSubscription globally to /api
+  app.use('/api', checkSubscription);
+
+  // Health and debug routes
+  app.get("/api/health", (req, res) => {
+    res.json({ 
+      status: "EduNexa Analytics: Online",
+      timestamp: new Date().toISOString(),
+      admin_ready: !!supabaseAdmin
     });
-  };
+  });
 
-  const isSuperAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
-    if (req.user?.role !== 'SuperAdmin') return res.status(403).json({ error: "Super Admin access required" });
-    next();
-  };
+  // Admin Password Reset Endpoint (Bypasses Frontend CORS issues)
+  app.post("/api/admin/reset-password", async (req, res) => {
+    const { email, newPassword } = req.body;
 
-  const isAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
-    if (req.user?.role !== 'Admin' && req.user?.role !== 'SuperAdmin') return res.status(403).json({ error: "Admin access required" });
-    next();
-  };
+    if (!supabaseAdmin) {
+      return res.status(500).json({ error: "Supabase Service Key not configured on server" });
+    }
 
-  // Middleware to ensure Supabase is configured
-  app.use("/api", (req, res, next) => {
-    if (!supabase) {
-      return res.status(500).json({ 
-        error: "Supabase is not configured. Please add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your project secrets." 
+    if (!email || !newPassword) {
+      return res.status(400).json({ error: "Email and New Password are required" });
+    }
+
+    try {
+      console.log(`[Admin] Resetting password for: ${email}`);
+      const cleanEmail = email.toLowerCase().trim();
+      
+      // 1. Try finding User ID in 'users' table or 'teachers' table
+      const [{ data: userData }, { data: teacherData }] = await Promise.all([
+        supabaseAdmin.from('users').select('id').ilike('email', cleanEmail).maybeSingle(),
+        supabaseAdmin.from('teachers').select('id').ilike('email', cleanEmail).maybeSingle()
+      ]);
+
+      let targetId: string | null = userData?.id || teacherData?.id || null;
+
+      // 3. Fallback: search Auth list robustly
+      if (!targetId) {
+        console.log(`[Admin] User not found in DB tables, searching Auth list for ${cleanEmail}...`);
+        let foundAuthUser = null;
+        let page = 1;
+        while (page <= 5) {
+          const { data: { users }, error: listError } = await supabaseAdmin.auth.admin.listUsers({
+            page: page,
+            perPage: 1000
+          });
+          if (listError) throw listError;
+          if (!users || users.length === 0) break;
+          foundAuthUser = users.find(u => u.email?.toLowerCase() === cleanEmail);
+          if (foundAuthUser) {
+            targetId = foundAuthUser.id;
+            break;
+          }
+          if (users.length < 1000) break;
+          page++;
+        }
+      }
+
+      if (!targetId) {
+        return res.status(404).json({ error: `User not found. Ensure '${email}' is exactly how it appears in the User Registry.` });
+      }
+
+      const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(targetId, { password: newPassword });
+      if (updateError) throw updateError;
+      res.json({ success: true, message: "Password updated successfully" });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Create School Admin Endpoint
+  app.post("/api/admin/create-school-admin", async (req, res) => {
+    const { email, password, name, schoolId, role = 'Admin' } = req.body;
+
+    if (!supabaseAdmin) {
+      return res.status(500).json({ error: "Supabase Service Key not configured on server" });
+    }
+
+    if (!email || !password || !name || !schoolId) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    try {
+      console.log(`[Admin] Starting provision for: ${email}`);
+      const cleanEmail = email.toLowerCase().trim();
+
+      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+        email: cleanEmail,
+        password: password,
+        email_confirm: true,
+        user_metadata: { name, school_id: schoolId }
       });
-    }
-    next();
-  });
 
-  // Super Admin Platform Aggregations
-  app.get("/api/super/stats", authenticateToken, isSuperAdmin, async (req: AuthRequest, res: Response) => {
-    try {
-      const { data: schools } = await supabase!.from("schools").select("id, subscription_status");
-      const { count: studentCount } = await supabase!.from("students").select("id", { count: 'exact', head: true });
-      
-      const stats = {
-        totalSchools: schools?.length || 0,
-        activeSubscriptions: schools?.filter(s => s.subscription_status === 'Active').length || 0,
-        expiredSchools: schools?.filter(s => s.subscription_status === 'Expired').length || 0,
-        totalStudents: studentCount || 0
-      };
-      res.json(stats);
-    } catch {
-      res.status(500).json({ error: "Aggregation failed" });
-    }
-  });
-
-  app.get("/api/super/recent-schools", authenticateToken, isSuperAdmin, async (req: AuthRequest, res: Response) => {
-    const { data, error } = await supabase!.from("schools").select("*").order("created_at", { ascending: false }).limit(5);
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  });
-
-  app.get("/api/super/growth-data", authenticateToken, isSuperAdmin, async (req: AuthRequest, res: Response) => {
-    // Generate simple monthly counts for visual chart
-    const { data } = await supabase!.from("schools").select("created_at");
-    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const growth = months.map(m => ({ month: m, schools: 0 }));
-    
-    data?.forEach(s => {
-      const mIdx = new Date(s.created_at).getMonth();
-      growth[mIdx].schools += 1;
-    });
-    res.json(growth);
-  });
-
-  // Schools
-  app.get("/api/schools", authenticateToken, isAdmin, async (req: AuthRequest, res: Response) => {
-    const { data, error } = await supabase!.from("schools").select("*");
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  });
-  app.post("/api/schools", authenticateToken, isSuperAdmin, async (req: AuthRequest, res: Response) => {
-    const { name, slug, logo_url, admin_name, admin_email, admin_password } = req.body;
-    
-    try {
-      // 1. Create the school
-      const { data: school, error: schoolErr } = await supabase!.from("schools").insert([{ 
-        name, 
-        slug, 
-        logo_url,
-        subscription_status: 'Active',
-        subscription_tier: 'Basic'
-      }]).select().single();
-      
-      if (schoolErr) throw schoolErr;
-
-      // 2. Create the first Admin for this school
-      const hashedPassword = bcrypt.hashSync(admin_password, 10);
-      const { error: adminErr } = await supabase!.from("teachers").insert([{
-        name: admin_name,
-        email: admin_email,
-        password: hashedPassword,
-        role: 'Admin',
-        school_id: school.id
-      }]);
-
-      if (adminErr) throw adminErr;
-
-      res.json(school);
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : "Registration failed";
-      res.status(400).json({ error: errorMessage });
-    }
-  });
-
-  app.delete("/api/schools/:id", authenticateToken, isSuperAdmin, async (req: AuthRequest, res: Response) => {
-    const { id } = req.params;
-    
-    try {
-      // 1. Delete all dependent data for this school
-      // To be safe with foreign keys and potential missing columns in teacher_subjects, 
-      // we fetch IDs first for some deletions.
-      
-      const schoolId = parseInt(id);
-      if (isNaN(schoolId)) throw new Error("Invalid school ID");
-
-      // Marks
-      await supabase!.from("marks").delete().eq("school_id", schoolId);
-      
-      // Teacher Subjects (Assignments)
-      // Usually teacher_subjects links teacher_id, subject_id, grade_id.
-      // We fetch teacher IDs belonging to this school first.
-      const { data: teachers } = await supabase!.from("teachers").select("id").eq("school_id", schoolId);
-      const teacherIds = teachers?.map(t => t.id) || [];
-      
-      if (teacherIds.length > 0) {
-        await supabase!.from("teacher_subjects").delete().in("teacher_id", teacherIds);
+      if (authError) {
+        console.error(`[Admin] Auth creation failed for ${email}:`, authError.message);
+        throw authError;
       }
       
-      // Students
-      await supabase!.from("students").delete().eq("school_id", schoolId);
-      
-      // Exams
-      await supabase!.from("exams").delete().eq("school_id", schoolId);
-      
-      // Subjects
-      await supabase!.from("subjects").delete().eq("school_id", schoolId);
-      
-      // Grades
-      await supabase!.from("grades").delete().eq("school_id", schoolId);
-      
-      // Teachers
-      await supabase!.from("teachers").delete().eq("school_id", schoolId);
-      
-      // 2. Finally delete the school
-      const { error: finalErr } = await supabase!.from("schools").delete().eq("id", schoolId);
-      
-      if (finalErr) throw finalErr;
-      res.json({ message: "School and all associated data deleted successfully" });
-    } catch (err: unknown) {
-      console.error("CRITICAL: School Deletion Failure for ID:", id);
-      console.error(err);
-      const errorMessage = err instanceof Error ? err.message : "Deletion failed";
-      res.status(400).json({ error: errorMessage, details: err });
+      const userId = authData.user.id;
+      console.log(`[Admin] Auth user created: ${userId}. Linking to DB tables...`);
+
+      const [userRes, teacherRes] = await Promise.all([
+        supabaseAdmin.from('users').insert([{ id: userId, email: cleanEmail, name, role, school_id: schoolId }]),
+        supabaseAdmin.from('teachers').insert([{ email: cleanEmail, name, role, school_id: schoolId, status: 'Active' }])
+      ]);
+
+      if (userRes.error) console.error(`[Admin] 'users' table link failed:`, userRes.error.message);
+      if (teacherRes.error) console.error(`[Admin] 'teachers' table link failed:`, teacherRes.error.message);
+
+      console.log(`[Admin] Provision complete for ${email}`);
+      res.json({ success: true, userId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[Admin Error] User Creation:", message);
+      res.status(500).json({ error: message });
     }
   });
 
-  app.get("/api/schools/:id/stats", authenticateToken, isSuperAdmin, async (req: AuthRequest, res: Response) => {
-    const { id } = req.params;
-    try {
-      const { count: teachers } = await supabase!.from("teachers").select("id", { count: 'exact', head: true }).eq("school_id", id);
-      const { count: students } = await supabase!.from("students").select("id", { count: 'exact', head: true }).eq("school_id", id);
-      const { count: subjects } = await supabase!.from("subjects").select("id", { count: 'exact', head: true }).eq("school_id", id);
-      const { count: marks } = await supabase!.from("marks").select("id", { count: 'exact', head: true }).eq("school_id", id);
-
-      res.json({
-        teachers: teachers || 0,
-        students: students || 0,
-        subjects: subjects || 0,
-        marks: marks || 0
-      });
-    } catch {
-      res.status(400).json({ error: "Failed to fetch school stats" });
-    }
-  });
-
-  app.patch("/api/schools/:id", authenticateToken, isSuperAdmin, async (req: AuthRequest, res: Response) => {
-    const { id } = req.params;
-    const { name, logo_url, subscription_tier, subscription_status } = req.body;
-    
-    const { data, error } = await supabase!
-      .from("schools")
-      .update({ name, logo_url, subscription_tier, subscription_status })
-      .eq("id", id)
-      .select()
-      .single();
-      
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  });
-
-  app.get("/api/super/users", authenticateToken, isSuperAdmin, async (req: AuthRequest, res: Response) => {
-    const { data, error } = await supabase!
-      .from("teachers")
-      .select("id, name, email, role, school_id, schools(name)");
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  });
-
-  app.put("/api/super/profile", authenticateToken, isSuperAdmin, async (req: AuthRequest, res: Response) => {
-    const { name, email } = req.body;
-    const { data, error } = await supabase!
-      .from("teachers")
-      .update({ name, email })
-      .eq("id", req.user!.id)
-      .select().single();
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  });
-  app.put("/api/schools/:id", authenticateToken, isAdmin, async (req: AuthRequest, res: Response) => {
-    const { id } = req.params;
-    const { name, slug, logo_url } = req.body;
-    const { data, error } = await supabase!.from("schools").update({ name, slug, logo_url }).eq("id", id).select().single();
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  });
-
-  app.get("/api/debug/users", async (req, res) => {
-    const { data, error } = await supabase!.from("teachers").select("email");
-    res.json({ data, error });
-  });
-
-  // Supabase Health Check
-  app.get("/api/health/supabase", authenticateToken, async (req: AuthRequest, res: Response) => {
-    try {
-      const { error } = await supabase!.from("teachers").select("count").limit(1);
-      if (error) throw error;
-      res.json({ status: "connected", message: "Successfully connected to Supabase" });
-    } catch (err: unknown) {
-      console.error("Supabase Connection Failed:", err);
-      const errorMessage = err instanceof Error ? err.message : "Unknown error";
-      res.status(500).json({ 
-        status: "error", 
-        message: "Failed to connect to Supabase. Please check your Project URL and Anon API Key.",
-        details: errorMessage
-      });
-    }
-  });
-
-  // Auth Routes
-  app.post("/api/login", async (req: Request, res: Response) => {
+  // Teacher Login Endpoint (For teachers without Supabase Auth)
+  app.post("/api/auth/teacher-login", async (req, res) => {
     const { email, password } = req.body;
-    
-    // Check if the API key looks like a Stripe key
-    const anonKey = process.env.VITE_SUPABASE_ANON_KEY || "";
-    if (anonKey.startsWith("sb_publishable_")) {
-      return res.status(500).json({ 
-        error: "Configuration Error: Your Supabase API Key looks like a Stripe key. Please use your Supabase 'anon' key (starts with 'eyJ')." 
-      });
+
+    if (!supabaseAdmin) {
+      return res.status(500).json({ error: "Supabase Service Key not configured on server" });
     }
 
     try {
-      if (!supabase) {
-        return res.status(500).json({ error: "Supabase client not initialized. Check your Environment Variables." });
+      const cleanEmail = email.toLowerCase().trim();
+      console.log(`[Login] Teacher login attempt for: ${cleanEmail}`);
+
+      const { data: teacher, error } = await supabaseAdmin
+        .from('teachers')
+        .select('*')
+        .ilike('email', cleanEmail)
+        .eq('password', password)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      if (!teacher) {
+        return res.status(401).json({ error: "Invalid email or password" });
       }
 
-      const { data: user, error } = await supabase
-        .from("teachers")
-        .select("*, schools:school_id(name)")
-        .eq("email", email)
-        .single();
+      // Check if school is suspended
+      if (teacher.school_id) {
+        const { data: schoolData } = await supabaseAdmin
+          .from('schools')
+          .select('subscription_status')
+          .eq('id', teacher.school_id)
+          .maybeSingle();
+
+        const schoolStatus = (schoolData?.subscription_status || '').toLowerCase();
+        
+        if (schoolStatus === 'suspended') {
+          return res.status(403).json({ error: "Your school account is currently suspended. Please contact your administrator." });
+        }
+      }
+
+      console.log(`[Login] Successful teacher login: ${cleanEmail}`);
+      res.json({ 
+        success: true, 
+        user: {
+          id: `teacher-${teacher.id}`,
+          email: teacher.email,
+          name: teacher.name,
+          role: teacher.role || 'Teacher',
+          school_id: teacher.school_id
+        },
+        token: `DB_SESSION_${teacher.id}_${Buffer.from(teacher.email).toString('base64')}`
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[Login Error] Teacher Authentication:", message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Data Proxy for Table-Based Teachers/Admins
+  app.post("/api/proxy/fetch", async (req, res) => {
+    const { table, query, sessionToken } = req.body;
+
+    if (!supabaseAdmin) return res.status(500).json({ error: "Service Key Missing" });
+    
+    try {
+      let schoolId = null;
+
+      // 1. Try DB_SESSION_ (Legacy Teachers)
+      if (sessionToken && sessionToken.startsWith('DB_SESSION_')) {
+        const parts = sessionToken.split('_');
+        const tId = parts[2];
+        const { data: teacher } = await supabaseAdmin
+          .from('teachers')
+          .select('school_id')
+          .eq('id', tId)
+          .single();
+        schoolId = teacher?.school_id;
+      } 
+      
+      let isSuperAdmin = false;
+      // 2. Try Authorization Header (Modern Admins/Teachers)
+      if (!schoolId && req.headers.authorization) {
+        const token = req.headers.authorization.replace('Bearer ', '');
+        const { data: { user } } = await supabaseAdmin.auth.getUser(token);
+        if (user) {
+          const role = user.user_metadata?.role || user.app_metadata?.role;
+          if (role?.toLowerCase() === 'superadmin' || role?.toLowerCase() === 'super_admin') {
+            isSuperAdmin = true;
+          }
+
+          schoolId = user.user_metadata?.school_id || user.app_metadata?.school_id;
+          if (!schoolId) {
+            const { data: profile } = await supabaseAdmin.from('users').select('school_id, role').eq('id', user.id).maybeSingle();
+            schoolId = profile?.school_id;
+            if (profile?.role?.toLowerCase() === 'superadmin' || profile?.role?.toLowerCase() === 'super_admin') {
+              isSuperAdmin = true;
+            }
+          }
+        }
+      }
+
+      if (!schoolId && !isSuperAdmin) {
+        return res.status(401).json({ error: "Invalid or missing session token. Please re-login." });
+      }
+
+      let sbQuery = supabaseAdmin.from(table).select(query.select || '*', query.options || {});
+      
+      // Support Range Pagination
+      if (query.range) {
+        sbQuery = sbQuery.range(query.range.from, query.range.to);
+      }
+
+      // Support OrderBy
+      if (query.orderBy) {
+        sbQuery = sbQuery.order(query.orderBy.column, { 
+          ascending: query.orderBy.ascending !== false 
+        });
+      }
+
+      // Support Limit
+      if (query.limit) {
+        sbQuery = sbQuery.limit(query.limit);
+      }
+
+      // GLOBAL TABLES that don't have school_id
+      const globalTables = ['subscription_plans', 'orders'];
+      const isGlobalTable = globalTables.includes(table);
+
+      // Only apply school_id filter if NOT a super admin AND it's not a global table
+      if (!isSuperAdmin && schoolId && !isGlobalTable) {
+        if (table === 'schools') {
+          // Schools table uses 'id' instead of 'school_id'
+          sbQuery = sbQuery.eq('id', schoolId);
+        } else {
+          sbQuery = sbQuery.eq('school_id', schoolId);
+        }
+      }
+
+      if (query.filters) {
+        Object.entries(query.filters).forEach(([key, val]) => {
+          sbQuery = sbQuery.eq(key, val);
+        });
+      }
+
+      console.log(`[Proxy Fetch] Table: ${table}, School: ${schoolId}`);
+      const { data, count, error } = await sbQuery;
 
       if (error) {
-        console.error("Login Failed [Supabase Query Error]:", email, error);
-        if (error.code === 'PGRST116') {
-          return res.status(401).json({ error: "User not found." });
-        }
-        return res.status(401).json({ error: `Database Error: ${error.message}` });
+        console.error(`[Proxy Fetch Error] Table: ${table}:`, error);
+        return res.status(500).json({ error: error.message || "Database fetch error" });
       }
-
-      if (!user || !bcrypt.compareSync(password, user.password)) {
-        console.error("Login Failed [Password Mismatch]:", email);
-        return res.status(401).json({ error: "Incorrect password." });
-      }
-
-      const schoolName = (user as { schools?: { name: string } }).schools?.name || "EduNexa School";
-
-      const token = jwt.sign({ 
-        id: user.id, 
-        email: user.email, 
-        role: user.role, 
-        name: user.name,
-        school_id: user.school_id,
-        school_name: schoolName 
-      }, JWT_SECRET);
-      res.json({ token, user: { 
-        id: user.id, 
-        email: user.email, 
-        role: user.role, 
-        name: user.name, 
-        school_id: user.school_id,
-        school_name: schoolName 
-      } });
-    } catch (err: unknown) {
-      console.error("Login Exception:", err);
-      res.status(500).json({ error: "System Error: Could not reach the database. Please check your Supabase URL." });
+      res.json({ data, count });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[Proxy Fetch Error] Table: ${table}:`, message);
+      res.status(500).json({ error: message });
     }
   });
 
-  // Grades
-  app.get("/api/grades", authenticateToken, async (req: AuthRequest, res: Response) => {
-    const { data, error } = await supabase!.from("grades").select("*").eq("school_id", req.user!.school_id);
-    if (error) {
-      console.error("Supabase Error [GET /api/grades]:", error);
-      return res.status(400).json({ error: error.message });
-    }
-    res.json(data);
-  });
-  app.post("/api/grades", authenticateToken, isAdmin, async (req: AuthRequest, res: Response) => {
-    const { grade_name } = req.body;
-    const { data, error } = await supabase!.from("grades").insert([{ grade_name, school_id: req.user!.school_id }]).select().single();
-    if (error) {
-      console.error("Supabase Error [POST /api/grades]:", error);
-      return res.status(400).json({ error: error.message });
-    }
-    res.json(data);
-  });
-  app.delete("/api/grades/:id", authenticateToken, isAdmin, async (req: AuthRequest, res: Response) => {
-    const { id } = req.params;
-    try {
-      const { count, error: countErr } = await supabase!.from("students").select("*", { count: 'exact', head: true }).eq("grade_id", id).eq("school_id", req.user!.school_id);
-      if (countErr) throw countErr;
-      if (count && count > 0) {
-        return res.status(400).json({ error: "Cannot delete grade with existing students." });
-      }
-      const { error } = await supabase!.from("grades").delete().eq("id", id).eq("school_id", req.user!.school_id);
-      if (error) throw error;
-      res.json({ success: true });
-    } catch (err: unknown) {
-      console.error("Delete Grade Error:", err);
-      const errorMessage = err instanceof Error ? err.message : "Unknown error";
-      res.status(400).json({ error: errorMessage });
-    }
-  });
+  app.post("/api/proxy/write", async (req, res) => {
+    const { table, operation, payload, filters, onConflict, sessionToken } = req.body;
 
-  // Subjects
-  app.get("/api/subjects", authenticateToken, async (req: AuthRequest, res: Response) => {
-    const { data, error } = await supabase!.from("subjects").select("*").eq("school_id", req.user!.school_id);
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  });
-  app.post("/api/subjects", authenticateToken, isAdmin, async (req: AuthRequest, res: Response) => {
-    const { subject_name, subject_code } = req.body;
-    const { data, error } = await supabase!.from("subjects").insert([{ subject_name, subject_code, school_id: req.user!.school_id }]).select().single();
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  });
-  app.put("/api/subjects/:id", authenticateToken, isAdmin, async (req: AuthRequest, res: Response) => {
-    const { id } = req.params;
-    const { subject_name, subject_code } = req.body;
-    const { data, error } = await supabase!.from("subjects").update({ subject_name, subject_code }).eq("id", id).eq("school_id", req.user!.school_id).select().single();
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  });
-  app.delete("/api/subjects/:id", authenticateToken, isAdmin, async (req: AuthRequest, res: Response) => {
-    const { id } = req.params;
-    try {
-      const { count, error: countErr } = await supabase!.from("marks").select("*", { count: 'exact', head: true }).eq("subject_id", id).eq("school_id", req.user!.school_id);
-      if (countErr) throw countErr;
-      if (count && count > 0) {
-        return res.status(400).json({ error: "Cannot delete subject with existing marks. Delete the marks first." });
-      }
-      await supabase!.from("teacher_subjects").delete().eq("subject_id", id);
-      const { error } = await supabase!.from("subjects").delete().eq("id", id).eq("school_id", req.user!.school_id);
-      if (error) throw error;
-      res.json({ success: true });
-    } catch (err: unknown) {
-      console.error("Delete Subject Error:", err);
-      const errorMessage = err instanceof Error ? err.message : "Unknown error";
-      res.status(400).json({ error: errorMessage });
-    }
-  });
-
-  // Marks Bulk Upload
-  app.post("/api/marks/bulk", authenticateToken, async (req: AuthRequest, res: Response) => {
-    const { exam_id, subject_id, marks } = req.body;
-    if (!exam_id || !subject_id || !marks || !Array.isArray(marks)) {
-      return res.status(400).json({ error: "Invalid data. exam_id, subject_id, and marks array are required." });
-    }
+    if (!supabaseAdmin) return res.status(500).json({ error: "Service Key Missing" });
 
     try {
-      const inserts = marks.map((m: { student_id: string; score: string }) => ({
-        student_id: parseInt(m.student_id),
-        subject_id: parseInt(subject_id as string),
-        exam_id: parseInt(exam_id as string),
-        score: parseFloat(m.score),
-        school_id: req.user!.school_id
-      }));
+      let schoolId = null;
 
-      const { error } = await supabase!.from("marks").upsert(inserts, {
-        onConflict: 'student_id,subject_id,exam_id'
-      });
-
-      if (error) throw error;
-      res.json({ success: true, count: inserts.length });
-    } catch (err: unknown) {
-      console.error("Bulk Marks Error:", err);
-      res.status(400).json({ error: err instanceof Error ? err.message : "Unknown error" });
-    }
-  });
-
-  app.get("/api/students", authenticateToken, async (req: AuthRequest, res: Response) => {
-    const { data, error } = await supabase!
-      .from("students")
-      .select(`
-        *,
-        grades (grade_name, school_id)
-      `)
-      .eq("school_id", req.user!.school_id);
-    if (error) return res.status(400).json({ error: error.message });
-    const formatted = data.map(s => ({
-      ...s,
-      grade_name: s.grades?.grade_name
-    }));
-    res.json(formatted);
-  });
-  app.post("/api/students", authenticateToken, isAdmin, async (req: AuthRequest, res: Response) => {
-    const { name, admission_number, gender, grade_id } = req.body;
-    const { data, error } = await supabase!.from("students").insert([{ name, admission_number, gender, grade_id, school_id: req.user!.school_id }]).select().single();
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  });
-  app.put("/api/students/:id", authenticateToken, isAdmin, async (req: AuthRequest, res: Response) => {
-    const { id } = req.params;
-    const { name, admission_number, gender, grade_id } = req.body;
-    const { data, error } = await supabase!.from("students").update({ name, admission_number, gender, grade_id }).eq("id", id).eq("school_id", req.user!.school_id).select().single();
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  });
-  app.delete("/api/students/:id", authenticateToken, isAdmin, async (req: AuthRequest, res: Response) => {
-    const { id } = req.params;
-    try {
-      const { count, error: countErr } = await supabase!.from("marks").select("*", { count: 'exact', head: true }).eq("student_id", id).eq("school_id", req.user!.school_id);
-      if (countErr) throw countErr;
-      if (count && count > 0) {
-        return res.status(400).json({ error: "Cannot delete student with existing marks." });
+      // 1. Try DB_SESSION_
+      if (sessionToken && sessionToken.startsWith('DB_SESSION_')) {
+        const parts = sessionToken.split('_');
+        const tId = parts[2];
+        const { data: teacher } = await supabaseAdmin
+          .from('teachers')
+          .select('school_id')
+          .eq('id', tId)
+          .single();
+        schoolId = teacher?.school_id;
       }
-      const { error } = await supabase!.from("students").delete().eq("id", id).eq("school_id", req.user!.school_id);
-      if (error) throw error;
-      res.json({ success: true });
-    } catch (err: unknown) {
-      console.error("Delete Student Error:", err);
-      const errorMessage = err instanceof Error ? err.message : "Unknown error";
-      res.status(400).json({ error: errorMessage });
-    }
-  });
-
-  // Exams
-  app.get("/api/exams", authenticateToken, async (req: AuthRequest, res: Response) => {
-    const { data, error } = await supabase!.from("exams").select("*").eq("school_id", req.user!.school_id);
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  });
-  app.post("/api/exams", authenticateToken, isAdmin, async (req: AuthRequest, res: Response) => {
-    const { exam_name, term, year } = req.body;
-    const { data, error } = await supabase!.from("exams").insert([{ exam_name, term, year, school_id: req.user!.school_id }]).select().single();
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  });
-  app.put("/api/exams/:id", authenticateToken, isAdmin, async (req: AuthRequest, res: Response) => {
-    const { id } = req.params;
-    const { exam_name, term, year } = req.body;
-    const { data, error } = await supabase!.from("exams").update({ exam_name, term, year }).eq("id", id).eq("school_id", req.user!.school_id).select().single();
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  });
-  app.delete("/api/exams/:id", authenticateToken, isAdmin, async (req: AuthRequest, res: Response) => {
-    const { id } = req.params;
-    try {
-      const { count, error: countErr } = await supabase!.from("marks").select("*", { count: 'exact', head: true }).eq("exam_id", id).eq("school_id", req.user!.school_id);
-      if (countErr) throw countErr;
-      if (count && count > 0) {
-        return res.status(400).json({ error: "Cannot delete exam with existing marks." });
-      }
-      const { error } = await supabase!.from("exams").delete().eq("id", id).eq("school_id", req.user!.school_id);
-      if (error) throw error;
-      res.json({ success: true });
-    } catch (err: unknown) {
-      console.error("Delete Exam Error:", err);
-      const errorMessage = err instanceof Error ? err.message : "Unknown error";
-      res.status(400).json({ error: errorMessage });
-    }
-  });
-
-  // Teachers
-  app.get("/api/teachers", authenticateToken, isAdmin, async (req: AuthRequest, res: Response) => {
-    const { data, error } = await supabase!.from("teachers").select("id, name, email, role, school_id").eq("school_id", req.user!.school_id);
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  });
-  app.post("/api/teachers", authenticateToken, isAdmin, async (req: AuthRequest, res: Response) => {
-    const { name, email, password, role } = req.body;
-    const hashedPassword = bcrypt.hashSync(password, 10);
-    const { data, error } = await supabase!.from("teachers").insert([{ 
-      name, 
-      email, 
-      password: hashedPassword, 
-      role, 
-      school_id: req.user!.school_id 
-    }]).select("id, name, email, role, school_id").single();
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  });
-  app.delete("/api/teachers/:id", authenticateToken, isAdmin, async (req: AuthRequest, res: Response) => {
-    const { id } = req.params;
-    const { count, error: countErr } = await supabase!.from("teacher_subjects").select("*", { count: 'exact', head: true }).eq("teacher_id", id);
-    if (countErr) return res.status(400).json({ error: countErr.message });
-    if (count && count > 0) {
-      return res.status(400).json({ error: "Cannot delete teacher with existing assignments. Remove assignments first." });
-    }
-    const { error } = await supabase!.from("teachers").delete().eq("id", id).eq("school_id", req.user!.school_id);
-    if (error) return res.status(400).json({ error: error.message });
-    res.json({ success: true });
-  });
-
-  // Teacher Assignments
-  app.get("/api/assignments", authenticateToken, async (req: AuthRequest, res: Response) => {
-    const { data, error } = await supabase!
-      .from("teacher_subjects")
-      .select(`
-        *,
-        teachers (name, school_id),
-        subjects (subject_name, school_id),
-        grades (grade_name, school_id)
-      `)
-      .eq("teachers.school_id", req.user!.school_id);
-    if (error) return res.status(400).json({ error: error.message });
-    const formatted = (data || []).filter(ts => ts.teachers?.school_id === req.user!.school_id).map(ts => ({
-      ...ts,
-      teacher_name: ts.teachers?.name,
-      subject_name: ts.subjects?.subject_name,
-      grade_name: ts.grades?.grade_name
-    }));
-    res.json(formatted);
-  });
-  app.post("/api/assignments", authenticateToken, isAdmin, async (req: AuthRequest, res: Response) => {
-    const { teacher_id, subject_id, grade_id } = req.body;
-    
-    // Security check: Verify all IDs belong to the same school
-    const [tCheck, sCheck, gCheck] = await Promise.all([
-      supabase!.from("teachers").select("id").eq("id", teacher_id).eq("school_id", req.user!.school_id).single(),
-      supabase!.from("subjects").select("id").eq("id", subject_id).eq("school_id", req.user!.school_id).single(),
-      supabase!.from("grades").select("id").eq("id", grade_id).eq("school_id", req.user!.school_id).single(),
-    ]);
-
-    if (tCheck.error || sCheck.error || gCheck.error) {
-      return res.status(403).json({ error: "Access denied or invalid resource mapping." });
-    }
-
-    const { error } = await supabase!.from("teacher_subjects").insert([{ 
-      teacher_id, 
-      subject_id, 
-      grade_id,
-      school_id: req.user!.school_id
-    }]);
-    if (error) return res.status(400).json({ error: error.message });
-    res.json({ success: true });
-  });
-  app.delete("/api/assignments", authenticateToken, isAdmin, async (req: AuthRequest, res: Response) => {
-    const { teacher_id, subject_id, grade_id } = req.body;
-    
-    // Security check
-    const { data: tCheck } = await supabase!.from("teachers").select("school_id").eq("id", teacher_id).single();
-    if (tCheck?.school_id !== req.user!.school_id) {
-       return res.status(403).json({ error: "Access denied." });
-    }
-
-    const { error } = await supabase!.from("teacher_subjects").delete().match({ teacher_id, subject_id, grade_id });
-    if (error) return res.status(400).json({ error: error.message });
-    res.json({ success: true });
-  });
-
-  // Marks
-  app.get("/api/marks", authenticateToken, async (req: AuthRequest, res: Response) => {
-    const { exam_id, grade_id, subject_id } = req.query;
-    let query = supabase!
-      .from("marks")
-      .select(`
-        *,
-        students (name, admission_number, grade_id, school_id),
-        subjects (subject_name, school_id)
-      `)
-      .eq("school_id", req.user!.school_id);
-    
-    if (exam_id) query = query.eq("exam_id", exam_id);
-    if (subject_id) query = query.eq("subject_id", subject_id);
-    
-    const { data, error } = await query;
-    if (error) return res.status(400).json({ error: error.message });
-
-    const formatted = (data || [])
-      .filter(m => !grade_id || m.students?.grade_id === Number(grade_id))
-      .map(m => ({
-        ...m,
-        student_name: m.students?.name,
-        admission_number: m.students?.admission_number,
-        subject_name: m.subjects?.subject_name
-      }));
-    res.json(formatted);
-  });
-
-  app.post("/api/marks", authenticateToken, async (req: AuthRequest, res: Response) => {
-    const { student_id, subject_id, exam_id, score } = req.body;
-    const user = req.user as UserPayload;
-
-    if (user.role === 'Teacher') {
-      const { data: assignment, error: assignErr } = await supabase!
-        .from("teacher_subjects")
-        .select("*, teachers(id, school_id)")
-        .eq("teacher_id", user.id)
-        .eq("subject_id", subject_id)
-        .single();
       
-      if (assignErr || !assignment || assignment.teachers?.school_id !== user.school_id) {
-        return res.status(403).json({ error: "You are not assigned to this subject" });
+      let isSuperAdmin = false;
+      // 2. Try Authorization
+      if (!schoolId && req.headers.authorization) {
+        const token = req.headers.authorization.replace('Bearer ', '');
+        const { data: { user } } = await supabaseAdmin.auth.getUser(token);
+        if (user) {
+          const role = user.user_metadata?.role || user.app_metadata?.role;
+          if (role?.toLowerCase() === 'superadmin' || role?.toLowerCase() === 'super_admin') {
+            isSuperAdmin = true;
+          }
+
+          schoolId = user.user_metadata?.school_id || user.app_metadata?.school_id;
+          if (!schoolId) {
+            const { data: profile } = await supabaseAdmin.from('users').select('school_id, role').eq('id', user.id).maybeSingle();
+            schoolId = profile?.school_id;
+            if (profile?.role?.toLowerCase() === 'superadmin' || profile?.role?.toLowerCase() === 'super_admin') {
+              isSuperAdmin = true;
+            }
+          }
+        }
       }
+
+      if (!schoolId && !isSuperAdmin) {
+        return res.status(401).json({ error: "Invalid or missing session token. Please re-login." });
+      }
+
+      const sbTable = supabaseAdmin.from(table);
+      
+      // GLOBAL TABLES that don't have school_id
+      const globalTables = ['subscription_plans', 'orders'];
+      const isGlobalTable = globalTables.includes(table);
+
+      // Block non-SuperAdmins from writing to global tables (security)
+      if (isGlobalTable && !isSuperAdmin) {
+        return res.status(403).json({ error: `You don't have permission to write to ${table}` });
+      }
+
+      // Ensure payload or filters always have school_id IF NOT super admin
+      if (!isSuperAdmin && schoolId && !isGlobalTable && table !== 'schools') {
+        if (Array.isArray(payload)) {
+          payload.forEach((item: Record<string, unknown>) => { item.school_id = schoolId; });
+        } else if (payload && typeof payload === 'object') {
+          (payload as Record<string, unknown>).school_id = schoolId;
+        }
+      }
+
+      let result;
+      if (operation === 'insert' || operation === 'upsert') {
+        if (operation === 'upsert') {
+          result = await sbTable.upsert(payload, { onConflict }).select();
+        } else {
+          result = await sbTable.insert(payload).select();
+        }
+      } else if (operation === 'update') {
+        let updateQuery = sbTable.update(payload);
+        
+        // Apply security filters
+        if (!isSuperAdmin && schoolId) {
+          if (table === 'schools') {
+            updateQuery = updateQuery.eq('id', schoolId);
+          } else if (!isGlobalTable) {
+            updateQuery = updateQuery.eq('school_id', schoolId);
+          }
+        }
+
+        if (filters) {
+          Object.entries(filters).forEach(([key, val]) => {
+            updateQuery = updateQuery.eq(key, val);
+          });
+        }
+        result = await updateQuery.select();
+      } else if (operation === 'delete') {
+        let deleteQuery = sbTable.delete();
+
+        // Apply security filters
+        if (!isSuperAdmin && schoolId) {
+          if (table === 'schools') {
+            deleteQuery = deleteQuery.eq('id', schoolId);
+          } else if (!isGlobalTable) {
+            deleteQuery = deleteQuery.eq('school_id', schoolId);
+          }
+        }
+
+        if (filters) {
+          Object.entries(filters).forEach(([key, val]) => {
+            deleteQuery = deleteQuery.eq(key, val);
+          });
+        }
+        result = await deleteQuery.select();
+      } else {
+        return res.status(400).json({ error: "Invalid operation" });
+      }
+
+      if (result.error) {
+        console.error(`[Proxy Write Error] Table: ${table}:`, result.error);
+        return res.status(500).json({ error: result.error.message || "Database write error" });
+      }
+      res.json({ data: result.data });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[Proxy Write Error] Table: ${table}:`, message);
+      res.status(500).json({ error: message });
     }
-
-    const { error } = await supabase!.from("marks").upsert({ 
-      student_id, 
-      subject_id, 
-      exam_id, 
-      score,
-      school_id: user.school_id
-    }, { onConflict: 'student_id,subject_id,exam_id' });
-
-    if (error) return res.status(400).json({ error: error.message });
-    res.json({ success: true });
   });
 
-  // Analytics & Reports
-  app.get("/api/reports/class-results", authenticateToken, async (req: AuthRequest, res: Response) => {
-    const { exam_id, grade_id } = req.query;
-    if (!exam_id || !grade_id) return res.status(400).json({ error: "exam_id and grade_id required" });
-
-    const [studentsRes, subjectsRes, marksRes] = await Promise.all([
-      supabase!.from("students").select("*").eq("grade_id", grade_id).eq("school_id", req.user!.school_id),
-      supabase!.from("subjects").select("*").eq("school_id", req.user!.school_id),
-      supabase!.from("marks")
-        .select("*, subjects(subject_code, school_id)")
-        .eq("exam_id", exam_id)
-        .eq("school_id", req.user!.school_id)
-    ]);
-
-    if (studentsRes.error) return res.status(400).json({ error: studentsRes.error.message });
-
-    const formattedMarks = marksRes.data?.map(m => ({
-      ...m,
-      subject_code: m.subjects?.subject_code
-    })) || [];
-
-    res.json({ 
-      students: studentsRes.data, 
-      subjects: subjectsRes.data, 
-      marks: formattedMarks 
+  // Diagnostic Endpoint
+  app.get("/api/debug-env", (req, res) => {
+    res.json({
+      node_env: process.env.NODE_ENV,
+      supabase_url_set: !!(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL),
+      supabase_anon_key_set: !!(process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY),
+      mode: "frontend-only"
     });
   });
 
-  // Vite setup
+  // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -714,15 +559,16 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`EduNexa Analytics Server running on http://localhost:${PORT}`);
+    console.log("Status: API Data Proxy Enabled. Compression Active.");
   });
 }
 

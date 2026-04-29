@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../useAuth';
+import { useSubscription } from '../useSubscription';
 import { Subject } from '../types';
-import { Plus, BookOpen, Edit2, X, Check, Trash2 } from 'lucide-react';
+import { fetchWithProxy, writeWithProxy } from '../lib/fetchProxy';
+import { Plus, BookOpen, Edit2, X, Check, Trash2, Lock } from 'lucide-react';
 
 const Subjects = () => {
-  const { token, user } = useAuth();
+  const { user } = useAuth();
+  const { isReadOnly } = useSubscription();
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [formData, setFormData] = useState({ subject_name: '', subject_code: '' });
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -13,22 +16,17 @@ const Subjects = () => {
   const [error, setError] = useState<string | null>(null);
 
   const fetchSubjects = React.useCallback(async () => {
+    if (!user?.school_id) return;
     try {
-      const res = await fetch('/api/subjects', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setSubjects([...data].sort((a, b) => a.subject_name.localeCompare(b.subject_name)));
-        setError(null);
-      } else {
-        setError(data.error || 'Failed to load subjects');
-        setSubjects([]);
-      }
-    } catch {
-      setError('Could not connect to server');
+      const result = await fetchWithProxy('subjects');
+      const subjectsData = result.data || [];
+
+      setSubjects([...subjectsData].sort((a: Subject, b: Subject) => a.subject_name.localeCompare(b.subject_name)));
+      setError(null);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not connect to server');
     }
-  }, [token]);
+  }, [user]);
 
   useEffect(() => {
     Promise.resolve().then(() => fetchSubjects());
@@ -36,21 +34,32 @@ const Subjects = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isReadOnly) {
+      setError("Subscription expired. Read-only mode.");
+      return;
+    }
+    if (!user?.school_id) {
+      setError("No School ID found. Session might be stale.");
+      return;
+    }
     setError(null);
-    const res = await fetch('/api/subjects', {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify(formData),
-    });
-    if (res.ok) {
+    try {
+      const payload = {
+        subject_name: formData.subject_name,
+        subject_code: formData.subject_code,
+        school_id: Number(user.school_id)
+      };
+      
+      console.log("PROFILE:", user);
+      console.log("SUBJECT PAYLOAD VIA PROXY:", payload);
+
+      await writeWithProxy('subjects', 'insert', [payload]);
+      
       setFormData({ subject_name: '', subject_code: '' });
       fetchSubjects();
-    } else {
-      const data = await res.json();
-      setError(data.error || 'Failed to add subject');
+    } catch (err: unknown) {
+      console.error("Submission Error:", err);
+      setError(err instanceof Error ? err.message : 'Failed to add subject');
     }
   };
 
@@ -62,36 +71,32 @@ const Subjects = () => {
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (editingId === null) return;
+    if (isReadOnly) {
+      setError("Subscription expired. Cannot update.");
+      return;
+    }
     setError(null);
-    const res = await fetch(`/api/subjects/${editingId}`, {
-      method: 'PUT',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify(editFormData),
-    });
-    if (res.ok) {
+    try {
+      await writeWithProxy('subjects', 'update', editFormData, { id: editingId });
       setEditingId(null);
       fetchSubjects();
-    } else {
-      const data = await res.json();
-      setError(data.error || 'Failed to update subject');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to update subject');
     }
   };
 
   const handleDelete = async (id: number) => {
+    if (isReadOnly) {
+      setError("Subscription expired. Cannot delete.");
+      return;
+    }
     setError(null);
-    const res = await fetch(`/api/subjects/${id}`, {
-      method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    if (res.ok) {
+    try {
+      await writeWithProxy('subjects', 'delete', null, { id });
       setDeleteConfirmId(null);
       fetchSubjects();
-    } else {
-      const data = await res.json();
-      setError(data.error || 'Failed to delete subject');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to delete subject');
       setDeleteConfirmId(null);
     }
   };
@@ -132,8 +137,14 @@ const Subjects = () => {
               className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20"
             />
           </div>
-          <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
-            <Plus size={18} />
+          <button 
+            type="submit" 
+            disabled={isReadOnly}
+            className={`px-6 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+              isReadOnly ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'
+            }`}
+          >
+            {isReadOnly ? <Lock size={18} /> : <Plus size={18} />}
             Add Subject
           </button>
         </form>

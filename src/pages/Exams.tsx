@@ -1,61 +1,58 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAuth } from '../useAuth';
+import { useSubscription } from '../useSubscription';
 import { Exam } from '../types';
-import { Plus, Calendar, Trash2, Edit2, X, Check } from 'lucide-react';
+import { useData, useDataMutation } from '../hooks/useData';
+import { Plus, Calendar, Trash2, Edit2, X, Check, Lock } from 'lucide-react';
+import { TableSkeleton } from '../components/ui/Skeleton';
 
 const Exams = () => {
-  const { token, user } = useAuth();
-  const [exams, setExams] = useState<Exam[]>([]);
+  const { user } = useAuth();
+  const { isReadOnly } = useSubscription();
+  
+  // Mutations
+  const examMutation = useDataMutation('exams');
+
+  // Fetching
+  const examsQuery = useData<Exam>('exams-list', 'exams', {
+    orderBy: { column: 'year', ascending: false }
+  }, !!user?.school_id);
+
+  const exams = useMemo(() => {
+    return (examsQuery.data || []).sort((a: Exam, b: Exam) => {
+      if (a.year !== b.year) return b.year - a.year;
+      return b.term - a.term;
+    });
+  }, [examsQuery.data]);
+
   const [formData, setFormData] = useState({ exam_name: '', term: '1', year: new Date().getFullYear().toString() });
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editFormData, setEditFormData] = useState({ exam_name: '', term: '1', year: '' });
-  const [error, setError] = useState<string | null>(null);
-
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
-
-  const fetchExams = React.useCallback(async () => {
-    try {
-      const res = await fetch('/api/exams', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setExams(data);
-        setError(null);
-      } else {
-        setError(data.error || 'Failed to load exams');
-        setExams([]);
-      }
-    } catch {
-      setError('Could not connect to server');
-    }
-  }, [token]);
-
-  useEffect(() => {
-    Promise.resolve().then(() => fetchExams());
-  }, [fetchExams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await fetch('/api/exams', {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        ...formData,
-        term: parseInt(formData.term),
-        year: parseInt(formData.year)
-      }),
-    });
-    if (res.ok) {
+    if (isReadOnly) return alert("Subscription expired.");
+    if (!user?.school_id) return;
+
+    try {
+      await examMutation.mutateAsync({
+        operation: 'insert',
+        payload: [{
+          exam_name: formData.exam_name,
+          term: parseInt(formData.term),
+          year: parseInt(formData.year),
+          school_id: user.school_id
+        }]
+      });
       setFormData({ exam_name: '', term: '1', year: new Date().getFullYear().toString() });
-      fetchExams();
+    } catch (err: unknown) {
+      alert((err as Error).message);
     }
   };
 
   const handleEditClick = (exam: Exam) => {
+    if (isReadOnly) return;
     setEditingId(exam.id);
     setEditFormData({
       exam_name: exam.exam_name,
@@ -65,47 +62,33 @@ const Exams = () => {
   };
 
   const handleUpdate = async () => {
-    if (!editingId) return;
-    const res = await fetch(`/api/exams/${editingId}`, {
-      method: 'PUT',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        exam_name: editFormData.exam_name,
-        term: parseInt(editFormData.term),
-        year: parseInt(editFormData.year)
-      }),
-    });
-    if (res.ok) {
+    if (isReadOnly || !editingId) return;
+    try {
+      await examMutation.mutateAsync({
+        operation: 'update',
+        payload: {
+          exam_name: editFormData.exam_name,
+          term: parseInt(editFormData.term),
+          year: parseInt(editFormData.year)
+        },
+        criteria: { id: editingId }
+      });
       setEditingId(null);
-      fetchExams();
-    } else {
-      const data = await res.json();
-      alert(data.error || 'Failed to update exam');
+    } catch (err: unknown) {
+      alert((err as Error).message);
     }
   };
 
   const handleDelete = async (id: number) => {
+    if (isReadOnly) return;
     try {
-      const res = await fetch(`/api/exams/${id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
+      await examMutation.mutateAsync({
+        operation: 'delete',
+        criteria: { id }
       });
-      
-      const data = await res.json();
-
-      if (res.ok) {
-        setDeleteConfirmId(null);
-        fetchExams();
-      } else {
-        alert(data.error || 'Failed to delete exam');
-        setDeleteConfirmId(null);
-      }
-    } catch {
-      alert('Could not connect to the server to delete the exam');
       setDeleteConfirmId(null);
+    } catch (err: unknown) {
+      alert((err as Error).message);
     }
   };
 
@@ -116,12 +99,6 @@ const Exams = () => {
         <p className="text-slate-500 text-sm">Schedule and manage examination periods.</p>
       </header>
 
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg text-sm">
-          {error}
-        </div>
-      )}
-
       {user?.role === 'Admin' && (
         <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
           <div className="space-y-1 md:col-span-2">
@@ -131,7 +108,7 @@ const Exams = () => {
               value={formData.exam_name}
               onChange={(e) => setFormData({...formData, exam_name: e.target.value})}
               placeholder="e.g. End of Term 1"
-              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20"
+              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none"
             />
           </div>
           <div className="space-y-1">
@@ -139,7 +116,7 @@ const Exams = () => {
             <select 
               value={formData.term}
               onChange={(e) => setFormData({...formData, term: e.target.value})}
-              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20"
+              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none"
             >
               <option value="1">Term 1</option>
               <option value="2">Term 2</option>
@@ -153,20 +130,26 @@ const Exams = () => {
               required
               value={formData.year}
               onChange={(e) => setFormData({...formData, year: e.target.value})}
-              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20"
+              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none"
             />
           </div>
           <div className="md:col-span-4 flex justify-end">
-            <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
-              <Plus size={18} />
-              Create Exam
+            <button 
+              type="submit" 
+              disabled={examMutation.isPending || isReadOnly}
+              className="px-6 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white disabled:opacity-50 flex items-center gap-2"
+            >
+              {isReadOnly ? <Lock size={18} /> : <Plus size={18} />}
+              {examMutation.isPending ? 'Processing...' : 'Create Exam'}
             </button>
           </div>
         </form>
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {exams.map((exam) => (
+        {examsQuery.isLoading ? (
+          <div className="col-span-2"><TableSkeleton rows={4} cols={1} /></div>
+        ) : exams.map((exam) => (
           <div key={exam.id} className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 flex items-center justify-between group overflow-hidden">
             <div className="flex items-center gap-4 flex-1">
               <div className="bg-blue-50 text-blue-600 p-3 rounded-lg">
@@ -177,7 +160,7 @@ const Exams = () => {
                   <input 
                     value={editFormData.exam_name}
                     onChange={(e) => setEditFormData({...editFormData, exam_name: e.target.value})}
-                    className="w-full px-2 py-1 text-sm border rounded focus:ring-1 focus:ring-blue-500 outline-none"
+                    className="w-full px-2 py-1 text-sm border rounded outline-none"
                     autoFocus
                   />
                   <div className="flex gap-2">
@@ -210,10 +193,10 @@ const Exams = () => {
                 <div className="flex gap-1">
                   {editingId === exam.id ? (
                     <>
-                      <button onClick={handleUpdate} className="text-green-600 hover:bg-green-50 p-1.5 rounded-lg transition-colors" title="Save">
+                      <button onClick={handleUpdate} className="text-green-600 hover:bg-green-50 p-1.5 rounded-lg transition-colors">
                         <Check size={18} />
                       </button>
-                      <button onClick={() => setEditingId(null)} className="text-slate-400 hover:bg-slate-50 p-1.5 rounded-lg transition-colors" title="Cancel">
+                      <button onClick={() => setEditingId(null)} className="text-slate-400 hover:bg-slate-50 p-1.5 rounded-lg transition-colors">
                         <X size={18} />
                       </button>
                     </>
@@ -221,8 +204,8 @@ const Exams = () => {
                     <>
                       <button 
                         onClick={() => handleEditClick(exam)}
-                        className="text-slate-400 hover:text-blue-600 hover:bg-blue-50 p-3 rounded-lg transition-colors border border-transparent"
-                        title="Edit"
+                        disabled={isReadOnly}
+                        className="p-3 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 disabled:opacity-20"
                       >
                         <Edit2 size={20} />
                       </button>
@@ -231,9 +214,9 @@ const Exams = () => {
                         <div className="flex items-center gap-1 bg-red-50 p-1 rounded-lg border border-red-100">
                           <button 
                             onClick={() => handleDelete(exam.id)}
-                            className="text-red-600 hover:bg-red-100 p-2 rounded text-xs font-bold flex items-center gap-1"
+                            className="text-red-600 hover:bg-red-100 p-2 rounded text-xs font-bold"
                           >
-                            <Trash2 size={16} /> Confirm
+                            Confirm
                           </button>
                           <button 
                             onClick={() => setDeleteConfirmId(null)}
@@ -245,8 +228,8 @@ const Exams = () => {
                       ) : (
                         <button 
                           onClick={() => setDeleteConfirmId(exam.id)}
-                          className="text-slate-400 hover:text-red-600 hover:bg-red-50 p-3 rounded-lg transition-colors border border-transparent"
-                          title="Delete"
+                          disabled={isReadOnly}
+                          className="p-3 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-20"
                         >
                           <Trash2 size={20} />
                         </button>
@@ -254,11 +237,6 @@ const Exams = () => {
                     </>
                   )}
                 </div>
-              )}
-              {editingId !== exam.id && (
-                <span className="text-xs font-bold px-2 py-1 bg-slate-100 text-slate-600 rounded uppercase">
-                  Active
-                </span>
               )}
             </div>
           </div>

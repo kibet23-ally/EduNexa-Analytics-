@@ -1,10 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAuth } from '../useAuth';
-import { Exam, Grade, Subject, Mark, Student } from '../types';
+import { Exam, Grade, Subject, Mark, Student, School } from '../types';
 import { getCBCGrade, getOverallGrade, getRemarks } from '../lib/utils';
+import { fetchWithProxy } from '../lib/fetchProxy';
+import { useData } from '../hooks/useData';
 import { FileText, Download, Printer, FileSpreadsheet } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import Letterhead from '../components/Letterhead';
 
 interface jsPDFWithAutoTable extends jsPDF {
   lastAutoTable: { finalY: number };
@@ -29,36 +32,57 @@ interface ReportData {
 }
 
 const Reports = () => {
-  const { token, user } = useAuth();
-  const [exams, setExams] = useState<Exam[]>([]);
-  const [grades, setGrades] = useState<Grade[]>([]);
+  const { user } = useAuth();
   const [selectedExam, setSelectedExam] = useState('');
   const [selectedGrade, setSelectedGrade] = useState('');
   const [reportData, setReportData] = useState<ReportData | null>(null);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      const headers = { 'Authorization': `Bearer ${token}` };
-      const [e, g] = await Promise.all([
-        fetch('/api/exams', { headers }).then(r => r.json()),
-        fetch('/api/grades', { headers }).then(r => r.json())
-      ]);
-      setExams(e);
-      setGrades(g);
-    };
-    fetchData();
-  }, [token]);
+  const examsQuery = useData<Exam>('exams-list-reports', 'exams', {
+    select: 'id, exam_name, term, year',
+    orderBy: { column: 'year', ascending: false }
+  }, !!user?.school_id);
+
+  const gradesQuery = useData<Grade>('grades-list-reports', 'grades', {
+    select: 'id, grade_name',
+    orderBy: { column: 'grade_name', ascending: true }
+  }, !!user?.school_id);
+
+  const schoolsQuery = useData<School>('school-info-reports', 'schools', {
+    select: '*'
+  }, !!user?.school_id);
+
+  const exams = useMemo(() => examsQuery.data || [], [examsQuery.data]);
+  const grades = useMemo(() => {
+    const d = gradesQuery.data || [];
+    return [...d].sort((a, b) => {
+      const numA = parseInt(a.grade_name.match(/\d+/)?.[0] || '0');
+      const numB = parseInt(b.grade_name.match(/\d+/)?.[0] || '0');
+      if (numA !== numB) return numA - numB;
+      return a.grade_name.localeCompare(b.grade_name);
+    });
+  }, [gradesQuery.data]);
+
+  const schoolInfo = useMemo(() => {
+    return (schoolsQuery.data as School[])?.find(s => s.id === user?.school_id) || null;
+  }, [schoolsQuery.data, user?.school_id]);
 
   const loadReportData = React.useCallback(async () => {
     try {
       if (!selectedExam || !selectedGrade) return;
-      const res = await fetch(`/api/reports/class-results?exam_id=${selectedExam}&grade_id=${selectedGrade}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!res.ok) throw new Error('Failed to load report data');
-      const data = await res.json();
-    
-    const filteredSubjects = data.subjects.filter((sub: Subject) => {
+      
+      const [studentsRes, marksRes, subjectsRes] = await Promise.all([
+        fetchWithProxy('students', { filters: { grade_id: Number(selectedGrade) } }),
+        fetchWithProxy('marks', { filters: { exam_id: Number(selectedExam) } }),
+        fetchWithProxy('subjects')
+      ]);
+
+      const data = {
+        students: studentsRes.data || [],
+        marks: marksRes.data || [],
+        subjects: subjectsRes.data || []
+      };
+      
+      const filteredSubjects = (data.subjects || []).filter((sub: Subject) => {
       const name = sub.subject_name.toLowerCase().trim();
       return !['science & technology', 'science and technology', 'music', 'art & craft', 'art and craft', 'physical education'].includes(name);
     });
@@ -97,7 +121,7 @@ const Reports = () => {
     } catch (error) {
       console.error('Reports fetch error:', error);
     }
-  }, [selectedExam, selectedGrade, token, exams, grades]);
+  }, [selectedExam, selectedGrade, exams, grades]);
 
   useEffect(() => { 
     Promise.resolve().then(() => loadReportData()); 
@@ -117,10 +141,14 @@ const Reports = () => {
       return row;
     });
 
+    const schoolTitle = schoolInfo?.name?.toUpperCase() || (user?.school_name || 'EDU NEXA ANALYTICS').toUpperCase();
+    const schoolAddress = schoolInfo?.address || 'P.O. Box 42-20213 Kiptere';
+    const schoolMotto = schoolInfo?.motto ? `Motto: ${schoolInfo.motto}` : 'Motto: Strive to Excel';
+
     const letterhead = [
-      [(user?.school_name || 'EDU NEXA ANALYTICS').toUpperCase()],
-      ['P.O. Box 42-20213 Kiptere'],
-      ['Motto: Strive to Excel'],
+      [schoolTitle],
+      [schoolAddress],
+      [schoolMotto],
       [''],
       [`CLASS RESULTS: ${reportData.grade.grade_name} - ${reportData.exam.exam_name}`],
       [''],
@@ -164,18 +192,22 @@ const Reports = () => {
     const exam = exams.find(e => e.id === parseInt(selectedExam));
     const grade = grades.find(g => g.id === parseInt(selectedGrade));
 
+    const schoolTitle = schoolInfo?.name?.toUpperCase() || (user?.school_name || "SCHOOL PROGRESS REPORT").toUpperCase();
+    const schoolAddress = schoolInfo?.address || "P.O. Box 42-20213 Kiptere";
+    const schoolMotto = schoolInfo?.motto ? `Motto: ${schoolInfo.motto}` : "Motto: Strive to Excel";
+
     reportData.students.forEach((student: ProcessedStudent, index: number) => {
       if (index > 0) doc.addPage();
       
       // Letterhead
       doc.setFontSize(16);
       doc.setFont("helvetica", "bold");
-      doc.text((user?.school_name || "SCHOOL PROGRESS REPORT").toUpperCase(), 105, 20, { align: "center" });
+      doc.text(schoolTitle, 105, 20, { align: "center" });
       doc.setFontSize(10);
       doc.setFont("helvetica", "normal");
-      doc.text("P.O. Box 42-20213 Kiptere", 105, 26, { align: "center" });
+      doc.text(schoolAddress, 105, 26, { align: "center" });
       doc.setFont("helvetica", "italic");
-      doc.text("Motto: Strive to Excel", 105, 31, { align: "center" });
+      doc.text(schoolMotto, 105, 31, { align: "center" });
       doc.line(20, 35, 190, 35);
 
       // Student Details
@@ -246,36 +278,48 @@ const Reports = () => {
     const exam = reportData.exam;
     const grade = reportData.grade;
 
-    // Letterhead (Landscape Centered)
-    doc.setFontSize(18);
-    doc.setFont("helvetica", "bold");
-    doc.text((user?.school_name || "SCHOOL REPORT").toUpperCase(), 148, 20, { align: "center" });
-    doc.setFontSize(11);
-    doc.setFont("helvetica", "normal");
-    doc.text("P.O. Box 42-20213 Kiptere", 148, 26, { align: "center" });
-    doc.setFont("helvetica", "italic");
-    doc.text("Motto: Strive to Excel", 148, 31, { align: "center" });
-    doc.line(20, 35, 277, 35);
+    // Reduced margins: top 20, bottom 20, left 15, right 15
+    const marginLeft = 15;
+    const marginTop = 20;
 
-    // Report Title
+    const schoolTitle = schoolInfo?.name?.toUpperCase() || (user?.school_name || "SCHOOL REPORT").toUpperCase();
+    const schoolAddress = schoolInfo?.address || "P.O. Box 42-20213 Kiptere";
+    const schoolMotto = schoolInfo?.motto ? `Motto: ${schoolInfo.motto}` : "Motto: Strive to Excel";
+
+    // Letterhead (Landscape Centered) - Reduced font sizes
     doc.setFontSize(14);
     doc.setFont("helvetica", "bold");
-    doc.text("STUDENT RANKINGS REPORT", 148, 45, { align: "center" });
+    doc.text(schoolTitle, 148, marginTop, { align: "center" });
     
-    doc.setFontSize(10);
+    doc.setFontSize(9);
     doc.setFont("helvetica", "normal");
-    doc.text(`Grade: ${grade.grade_name}`, 20, 55);
-    doc.text(`Exam: ${exam.exam_name}`, 20, 60);
-    doc.text(`Term: ${exam.term}`, 140, 55);
-    doc.text(`Year: ${exam.year}`, 140, 60);
-    doc.text(`Total Students: ${reportData.students.length}`, 240, 55);
+    doc.text(schoolAddress, 148, marginTop + 6, { align: "center" });
+    doc.setFont("helvetica", "italic");
+    doc.text(schoolMotto, 148, marginTop + 11, { align: "center" });
+    doc.line(marginLeft, marginTop + 15, 282, marginTop + 15);
+
+    // Report Title - Reduced spacing
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.text("STUDENT RANKINGS REPORT", 148, marginTop + 23, { align: "center" });
+    
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    const subHeaderY = marginTop + 30;
+    doc.text(`Grade: ${grade.grade_name}`, marginLeft, subHeaderY);
+    doc.text(`Exam: ${exam.exam_name}`, marginLeft, subHeaderY + 5);
+    doc.text(`Term: ${exam.term} | Year: ${exam.year}`, 148, subHeaderY, { align: "center" });
+    doc.text(`Total Students: ${reportData.students.length}`, 282, subHeaderY, { align: "right" });
+
+    // Filter out students with no marks
+    const validStudents = reportData.students.filter(s => s.marks && s.marks.length > 0);
 
     // Table Headers
-    const headers = ['Rank', 'Name', 'Adm No', 'Class', ...reportData.subjects.map((s: Subject) => s.subject_name), 'Total', 'Avg Points', 'Grade'];
+    const headers = ['Rank', 'Name', 'Adm No', ...reportData.subjects.map((s: Subject) => s.subject_code), 'Total', 'Avg Pts', 'Grade'];
     
     // Table Body
-    const body = reportData.students.map((s: ProcessedStudent) => {
-      const row: (string | number)[] = [s.rank || '-', s.name, s.admission_number, s.grade_name || grade.grade_name];
+    const body = validStudents.map((s: ProcessedStudent) => {
+      const row: (string | number)[] = [s.rank || '-', s.name, s.admission_number];
       reportData.subjects.forEach((sub: Subject) => {
         const mark = s.marks.find((m: Mark) => m.subject_id === sub.id);
         row.push(mark ? mark.score : '-');
@@ -285,45 +329,71 @@ const Reports = () => {
     });
 
     autoTable(doc, {
-      startY: 65,
+      startY: subHeaderY + 12,
       head: [headers],
       body: body,
       theme: 'grid',
-      styles: { fontSize: 7, cellPadding: 1, overflow: 'linebreak' },
-      headStyles: { fillColor: [30, 58, 138], textColor: 255, fontStyle: 'bold' },
+      showHead: 'everyPage', // repeatRows = 1
+      styles: { 
+        fontSize: 8, 
+        cellPadding: { top: 1.5, bottom: 1.5, left: 1, right: 1 }, // Approximately 4pt/3pt
+        overflow: 'linebreak',
+        halign: 'center',
+        lineWidth: 0.1, // thin grid lines
+        textColor: 40
+      },
+      headStyles: { 
+        fillColor: [30, 58, 138], 
+        textColor: 255, 
+        fontStyle: 'bold', 
+        fontSize: 9,
+        halign: 'center'
+      },
       columnStyles: {
         0: { cellWidth: 10 }, // Rank
-        1: { cellWidth: 35 }, // Name
-        2: { cellWidth: 15 }, // Adm No
-        3: { cellWidth: 15 }, // Class
+        1: { cellWidth: 50, halign: 'left' }, // Name
+        2: { cellWidth: 20 }, // Adm No
       },
-      margin: { left: 10, right: 10 }
+      margin: { left: marginLeft, right: marginLeft, top: marginTop, bottom: marginTop },
+      tableWidth: 'auto'
     });
 
-    const finalY = doc.lastAutoTable.finalY + 15;
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "bold");
-    doc.text("Class Teacher Signature: ________________________", 20, finalY);
-    doc.text("Principal Signature: ________________________", 180, finalY);
+    const finalY = doc.lastAutoTable.finalY + 10;
+    
+    // Bottom signatures - only if space permits on same page
+    if (finalY < 180) {
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "bold");
+      doc.text("Class Teacher Signature: ________________________", marginLeft, finalY);
+      doc.text("Principal Signature: ________________________", 200, finalY);
+    }
 
     doc.save(`Rankings_Report_${grade.grade_name}_${exam.exam_name}.pdf`);
   };
 
   const printClassResults = () => {
     if (!reportData) return;
-    const doc = new jsPDF('l', 'mm', 'a4');
-    const exam = exams.find(e => e.id === parseInt(selectedExam));
-    const grade = grades.find(g => g.id === parseInt(selectedGrade));
+    const doc = new jsPDF('l', 'mm', 'a4') as jsPDFWithAutoTable;
+    const exam = reportData.exam;
+    const grade = reportData.grade;
+
+    const marginLeft = 15;
+    const marginTop = 20;
 
     doc.setFontSize(14);
     doc.setFont("helvetica", "bold");
-    doc.text(`${(user?.school_name || "SCHOOL").toUpperCase()} - CLASS RESULTS`, 148, 15, { align: "center" });
+    doc.text(`${(user?.school_name || "SCHOOL").toUpperCase()} - CLASS RESULTS`, 148, marginTop, { align: "center" });
+    
     doc.setFontSize(10);
-    doc.text(`${grade?.grade_name} | ${exam?.exam_name} | Term ${exam?.term} ${exam?.year}`, 148, 22, { align: "center" });
+    doc.setFont("helvetica", "normal");
+    doc.text(`${grade?.grade_name} | ${exam?.exam_name} | Term ${exam?.term} ${exam?.year}`, 148, marginTop + 7, { align: "center" });
+
+    // Filter valid data
+    const validStudents = reportData.students.filter(s => s.marks && s.marks.length > 0);
 
     const headers = ['Rank', 'Name', 'Adm No', ...reportData.subjects.map((s: Subject) => s.subject_code), 'Total', 'Avg Pts', 'Grade', 'Pts'];
-    const body = reportData.students.map((s: ProcessedStudent) => {
-      const row: (string | number)[] = [s.rank, s.name, s.admission_number];
+    const body = validStudents.map((s: ProcessedStudent) => {
+      const row: (string | number)[] = [s.rank || '-', s.name, s.admission_number];
       reportData.subjects.forEach((sub: Subject) => {
         const mark = s.marks.find((m: Mark) => m.subject_id === sub.id);
         row.push(mark ? mark.score : '-');
@@ -333,12 +403,27 @@ const Reports = () => {
     });
 
     autoTable(doc, {
-      startY: 30,
+      startY: marginTop + 15,
       head: [headers],
       body: body,
       theme: 'grid',
-      styles: { fontSize: 7, cellPadding: 1 },
-      headStyles: { fillColor: [30, 58, 138] }
+      showHead: 'everyPage',
+      styles: { 
+        fontSize: 8, 
+        cellPadding: { top: 1.5, bottom: 1.5, left: 1, right: 1 },
+        halign: 'center',
+        lineWidth: 0.1
+      },
+      headStyles: { 
+        fillColor: [30, 58, 138],
+        fontSize: 9
+      },
+      columnStyles: {
+        0: { cellWidth: 10 },
+        1: { cellWidth: 50, halign: 'left' },
+        2: { cellWidth: 20 }
+      },
+      margin: { left: marginLeft, right: marginLeft, top: marginTop, bottom: marginTop }
     });
 
     doc.save(`Class_Results_${selectedGrade}.pdf`);
@@ -346,6 +431,8 @@ const Reports = () => {
 
   return (
     <div className="space-y-6">
+      <Letterhead />
+      
       <header>
         <h1 className="text-2xl font-bold text-slate-900">Reports & Exports</h1>
         <p className="text-slate-500 text-sm">Generate report cards, class lists, and data exports.</p>
@@ -446,9 +533,9 @@ const Reports = () => {
             <div className="bg-blue-900 p-6 rounded-xl shadow-sm text-white">
               <h4 className="font-bold mb-2">School Letterhead</h4>
               <div className="text-[10px] space-y-1 opacity-80 border-l-2 border-blue-400 pl-4">
-                <p className="font-bold text-xs opacity-100">{(user?.school_name || "EDUNEXA SCHOOL").toUpperCase()}</p>
-                <p>P.O. Box 42-20213 Kiptere</p>
-                <p className="italic">Motto: Strive to Excel</p>
+                <p className="font-bold text-xs opacity-100">{(schoolInfo?.name || user?.school_name || "EDUNEXA SCHOOL").toUpperCase()}</p>
+                <p>{schoolInfo?.address || 'P.O. Box 42-20213 Kiptere'}</p>
+                <p className="italic">Motto: {schoolInfo?.motto || 'Strive to Excel'}</p>
               </div>
               <p className="text-[10px] mt-4 opacity-60">
                 This branding is automatically applied to all official PDF reports.

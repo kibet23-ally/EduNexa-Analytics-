@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAuth } from '../useAuth';
 import { Exam, Grade, Subject, Mark, Student } from '../types';
 import { getOverallGrade } from '../lib/utils';
+import { fetchWithProxy } from '../lib/fetchProxy';
+import { useData } from '../hooks/useData';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { BarChart3, Award, FileSpreadsheet, FileText } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -28,59 +30,72 @@ interface AnalyticsData {
 }
 
 const Analytics = () => {
-  const { token, user } = useAuth();
-  const [exams, setExams] = useState<Exam[]>([]);
-  const [grades, setGrades] = useState<Grade[]>([]);
+  const { user } = useAuth();
   const [selectedExam, setSelectedExam] = useState('');
   const [selectedGrade, setSelectedGrade] = useState('');
   
   const [data, setData] = useState<AnalyticsData | null>(null);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      const headers = { 'Authorization': `Bearer ${token}` };
-      const [e, g] = await Promise.all([
-        fetch('/api/exams', { headers }).then(r => r.json()),
-        fetch('/api/grades', { headers }).then(r => r.json())
-      ]);
-      setExams(e);
-      setGrades(g);
-    };
-    fetchData();
-  }, [token]);
+  const examsQuery = useData<Exam>('exams-list-analytics', 'exams', {
+    select: 'id, exam_name, term, year',
+    orderBy: { column: 'year', ascending: false }
+  }, !!user?.school_id);
+
+  const gradesQuery = useData<Grade>('grades-list-analytics', 'grades', {
+    select: 'id, grade_name',
+    orderBy: { column: 'grade_name', ascending: true }
+  }, !!user?.school_id);
+
+  const exams = useMemo(() => examsQuery.data || [], [examsQuery.data]);
+  const grades = useMemo(() => {
+    const d = gradesQuery.data || [];
+    return [...d].sort((a, b) => {
+      const numA = parseInt(a.grade_name.match(/\d+/)?.[0] || '0');
+      const numB = parseInt(b.grade_name.match(/\d+/)?.[0] || '0');
+      if (numA !== numB) return numA - numB;
+      return a.grade_name.localeCompare(b.grade_name);
+    });
+  }, [gradesQuery.data]);
 
   const fetchAnalyticsData = React.useCallback(async () => {
     try {
       if (!selectedExam || !selectedGrade) return;
-      const res = await fetch(`/api/reports/class-results?exam_id=${selectedExam}&grade_id=${selectedGrade}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!res.ok) throw new Error('Failed to fetch analytics data');
-      const data = await res.json();
-    const { students, subjects, marks } = data;
+
+      const getReportData = async (examId: number, gradeId: number) => {
+        const [students, subjects, marks] = await Promise.all([
+          fetchWithProxy('students', { filters: { grade_id: gradeId } }),
+          fetchWithProxy('subjects'),
+          fetchWithProxy('marks', { filters: { exam_id: examId } })
+        ]);
+        return { 
+          students: students.data || [], 
+          subjects: subjects.data || [], 
+          marks: marks.data || [] 
+        };
+      };
+
+      const reportData = await getReportData(Number(selectedExam), Number(selectedGrade));
+      const { students, subjects, marks } = reportData;
     
-    const filteredSubjects = subjects.filter((sub: Subject) => {
-      const name = sub.subject_name.toLowerCase().trim();
-      return !['science & technology', 'science and technology', 'music', 'art & craft', 'art and craft', 'physical education'].includes(name);
-    });
-
-    // Sort exams to find previous
-    const sortedExams = [...exams].sort((a, b) => {
-      if (a.year !== b.year) return a.year - b.year;
-      if (a.term !== b.term) return a.term - b.term;
-      return a.id - b.id;
-    });
-    const currentIndex = sortedExams.findIndex(e => e.id.toString() === selectedExam);
-    const previousExam = currentIndex > 0 ? sortedExams[currentIndex - 1] : null;
-
-    let previousMarks: Mark[] = [];
-    if (previousExam) {
-      const prevRes = await fetch(`/api/reports/class-results?exam_id=${previousExam.id}&grade_id=${selectedGrade}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+      const filteredSubjects = (subjects || []).filter((sub: Subject) => {
+        const name = sub.subject_name.toLowerCase().trim();
+        return !['science & technology', 'science and technology', 'music', 'art & craft', 'art and craft', 'physical education'].includes(name);
       });
-      const prevData = await prevRes.json();
-      previousMarks = prevData.marks;
-    }
+
+      // Sort exams to find previous
+      const sortedExams = [...exams].sort((a, b) => {
+        if (a.year !== b.year) return a.year - b.year;
+        if (a.term !== b.term) return a.term - b.term;
+        return a.id - b.id;
+      });
+      const currentIndex = sortedExams.findIndex(e => e.id.toString() === selectedExam);
+      const previousExam = currentIndex > 0 ? sortedExams[currentIndex - 1] : null;
+
+      let previousMarks: Mark[] = [];
+      if (previousExam) {
+        const prevData = await getReportData(previousExam.id, Number(selectedGrade));
+        previousMarks = prevData.marks || [];
+      }
 
     // Calculate distribution
     const distributionMap: Record<string, number> = { EE1: 0, EE2: 0, ME1: 0, ME2: 0, AE1: 0, AE2: 0, BE1: 0, BE2: 0 };
@@ -158,7 +173,7 @@ const Analytics = () => {
     } catch (error) {
       console.error('Analytics fetch error:', error);
     }
-  }, [selectedExam, selectedGrade, token, exams]);
+  }, [selectedExam, selectedGrade, exams]);
 
   useEffect(() => {
     Promise.resolve().then(() => fetchAnalyticsData());

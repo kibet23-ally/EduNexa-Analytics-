@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAuth } from '../useAuth';
+import { useSubscription } from '../useSubscription';
 import { Exam, Grade, Subject, Student, Mark } from '../types';
-import { getCBCGrade } from '../lib/utils';
-import { Save, AlertCircle, CheckCircle2, FileEdit, Upload, Download } from 'lucide-react';
+import { useData, useDataMutation } from '../hooks/useData';
+import { Save, Download, Upload } from 'lucide-react';
+import { TableSkeleton } from '../components/ui/Skeleton';
 import * as XLSX from 'xlsx';
 
 interface ExcelRow {
@@ -20,381 +22,250 @@ interface Assignment {
   teacher_id: number;
   subject_id: number;
   grade_id: number;
-  teacher_name?: string;
-  subject_name?: string;
-  grade_name?: string;
 }
 
 const MarksEntry = () => {
-  const { token, user } = useAuth();
-  const [exams, setExams] = useState<Exam[]>([]);
-  const [grades, setGrades] = useState<Grade[]>([]);
-  const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [students, setStudents] = useState<Student[]>([]);
-  
+  const { user } = useAuth();
+  const { isReadOnly } = useSubscription();
   const [selectedExam, setSelectedExam] = useState('');
   const [selectedGrade, setSelectedGrade] = useState('');
   const [selectedSubject, setSelectedSubject] = useState('');
-  
-  const [marks, setMarks] = useState<Record<number, number>>({});
-  const [rawMarks, setRawMarks] = useState<Record<number, string>>({});
   const [maxScore, setMaxScore] = useState<number | string>(100);
-  const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState<{ type: 'success' | 'error', msg: string } | null>(null);
-  const [isImporting, setIsImporting] = useState(false);
-  const [importLogs, setImportLogs] = useState<string[]>([]);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error', msg: string } | null>(null);
 
   const currentMax = Number(maxScore) || 100;
 
-  useEffect(() => {
-    const fetchData = async () => {
-      const headers = { 'Authorization': `Bearer ${token}` };
-      const [e, g, s, a] = await Promise.all([
-        fetch('/api/exams', { headers }).then(r => r.json()),
-        fetch('/api/grades', { headers }).then(r => r.json()),
-        fetch('/api/subjects', { headers }).then(r => r.json()),
-        user?.role === 'Teacher' ? fetch('/api/assignments', { headers }).then(r => r.json()) : Promise.resolve([])
-      ]);
-      setExams(e);
-      
-      if (user?.role === 'Teacher') {
-        const teacherAssignments = a.filter((as: Assignment) => as.teacher_id === user.id);
-        const assignedGradeIds = new Set(teacherAssignments.map((as: Assignment) => as.grade_id));
-        const assignedSubjectIds = new Set(teacherAssignments.map((as: Assignment) => as.subject_id));
-        
-        setGrades(g.filter((gr: Grade) => assignedGradeIds.has(gr.id)));
-        setSubjects(s.filter((su: Subject) => {
-          const name = su.subject_name.toLowerCase().trim();
-          const isExcluded = ['science & technology', 'science and technology', 'music', 'art & craft', 'art and craft', 'physical education'].includes(name);
-          return assignedSubjectIds.has(su.id) && !isExcluded;
-        }));
-      } else {
-        setGrades(g);
-        setSubjects(s.filter((su: Subject) => {
-          const name = su.subject_name.toLowerCase().trim();
-          return !['science & technology', 'science and technology', 'music', 'art & craft', 'art and craft', 'physical education'].includes(name);
-        }));
-      }
-    };
-    fetchData();
-  }, [token, user]);
+  // Mutations
+  const marksMutation = useDataMutation('marks');
 
-  useEffect(() => {
-    if (selectedGrade) {
-      fetch(`/api/students?grade_id=${selectedGrade}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      }).then(r => r.json()).then(data => {
-        setStudents(data.filter((s: Student) => s.grade_id === parseInt(selectedGrade)));
-      });
-    } else {
-      setStudents([]);
-    }
-  }, [selectedGrade, token]);
+  // Multi-Fetch
+  const examsQuery = useData<Exam>('exams-list', 'exams', { select: 'id, exam_name' }, !!user?.school_id);
+  const gradesQuery = useData<Grade>('grades-list', 'grades', { 
+    select: 'id, grade_name',
+    orderBy: { column: 'grade_name', ascending: true }
+  }, !!user?.school_id);
+  const subjectsQuery = useData<Subject>('subjects-list', 'subjects', { select: 'id, subject_name' }, !!user?.school_id);
+  const assignmentsQuery = useData<Assignment>('teacher-assignments-all', 'teacher_assignments', { select: 'id, teacher_id, subject_id, grade_id' }, !!user?.school_id && user.role === 'Teacher');
 
-  useEffect(() => {
-    if (selectedExam && selectedGrade && selectedSubject) {
-      fetch(`/api/marks?exam_id=${selectedExam}&grade_id=${selectedGrade}&subject_id=${selectedSubject}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      }).then(r => r.json()).then(data => {
+  const filteredGrades = useMemo(() => {
+    const data = gradesQuery.data || [];
+    if (user?.role !== 'Teacher' || !assignmentsQuery.data) return data;
+    const teacherId = user.id.toString().replace('teacher-', '');
+    const assignedGradeIds = new Set(assignmentsQuery.data.filter(as => as.teacher_id.toString() === teacherId).map(as => as.grade_id.toString()));
+    return data.filter(g => assignedGradeIds.has(g.id.toString()));
+  }, [gradesQuery.data, assignmentsQuery.data, user]);
+
+  const filteredSubjects = useMemo(() => {
+    const data = subjectsQuery.data || [];
+    if (user?.role !== 'Teacher' || !assignmentsQuery.data) return data;
+    const teacherId = user.id.toString().replace('teacher-', '');
+    const assignedSubjectIds = new Set(assignmentsQuery.data.filter(as => as.teacher_id.toString() === teacherId).map(as => as.subject_id.toString()));
+    return data.filter(s => assignedSubjectIds.has(s.id.toString()));
+  }, [subjectsQuery.data, assignmentsQuery.data, user]);
+
+  const studentsQuery = useData<Student>('students-marks', 'students', {
+    select: 'id, name, admission_number, grade_id',
+    filters: selectedGrade ? { grade_id: parseInt(selectedGrade) } : undefined
+  }, !!selectedGrade);
+
+  const students = useMemo(() => studentsQuery.data || [], [studentsQuery.data]);
+
+  const existingMarksQuery = useData<Mark>('marks-existing', 'marks', {
+    filters: selectedExam && selectedSubject ? { 
+      exam_id: parseInt(selectedExam),
+      subject_id: parseInt(selectedSubject)
+    } : undefined
+  }, !!selectedExam && !!selectedSubject);
+
+  const [marks, setMarks] = useState<Record<number, number>>({});
+  const [rawMarks, setRawMarks] = useState<Record<number, string>>({});
+
+  // Initialize marks from existing data
+  const lastMarksRef = React.useRef<string>('');
+  
+  React.useEffect(() => {
+    if (existingMarksQuery.data) {
+      const marksKey = JSON.stringify(existingMarksQuery.data);
+      if (marksKey !== lastMarksRef.current) {
         const marksMap: Record<number, number> = {};
         const rawMap: Record<number, string> = {};
-        data.forEach((m: Mark) => {
+        existingMarksQuery.data.forEach((m) => {
           marksMap[m.student_id] = m.score;
-          // When loading existing marks, we assume they are percentages
-          // We show them as raw scores based on the current maxScore
-          const raw = (m.score * currentMax) / 100;
+          const raw = (m.score * Number(maxScore)) / 100;
           rawMap[m.student_id] = raw % 1 === 0 ? raw.toString() : raw.toFixed(1);
         });
         setMarks(marksMap);
         setRawMarks(rawMap);
-      });
+        lastMarksRef.current = marksKey;
+      }
     }
-  }, [selectedExam, selectedGrade, selectedSubject, token, currentMax]);
+  }, [existingMarksQuery.data, maxScore]);
 
   const handleScoreChange = (studentId: number, rawValue: string) => {
-    const newRawMarks = { ...rawMarks, [studentId]: rawValue };
-    setRawMarks(newRawMarks);
-
+    if (isReadOnly) return;
+    setRawMarks(p => ({ ...p, [studentId]: rawValue }));
     const val = parseFloat(rawValue);
-    if (isNaN(val)) {
-      const newMarks = { ...marks };
-      delete newMarks[studentId];
-      setMarks(newMarks);
-    } else if (val >= 0 && val <= currentMax) {
+    if (!isNaN(val) && val >= 0 && val <= currentMax) {
       const percentage = Math.round((val / currentMax) * 100);
-      setMarks({ ...marks, [studentId]: percentage });
+      setMarks(p => ({ ...p, [studentId]: percentage }));
     }
   };
 
   const handleSave = async () => {
+    if (isReadOnly) return;
     if (!selectedExam || !selectedSubject) return;
-    setSaving(true);
-    setStatus(null);
+    setFeedback(null);
+
     try {
-      const payloadMarks = Object.entries(marks).map(([studentId, score]) => ({
-        student_id: studentId,
-        score
+      const payloadMark = Object.entries(marks).map(([studentId, score]) => ({
+        student_id: parseInt(studentId),
+        score,
+        exam_id: parseInt(selectedExam),
+        subject_id: parseInt(selectedSubject),
+        school_id: user?.school_id
       }));
 
-      const res = await fetch('/api/marks/bulk', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          exam_id: selectedExam,
-          subject_id: selectedSubject,
-          marks: payloadMarks
-        })
+      await marksMutation.mutateAsync({ 
+        operation: 'upsert', 
+        payload: payloadMark,
+        onConflict: 'student_id,exam_id,subject_id'
       });
-
-      if (res.ok) {
-        setStatus({ type: 'success', msg: 'Marks saved successfully!' });
-      } else {
-        throw new Error('Failed to save');
-      }
-    } catch {
-      setStatus({ type: 'error', msg: 'Failed to save marks.' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleBulkImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !selectedExam || !selectedSubject) return;
-
-    setIsImporting(true);
-    setImportLogs(['Reading marks file...']);
-    
-    try {
-      const reader = new FileReader();
-      reader.onload = async (evt) => {
-        try {
-          const bstr = evt.target?.result;
-          const wb = XLSX.read(bstr, { type: 'binary' });
-          const wsname = wb.SheetNames[0];
-          const ws = wb.Sheets[wsname];
-          const data = XLSX.utils.sheet_to_json(ws) as ExcelRow[];
-          
-          setImportLogs(prev => [...prev, `Found ${data.length} records.`]);
-          
-          const newMarks = { ...marks };
-          const newRawMarks = { ...rawMarks };
-
-          data.forEach(row => {
-            const adm = row.AdmissionNo || row.admission_number || row['Adm No'];
-            const score = row.Score || row.score || row.Mark || row.mark;
-            
-            const student = students.find(s => s.admission_number === adm.toString());
-            if (student && score !== undefined) {
-              const val = parseFloat(score);
-              if (!isNaN(val) && val >= 0 && val <= currentMax) {
-                const percentage = Math.round((val / currentMax) * 100);
-                newMarks[student.id] = percentage;
-                newRawMarks[student.id] = val.toString();
-              }
-            }
-          });
-
-          setMarks(newMarks);
-          setRawMarks(newRawMarks);
-          setImportLogs(prev => [...prev, `✅ Processed. Click "Save All" to commit to database.`]);
-        } catch {
-           setImportLogs(prev => [...prev, `❌ Error parsing file`]);
-        }
-      };
-      reader.readAsBinaryString(file);
-    } catch {
-       setImportLogs(prev => [...prev, `❌ Import failed`]);
+      setFeedback({ type: 'success', msg: 'Marks saved!' });
+    } catch (err: unknown) {
+      const error = err as Error;
+      setFeedback({ type: 'error', msg: error.message });
     }
   };
 
   const downloadTemplate = () => {
-    const data = students.map(s => ({
-      'AdmissionNo': s.admission_number,
-      'Name': s.name,
-      'Score': ''
-    }));
+    const data = students.map(s => ({ 'AdmissionNo': s.admission_number, 'Name': s.name, 'Score': '' }));
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Marks Template");
-    XLSX.writeFile(wb, `Marks_Template_${selectedSubject}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, ws, "Template");
+    XLSX.writeFile(wb, `Marks_Template.xlsx`);
+  };
+
+  const handleBulkImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isReadOnly) return;
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const bstr = evt.target?.result;
+      const wb = XLSX.read(bstr, { type: 'binary' });
+      const wsname = wb.SheetNames[0];
+      const ws = wb.Sheets[wsname];
+      const data = XLSX.utils.sheet_to_json(ws) as ExcelRow[];
+      
+      const newMarks = { ...marks };
+      const newRawMarks = { ...rawMarks };
+      
+      data.forEach(row => {
+        const adm = (row.AdmissionNo || row.admission_number || row['Adm No'])?.toString();
+        const scoreStr = (row.Score || row.score || row.Mark || row.mark)?.toString();
+        const score = parseFloat(scoreStr || '');
+        const student = students.find(s => s.admission_number === adm);
+        if (student && !isNaN(score)) {
+          newMarks[student.id] = Math.round((score / currentMax) * 100);
+          newRawMarks[student.id] = score.toString();
+        }
+      });
+      setMarks(newMarks);
+      setRawMarks(newRawMarks);
+      setFeedback({ type: 'success', msg: 'Imported! Click Save.' });
+    };
+    reader.readAsBinaryString(file);
   };
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-bold text-slate-900">Marks Entry</h1>
-        <p className="text-slate-500 text-sm">Enter and update student scores for exams.</p>
+      <header className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Marks Entry</h1>
+          <p className="text-slate-500 text-sm">Enter scores for examinations.</p>
+        </div>
+        {isReadOnly && <span className="bg-red-50 text-red-600 px-3 py-1 rounded-full text-xs font-bold">READ-ONLY</span>}
       </header>
 
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-500 uppercase">Exam</label>
-            <select 
-              value={selectedExam}
-              onChange={(e) => setSelectedExam(e.target.value)}
-              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20"
-            >
-              <option value="">Select Exam</option>
-              {exams.map(e => <option key={e.id} value={e.id}>{e.exam_name} ({e.year})</option>)}
-            </select>
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-500 uppercase">Grade</label>
-            <select 
-              value={selectedGrade}
-              onChange={(e) => setSelectedGrade(e.target.value)}
-              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20"
-            >
-              <option value="">Select Grade</option>
-              {grades.map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
-            </select>
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-500 uppercase">Subject</label>
-            <select 
-              value={selectedSubject}
-              onChange={(e) => setSelectedSubject(e.target.value)}
-              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20"
-            >
-              <option value="">Select Subject</option>
-              {subjects.map(s => <option key={s.id} value={s.id}>{s.subject_name}</option>)}
-            </select>
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-500 uppercase">Out Of (Max Score)</label>
-            <input 
-              type="text"
-              inputMode="numeric"
-              value={maxScore}
-              onChange={(e) => {
-                const val = e.target.value;
-                if (val === '' || /^\d+$/.test(val)) {
-                  setMaxScore(val);
-                }
-              }}
-              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20 font-bold text-blue-600"
-            />
-          </div>
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="space-y-1">
+          <label className="text-xs font-bold text-slate-400 uppercase">Exam</label>
+          <select value={selectedExam} onChange={e => setSelectedExam(e.target.value)} className="w-full px-4 py-2 bg-slate-50 border rounded-lg text-sm">
+            <option value="">Select Exam</option>
+            {examsQuery.data?.map(e => <option key={e.id} value={e.id}>{e.exam_name}</option>)}
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-bold text-slate-400 uppercase">Grade</label>
+          <select value={selectedGrade} onChange={e => setSelectedGrade(e.target.value)} className="w-full px-4 py-2 bg-slate-50 border rounded-lg text-sm">
+            <option value="">Select Grade</option>
+            {filteredGrades.map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-bold text-slate-400 uppercase">Subject</label>
+          <select value={selectedSubject} onChange={e => setSelectedSubject(e.target.value)} className="w-full px-4 py-2 bg-slate-50 border rounded-lg text-sm">
+            <option value="">Select Subject</option>
+            {filteredSubjects.map(s => <option key={s.id} value={s.id}>{s.subject_name}</option>)}
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-bold text-slate-400 uppercase">Max Score</label>
+          <input type="number" value={maxScore} onChange={e => setMaxScore(e.target.value)} className="w-full px-4 py-2 bg-slate-50 border rounded-lg text-sm font-bold text-blue-600" />
         </div>
       </div>
 
-      {selectedExam && selectedGrade && selectedSubject ? (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-          <div className="p-4 border-b border-slate-100 flex items-center justify-between flex-wrap gap-4">
-            <h3 className="font-bold text-slate-900">Student List</h3>
-            <div className="flex items-center gap-2 flex-wrap">
-              {status && (
-                <span className={`text-sm flex items-center gap-1 ${status.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
-                  {status.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
-                  {status.msg}
-                </span>
-              )}
-              
-              <button 
-                onClick={downloadTemplate}
-                className="inline-flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
-                title="Download class list as template"
-              >
-                <Download size={18} />
-                Template
-              </button>
-
-              <label className="cursor-pointer inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm">
-                <Upload size={18} />
-                Bulk Import
-                <input type="file" accept=".xlsx, .xls, .csv" className="hidden" onChange={handleBulkImport} />
+      {selectedExam && selectedGrade && selectedSubject && (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden min-h-[400px]">
+          <div className="p-4 border-b flex items-center justify-between bg-slate-50/30">
+            <h3 className="font-bold text-sm text-slate-500 uppercase tracking-widest">Student Marks</h3>
+            <div className="flex gap-2 items-center">
+              {feedback && <span className={`text-xs font-bold ${feedback.type === 'success' ? 'text-emerald-600' : 'text-red-600'}`}>{feedback.msg}</span>}
+              <button title="Download Template" onClick={downloadTemplate} className="p-2 hover:bg-white rounded border"><Download size={16} /></button>
+              <label title="Import Excel" className={`p-2 rounded border cursor-pointer ${isReadOnly ? 'opacity-30' : 'hover:bg-white'}`}>
+                <Upload size={16} /><input type="file" className="hidden" disabled={isReadOnly} onChange={handleBulkImport} />
               </label>
-
               <button 
-                onClick={handleSave}
-                disabled={saving}
-                className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm disabled:opacity-50"
+                onClick={handleSave} 
+                disabled={marksMutation.isPending || isReadOnly} 
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold disabled:opacity-50"
               >
-                <Save size={18} />
-                {saving ? 'Saving...' : 'Save All Marks'}
+                {marksMutation.isPending ? 'Saving...' : <><Save size={14} /> Save Changes</>}
               </button>
             </div>
           </div>
-
-          {isImporting && (
-            <div className="bg-slate-900 p-4 text-white font-mono text-[10px] space-y-1 relative">
-              <button onClick={() => setIsImporting(false)} className="absolute top-2 right-2 text-slate-500 hover:text-white">
-                <X size={14} />
-              </button>
-              {importLogs.map((log, i) => <div key={i}>{log}</div>)}
-            </div>
-          )}
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+          {studentsQuery.isLoading ? (
+            <div className="p-8"><TableSkeleton rows={10} cols={4} /></div>
+          ) : (
+            <table className="w-full text-left">
               <thead>
-                <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider font-semibold">
-                  <th className="px-6 py-3">Admission No</th>
+                <tr className="bg-slate-50/50 text-[10px] uppercase font-black text-slate-400">
+                  <th className="px-6 py-3">Adm No</th>
                   <th className="px-6 py-3">Name</th>
-                  <th className="px-6 py-3 w-32">Raw Score</th>
-                  <th className="px-6 py-3">Converted (%)</th>
-                  <th className="px-6 py-3">CBC Grade</th>
+                  <th className="px-6 py-3">Score / {currentMax}</th>
+                  <th className="px-6 py-3">Percentage</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 text-sm">
-                {students.map((student) => (
-                  <tr key={student.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-6 py-4 font-mono text-slate-500">{student.admission_number}</td>
-                    <td className="px-6 py-4 font-medium text-slate-900">{student.name}</td>
+              <tbody className="divide-y text-sm">
+                {students.map(s => (
+                  <tr key={s.id} className="hover:bg-slate-50/30 transition-colors">
+                    <td className="px-6 py-4 font-mono text-xs">{s.admission_number}</td>
+                    <td className="px-6 py-4 font-bold text-slate-700">{s.name}</td>
                     <td className="px-6 py-4">
-                       <div className="flex items-center gap-2">
-                        <input 
-                          type="number"
-                          step="0.5"
-                          min="0"
-                          max={currentMax}
-                          value={rawMarks[student.id] ?? ''}
-                          onChange={(e) => handleScoreChange(student.id, e.target.value)}
-                          className="w-20 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-center font-bold text-blue-700 outline-none focus:ring-2 focus:ring-blue-500/20"
-                        />
-                        <span className="text-slate-400 text-xs font-medium">/ {currentMax}</span>
-                       </div>
+                      <input 
+                        type="number" 
+                        value={rawMarks[s.id] || ''} 
+                        disabled={isReadOnly}
+                        onChange={e => handleScoreChange(s.id, e.target.value)}
+                        className="w-24 px-3 py-1.5 bg-slate-50 border rounded-lg text-center font-bold text-slate-600 outline-none focus:ring-1 ring-blue-500"
+                      />
                     </td>
-                    <td className="px-6 py-4">
-                      {marks[student.id] !== undefined && (
-                        <div className="inline-flex items-center gap-1.5">
-                          <span className="font-bold text-blue-900 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
-                            {marks[student.id]}%
-                          </span>
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-6 py-4">
-                      {marks[student.id] !== undefined && (
-                        <span className={`font-bold px-3 py-1 rounded-full text-xs ${
-                          marks[student.id] >= 80 ? 'bg-green-100 text-green-700' :
-                          marks[student.id] >= 60 ? 'bg-blue-100 text-blue-700' :
-                          marks[student.id] >= 40 ? 'bg-yellow-100 text-yellow-700' :
-                          'bg-red-100 text-red-700'
-                        }`}>
-                          {getCBCGrade(marks[student.id]).level}
-                        </span>
-                      )}
-                    </td>
+                    <td className="px-6 py-4 font-black text-blue-600">{marks[s.id] || 0}%</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
-        </div>
-      ) : (
-        <div className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl p-12 text-center">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-slate-100 text-slate-400 mb-4">
-            <FileEdit size={24} />
-          </div>
-          <h3 className="text-slate-900 font-bold">Ready to enter marks?</h3>
-          <p className="text-slate-500 text-sm max-w-xs mx-auto mt-1">
-            Please select an exam, grade, and subject from the filters above to load the student list.
-          </p>
+          )}
         </div>
       )}
     </div>

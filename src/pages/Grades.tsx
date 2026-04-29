@@ -1,65 +1,58 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAuth } from '../useAuth';
+import { useSubscription } from '../useSubscription';
 import { Grade } from '../types';
-import { Plus, Trash2 } from 'lucide-react';
+import { useData, useDataMutation } from '../hooks/useData';
+import { Plus, Trash2, Lock } from 'lucide-react';
+import { TableSkeleton } from '../components/ui/Skeleton';
 
 const Grades = () => {
-  const { token, user } = useAuth();
-  const [grades, setGrades] = useState<Grade[]>([]);
+  const { user } = useAuth();
+  const { isReadOnly } = useSubscription();
   const [newGrade, setNewGrade] = useState('');
-
   const [error, setError] = useState<string | null>(null);
 
-  const fetchGrades = React.useCallback(async () => {
-    try {
-      const res = await fetch('/api/grades', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setGrades(data);
-        setError(null);
-      } else {
-        setError(data.error || 'Failed to load grades');
-        setGrades([]);
-      }
-    } catch {
-      setError('Could not connect to server');
-    }
-  }, [token]);
+  const gradesQuery = useData<Grade>('grades-full-list', 'grades', {
+    select: 'id, grade_name',
+    orderBy: { column: 'grade_name', ascending: true }
+  }, !!user?.school_id);
 
-  useEffect(() => {
-    Promise.resolve().then(() => fetchGrades());
-  }, [fetchGrades]);
+  const gradeMutation = useDataMutation('grades');
+
+  const grades = useMemo(() => {
+    const data = gradesQuery.data || [];
+    return [...data].sort((a, b) => {
+      const numA = parseInt(a.grade_name.match(/\d+/)?.[0] || '0');
+      const numB = parseInt(b.grade_name.match(/\d+/)?.[0] || '0');
+      if (numA !== numB) return numA - numB;
+      return a.grade_name.localeCompare(b.grade_name);
+    });
+  }, [gradesQuery.data]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newGrade) return;
-    const res = await fetch('/api/grades', {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({ grade_name: newGrade }),
-    });
-    if (res.ok) {
+    if (isReadOnly) return setError("Subscription expired (Read-only)");
+    if (!newGrade || !user?.school_id) return;
+    
+    setError(null);
+    try {
+      await gradeMutation.mutateAsync({ 
+        operation: 'insert', 
+        payload: [{ grade_name: newGrade, school_id: Number(user.school_id) }]
+      });
       setNewGrade('');
-      fetchGrades();
+    } catch (err: unknown) {
+      setError((err as Error).message);
     }
   };
 
   const handleDelete = async (id: number) => {
-    if (!window.confirm('Are you sure you want to delete this grade?')) return;
-    const res = await fetch(`/api/grades/${id}`, {
-      method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    if (res.ok) {
-      fetchGrades();
-    } else {
-      const data = await res.json();
-      alert(data.error || 'Failed to delete grade');
+    if (isReadOnly) return;
+    if (!window.confirm('Delete this grade?')) return;
+    try {
+      await gradeMutation.mutateAsync({ operation: 'delete', filters: { id } });
+    } catch (err: unknown) {
+      alert((err as Error).message);
     }
   };
 
@@ -71,12 +64,13 @@ const Grades = () => {
       </header>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg text-sm">
-          {error}
+        <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg text-sm flex justify-between items-center">
+          <span>{error}</span>
+          <button onClick={() => setError(null)} className="text-red-400 hover:text-red-600">×</button>
         </div>
       )}
 
-      {user?.role === 'Admin' && (
+      {(user?.role === 'Admin' || user?.role === 'Principal' || user?.role === 'SuperAdmin') && (
         <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 flex gap-4">
           <input 
             required
@@ -85,42 +79,54 @@ const Grades = () => {
             placeholder="Enter grade name (e.g. Grade 7)"
             className="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20"
           />
-          <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
-            <Plus size={18} />
+          <button 
+            type="submit" 
+            disabled={isReadOnly}
+            className={`px-6 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+              isReadOnly ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'
+            }`}
+          >
+            {isReadOnly ? <Lock size={18} /> : <Plus size={18} />}
             Add Grade
           </button>
         </form>
       )}
 
       <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider font-semibold">
-              <th className="px-6 py-3">ID</th>
-              <th className="px-6 py-3">Grade Name</th>
-              <th className="px-6 py-3 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 text-sm">
-            {grades.map((grade) => (
-              <tr key={grade.id} className="hover:bg-slate-50 transition-colors">
-                <td className="px-6 py-4 text-slate-400 font-mono">{grade.id}</td>
-                <td className="px-6 py-4 font-medium text-slate-900">{grade.grade_name}</td>
-                <td className="px-6 py-4 text-right">
-                  {user?.role === 'Admin' && (
-                    <button 
-                      onClick={() => handleDelete(grade.id)}
-                      className="text-red-400 hover:text-red-600 p-1 transition-colors"
-                      title="Delete"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  )}
-                </td>
+        {gradesQuery.isLoading ? (
+          <div className="p-6">
+            <TableSkeleton rows={8} cols={3} />
+          </div>
+        ) : (
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider font-semibold">
+                <th className="px-6 py-3">ID</th>
+                <th className="px-6 py-3">Grade Name</th>
+                <th className="px-6 py-3 text-right">Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-sm">
+              {grades.map((grade) => (
+                <tr key={grade.id} className="hover:bg-slate-50 transition-colors">
+                  <td className="px-6 py-4 text-slate-400 font-mono">{grade.id}</td>
+                  <td className="px-6 py-4 font-medium text-slate-900">{grade.grade_name}</td>
+                  <td className="px-6 py-4 text-right">
+                    {(user?.role === 'Admin' || user?.role === 'Principal' || user?.role === 'SuperAdmin') && (
+                      <button 
+                        onClick={() => handleDelete(grade.id)}
+                        className="text-red-400 hover:text-red-600 p-2 hover:bg-red-50 rounded-lg transition-all"
+                        title="Delete Grade"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );

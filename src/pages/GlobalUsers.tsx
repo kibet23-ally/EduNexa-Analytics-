@@ -1,37 +1,95 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAuth } from '../useAuth';
-import { Users2, Search, Filter, Shield, GraduationCap, Building2 } from 'lucide-react';
-
+import { Users2, Search, Filter, Shield, GraduationCap, Building2, Key, X, Eye, EyeOff, CheckCircle2, AlertCircle } from 'lucide-react';
+import { useData } from '../hooks/useData';
 import { User } from '../types';
+import { Navigate } from 'react-router-dom';
+import { Skeleton } from '../components/ui/Skeleton';
 
 const GlobalUsers = () => {
-  const { token } = useAuth();
-  const [users, setUsers] = useState<User[]>([]);
+  const { user } = useAuth();
   const [search, setSearch] = useState('');
+  const [resetModalUser, setResetModalUser] = useState<User | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loadingAction, setLoadingAction] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchUsers = async () => {
-      try {
-        const res = await fetch('/api/super/users', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
-        setUsers(data);
-      } catch (err) {
-        console.error(err);
+  const isSuperAdmin = useMemo(() => {
+    if (!user) return false;
+    const role = user.role.toLowerCase();
+    return role === 'superadmin' || role === 'super_admin' || role.includes('super');
+  }, [user]);
+
+  // Use cached data hook
+  const { data: users, isLoading } = useData<User>('global-users-list', 'teachers', {
+    select: '*, schools:school_id(name)'
+  }, isSuperAdmin, 300000);
+
+  const filteredUsers = useMemo(() => {
+    if (!users) return [];
+    return users.filter(u => 
+      u.name.toLowerCase().includes(search.toLowerCase()) || 
+      u.email.toLowerCase().includes(search.toLowerCase()) ||
+      (u.schools?.name || 'Global').toLowerCase().includes(search.toLowerCase())
+    );
+  }, [users, search]);
+
+  if (!user) return <Navigate to="/login" />;
+  if (!isSuperAdmin) return <Navigate to="/" />;
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetModalUser) return;
+    if (newPassword.length < 8) {
+      setActionError('Password must be at least 8 characters long');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setActionError('Passwords do not match');
+      return;
+    }
+
+    setLoadingAction(true);
+    setActionError(null);
+    setActionSuccess(null);
+
+    try {
+      const response = await fetch('/api/admin/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: resetModalUser.email, newPassword: newPassword })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to reset password via server');
       }
-    };
-    fetchUsers();
-  }, [token]);
 
-  const filteredUsers = users.filter(u => 
-    u.name.toLowerCase().includes(search.toLowerCase()) || 
-    u.email.toLowerCase().includes(search.toLowerCase()) ||
-    (u.schools?.name || 'Global').toLowerCase().includes(search.toLowerCase())
-  );
+      setActionSuccess(`Password reset successfully. New password: ${newPassword}`);
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : 'Failed to reset password');
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="p-8 space-y-8 max-w-7xl mx-auto">
+        <Skeleton className="h-10 w-1/3" />
+        <Skeleton className="h-96 w-full rounded-3xl" />
+      </div>
+    );
+  }
 
   return (
-    <div className="p-8 space-y-8 max-w-7xl mx-auto">
+    <div className="p-8 space-y-8 max-w-7xl mx-auto animate-in fade-in duration-500">
       <header className="flex justify-between items-end">
         <div>
           <h1 className="text-3xl font-bold text-slate-900">Global User Directory</h1>
@@ -84,7 +142,7 @@ const GlobalUsers = () => {
                   }`}>
                     {user.role === 'SuperAdmin' ? <Shield size={12} /> : 
                      user.role === 'Admin' ? <GraduationCap size={12} /> : <Users2 size={12} />}
-                    {user.role}
+                    {user.role === 'SuperAdmin' ? 'Super Admin' : (user.role === 'Admin' ? 'Admin' : 'Teacher')}
                   </span>
                 </td>
                 <td className="px-8 py-5">
@@ -94,15 +152,145 @@ const GlobalUsers = () => {
                   </div>
                 </td>
                 <td className="px-8 py-5 text-right">
-                  <button className="text-slate-300 hover:text-blue-600 font-bold text-sm transition-colors opacity-0 group-hover:opacity-100">
-                    Edit Permissions
-                  </button>
+                  <div className="flex justify-end gap-2">
+                    <button 
+                      onClick={() => {
+                        setResetModalUser(user);
+                        setActionError(null);
+                        setActionSuccess(null);
+                      }}
+                      className="flex items-center gap-2 px-3 py-1.5 text-blue-600 hover:bg-blue-50 rounded-lg font-bold text-sm transition-all"
+                    >
+                      <Key size={14} />
+                      Reset Password
+                    </button>
+                    <button className="text-slate-300 hover:text-blue-600 font-bold text-sm transition-colors">
+                      Edit
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {/* Reset Password Modal */}
+      {resetModalUser && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-300">
+            <div className="p-8 border-b border-slate-50 flex justify-between items-center bg-slate-50/50">
+              <div className="flex items-center gap-3 text-blue-600">
+                <div className="p-3 bg-blue-100 rounded-2xl">
+                  <Key size={24} />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-slate-900">Reset Password</h2>
+                  <p className="text-xs text-slate-500 font-medium">Administrative bypass</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setResetModalUser(null)}
+                className="p-2 hover:bg-white rounded-xl transition-colors text-slate-400"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-8 space-y-6">
+              {actionError && (
+                <div className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-center gap-3 text-red-600 text-sm animate-shake">
+                  <AlertCircle size={18} className="shrink-0" />
+                  <p className="font-bold">{actionError}</p>
+                </div>
+              )}
+              
+              {actionSuccess && (
+                <div className="p-4 bg-green-50 border border-green-100 rounded-2xl flex items-start gap-3 text-green-600 text-sm">
+                  <CheckCircle2 size={18} className="shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-bold">Success!</p>
+                    <p className="font-medium whitespace-pre-wrap">{actionSuccess}</p>
+                  </div>
+                </div>
+              )}
+
+              {!actionSuccess && (
+                <form onSubmit={handleResetPassword} className="space-y-6">
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1">Target School</label>
+                        <div className="px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-slate-600 text-sm font-bold flex items-center gap-2">
+                          <Building2 size={14} className="text-slate-400" />
+                          <span className="truncate">{resetModalUser.schools?.name || 'Platform'}</span>
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1">Admin Email</label>
+                        <div className="px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-slate-600 text-sm font-bold flex items-center gap-2">
+                          <Users2 size={14} className="text-slate-400" />
+                          <span className="truncate">{resetModalUser.email}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1">New Password</label>
+                      <div className="relative group">
+                        <input
+                          type={showPassword ? 'text' : 'password'}
+                          required
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          placeholder="Min. 8 characters"
+                          className="w-full pl-5 pr-12 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500/20 outline-none transition-all text-slate-900 font-bold placeholder:text-slate-300"
+                        />
+                        <button 
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 transition-colors"
+                        >
+                          {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1">Confirm New Password</label>
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        required
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="Must match exactly"
+                        className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500/20 outline-none transition-all text-slate-900 font-bold placeholder:text-slate-300"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={loadingAction}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-2xl transition-all shadow-xl shadow-blue-600/20 active:scale-[0.98] disabled:opacity-50"
+                  >
+                    {loadingAction ? 'Processing...' : 'Override & Reset Password'}
+                  </button>
+                </form>
+              )}
+
+              {actionSuccess && (
+                <button
+                  onClick={() => setResetModalUser(null)}
+                  className="w-full bg-slate-900 text-white font-black py-4 rounded-2xl transition-all hover:bg-slate-800"
+                >
+                  Close & Continue
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

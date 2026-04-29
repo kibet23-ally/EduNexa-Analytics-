@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { supabase } from '../lib/supabase';
 import { ShoppingCart, CheckCircle2, AlertCircle } from 'lucide-react';
 import { motion } from 'motion/react';
+import { supabase } from '../lib/supabase';
 
 export default function OrderForm() {
   const [formData, setFormData] = useState({
@@ -19,11 +19,11 @@ export default function OrderForm() {
     setStatus(null);
 
     try {
-      const { error } = await supabase
+      const { error: insertError } = await supabase
         .from('orders')
         .insert([formData]);
 
-      if (error) throw error;
+      if (insertError) throw insertError;
 
       setStatus({ type: 'success', message: 'Your order has been submitted successfully!' });
       setFormData({ name: '', email: '', service: 'Analytics Basic', message: '' });

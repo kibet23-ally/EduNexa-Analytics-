@@ -5,6 +5,7 @@ import { useData } from '../hooks/useData';
 import { User } from '../types';
 import { Navigate } from 'react-router-dom';
 import { Skeleton } from '../components/ui/Skeleton';
+import { supabase } from '../lib/supabase';
 
 const GlobalUsers = () => {
   const { user } = useAuth();
@@ -23,19 +24,19 @@ const GlobalUsers = () => {
     return role === 'superadmin' || role === 'super_admin' || role.includes('super');
   }, [user]);
 
-  // Use cached data hook
   const { data: users, isLoading } = useData<User>('global-users-list', 'teachers', {
     select: '*, schools:school_id(name)'
   }, isSuperAdmin, 300000);
 
+  const safeUsers = users || [];
+
   const filteredUsers = useMemo(() => {
-    if (!users) return [];
-    return users.filter(u => 
-      u.name.toLowerCase().includes(search.toLowerCase()) || 
-      u.email.toLowerCase().includes(search.toLowerCase()) ||
-      (u.schools?.name || 'Global').toLowerCase().includes(search.toLowerCase())
+    return safeUsers.filter(u =>
+      (u.name || '').toLowerCase().includes(search.toLowerCase()) ||
+      (u.email || '').toLowerCase().includes(search.toLowerCase()) ||
+      ((u.schools as { name?: string })?.name || 'Global').toLowerCase().includes(search.toLowerCase())
     );
-  }, [users, search]);
+  }, [safeUsers, search]);
 
   if (!user) return <Navigate to="/login" />;
   if (!isSuperAdmin) return <Navigate to="/" />;
@@ -57,19 +58,15 @@ const GlobalUsers = () => {
     setActionSuccess(null);
 
     try {
-      const response = await fetch('/api/admin/reset-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: resetModalUser.email, newPassword: newPassword })
-      });
+      // Send password reset email via Supabase Auth
+      const { error } = await supabase.auth.resetPasswordForEmail(
+        resetModalUser.email,
+        { redirectTo: `${window.location.origin}/reset-password` }
+      );
 
-      const data = await response.json();
+      if (error) throw error;
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to reset password via server');
-      }
-
-      setActionSuccess(`Password reset successfully. New password: ${newPassword}`);
+      setActionSuccess(`Password reset email sent to ${resetModalUser.email}. They will receive a link to set a new password.`);
       setNewPassword('');
       setConfirmPassword('');
     } catch (err: unknown) {
@@ -93,12 +90,12 @@ const GlobalUsers = () => {
       <header className="flex justify-between items-end">
         <div>
           <h1 className="text-3xl font-bold text-slate-900">Global User Directory</h1>
-          <p className="text-slate-500 mt-2">Managing {users.length} users across the EduNexa network.</p>
+          <p className="text-slate-500 mt-2">Managing {safeUsers.length} users across the EduNexa network.</p>
         </div>
         <div className="flex gap-4">
           <div className="relative">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input 
+            <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search by name, email or school..."
@@ -122,55 +119,63 @@ const GlobalUsers = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
-            {filteredUsers.map((user) => (
-              <tr key={user.id} className="hover:bg-slate-50/50 transition-colors group">
-                <td className="px-8 py-5">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold text-lg">
-                      {user.name.charAt(0)}
-                    </div>
-                    <div>
-                      <p className="font-bold text-slate-900">{user.name}</p>
-                      <p className="text-sm text-slate-400 font-medium">{user.email}</p>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-8 py-5">
-                  <span className={`px-3 py-1 rounded-full text-xs font-bold inline-flex items-center gap-1.5 ${
-                    user.role === 'SuperAdmin' ? 'bg-purple-50 text-purple-600' :
-                    user.role === 'Admin' ? 'bg-blue-50 text-blue-600' : 'bg-slate-50 text-slate-600'
-                  }`}>
-                    {user.role === 'SuperAdmin' ? <Shield size={12} /> : 
-                     user.role === 'Admin' ? <GraduationCap size={12} /> : <Users2 size={12} />}
-                    {user.role === 'SuperAdmin' ? 'Super Admin' : (user.role === 'Admin' ? 'Admin' : 'Teacher')}
-                  </span>
-                </td>
-                <td className="px-8 py-5">
-                  <div className="flex items-center gap-2 text-slate-600 font-medium tracking-tight">
-                    <Building2 size={16} className="text-slate-300" />
-                    {user.schools?.name || <span className="text-slate-300 italic">Platform Level</span>}
-                  </div>
-                </td>
-                <td className="px-8 py-5 text-right">
-                  <div className="flex justify-end gap-2">
-                    <button 
-                      onClick={() => {
-                        setResetModalUser(user);
-                        setActionError(null);
-                        setActionSuccess(null);
-                      }}
-                      className="flex items-center gap-2 px-3 py-1.5 text-blue-600 hover:bg-blue-50 rounded-lg font-bold text-sm transition-all"
-                    >
-                      <Key size={14} />
-                      Reset Password
-                    </button>
-                    <button className="text-slate-300 hover:text-blue-600 font-bold text-sm transition-colors">
-                      Edit
-                    </button>
-                  </div>
+            {filteredUsers.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-8 py-12 text-center text-slate-400 font-medium">
+                  No users found.
                 </td>
               </tr>
-            ))}
+            ) : (
+              filteredUsers.map((u) => (
+                <tr key={u.id} className="hover:bg-slate-50/50 transition-colors group">
+                  <td className="px-8 py-5">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold text-lg">
+                        {(u.name || '?').charAt(0)}
+                      </div>
+                      <div>
+                        <p className="font-bold text-slate-900">{u.name}</p>
+                        <p className="text-sm text-slate-400 font-medium">{u.email}</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-8 py-5">
+                    <span className={`px-3 py-1 rounded-full text-xs font-bold inline-flex items-center gap-1.5 ${
+                      u.role === 'SuperAdmin' ? 'bg-purple-50 text-purple-600' :
+                      u.role === 'Admin' ? 'bg-blue-50 text-blue-600' : 'bg-slate-50 text-slate-600'
+                    }`}>
+                      {u.role === 'SuperAdmin' ? <Shield size={12} /> :
+                       u.role === 'Admin' ? <GraduationCap size={12} /> : <Users2 size={12} />}
+                      {u.role === 'SuperAdmin' ? 'Super Admin' : (u.role === 'Admin' ? 'Admin' : 'Teacher')}
+                    </span>
+                  </td>
+                  <td className="px-8 py-5">
+                    <div className="flex items-center gap-2 text-slate-600 font-medium tracking-tight">
+                      <Building2 size={16} className="text-slate-300" />
+                      {(u.schools as { name?: string })?.name || <span className="text-slate-300 italic">Platform Level</span>}
+                    </div>
+                  </td>
+                  <td className="px-8 py-5 text-right">
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={() => {
+                          setResetModalUser(u);
+                          setActionError(null);
+                          setActionSuccess(null);
+                        }}
+                        className="flex items-center gap-2 px-3 py-1.5 text-blue-600 hover:bg-blue-50 rounded-lg font-bold text-sm transition-all"
+                      >
+                        <Key size={14} />
+                        Reset Password
+                      </button>
+                      <button className="text-slate-300 hover:text-blue-600 font-bold text-sm transition-colors">
+                        Edit
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
@@ -186,10 +191,10 @@ const GlobalUsers = () => {
                 </div>
                 <div>
                   <h2 className="text-xl font-bold text-slate-900">Reset Password</h2>
-                  <p className="text-xs text-slate-500 font-medium">Administrative bypass</p>
+                  <p className="text-xs text-slate-500 font-medium">Send password reset email</p>
                 </div>
               </div>
-              <button 
+              <button
                 onClick={() => setResetModalUser(null)}
                 className="p-2 hover:bg-white rounded-xl transition-colors text-slate-400"
               >
@@ -199,12 +204,12 @@ const GlobalUsers = () => {
 
             <div className="p-8 space-y-6">
               {actionError && (
-                <div className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-center gap-3 text-red-600 text-sm animate-shake">
+                <div className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-center gap-3 text-red-600 text-sm">
                   <AlertCircle size={18} className="shrink-0" />
                   <p className="font-bold">{actionError}</p>
                 </div>
               )}
-              
+
               {actionSuccess && (
                 <div className="p-4 bg-green-50 border border-green-100 rounded-2xl flex items-start gap-3 text-green-600 text-sm">
                   <CheckCircle2 size={18} className="shrink-0 mt-0.5" />
@@ -223,11 +228,11 @@ const GlobalUsers = () => {
                         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1">Target School</label>
                         <div className="px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-slate-600 text-sm font-bold flex items-center gap-2">
                           <Building2 size={14} className="text-slate-400" />
-                          <span className="truncate">{resetModalUser.schools?.name || 'Platform'}</span>
+                          <span className="truncate">{(resetModalUser.schools as { name?: string })?.name || 'Platform'}</span>
                         </div>
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1">Admin Email</label>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1">User Email</label>
                         <div className="px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-slate-600 text-sm font-bold flex items-center gap-2">
                           <Users2 size={14} className="text-slate-400" />
                           <span className="truncate">{resetModalUser.email}</span>
@@ -235,37 +240,8 @@ const GlobalUsers = () => {
                       </div>
                     </div>
 
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1">New Password</label>
-                      <div className="relative group">
-                        <input
-                          type={showPassword ? 'text' : 'password'}
-                          required
-                          value={newPassword}
-                          onChange={(e) => setNewPassword(e.target.value)}
-                          placeholder="Min. 8 characters"
-                          className="w-full pl-5 pr-12 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500/20 outline-none transition-all text-slate-900 font-bold placeholder:text-slate-300"
-                        />
-                        <button 
-                          type="button"
-                          onClick={() => setShowPassword(!showPassword)}
-                          className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 transition-colors"
-                        >
-                          {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1">Confirm New Password</label>
-                      <input
-                        type={showPassword ? 'text' : 'password'}
-                        required
-                        value={confirmPassword}
-                        onChange={(e) => setConfirmPassword(e.target.value)}
-                        placeholder="Must match exactly"
-                        className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500/20 outline-none transition-all text-slate-900 font-bold placeholder:text-slate-300"
-                      />
+                    <div className="p-4 bg-blue-50 rounded-2xl text-blue-700 text-sm font-medium">
+                      A password reset email will be sent to <strong>{resetModalUser.email}</strong>. They will receive a secure link to set a new password.
                     </div>
                   </div>
 
@@ -274,7 +250,7 @@ const GlobalUsers = () => {
                     disabled={loadingAction}
                     className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-2xl transition-all shadow-xl shadow-blue-600/20 active:scale-[0.98] disabled:opacity-50"
                   >
-                    {loadingAction ? 'Processing...' : 'Override & Reset Password'}
+                    {loadingAction ? 'Sending...' : 'Send Password Reset Email'}
                   </button>
                 </form>
               )}

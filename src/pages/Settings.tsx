@@ -403,4 +403,37 @@ const SettingsPage = () => {
                 </div>
                 <div className="flex bg-white dark:bg-slate-800 p-1 rounded-xl shadow-sm border border-slate-100 dark:border-slate-700">
                   <button onClick={() => { setFormData({ ...formData, theme_preference: 'light' }); setTheme('light'); }}
-                    cl
+                    className={cn('px-4 py-2 rounded-lg text-xs font-medium transition-all', theme === 'light' ? 'bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-400 hover:text-slate-600')}>
+                    Light
+                  </button>
+                  <button onClick={() => { setFormData({ ...formData, theme_preference: 'dark' }); setTheme('dark'); }}
+                    className={cn('px-4 py-2 rounded-lg text-xs font-medium transition-all', theme === 'dark' ? 'bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-400 hover:text-slate-600')}>
+                    Dark
+                  </button>
+                </div>
+              </div>
+              {/* Notifications Toggle */}
+              <div className="flex items-center justify-between p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50">
+                <div className="flex items-center gap-4">
+                  <div className="p-2 bg-white dark:bg-slate-800 rounded-xl shadow-sm">
+                    <Bell size={20} className="text-primary" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 dark:text-white text-sm">Email Notifications</h4>
+                    <p className="text-xs text-slate-500 font-medium">Receive weekly summarized reports.</p>
+                  </div>
+                </div>
+                <button onClick={() => setFormData({ ...formData, notifications_enabled: !formData.notifications_enabled })}
+                  className={cn('w-12 h-6 rounded-full transition-all relative', formData.notifications_enabled ? 'bg-primary' : 'bg-slate-200 dark:bg-slate-700')}>
+                  <div className={cn('absolute top-1 w-4 h-4 rounded-full bg-white transition-all shadow-sm', formData.notifications_enabled ? 'left-7' : 'left-1')} />
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default SettingsPage;

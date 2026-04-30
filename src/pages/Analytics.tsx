@@ -389,4 +389,105 @@ const Analytics = () => {
               <div className="space-y-3">
                 {data.stats.bottom5.map((s, i) => (
                   <div key={i} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
-                    <div c
+                    <div className="flex items-center gap-3">
+                      <span className="w-6 h-6 flex items-center justify-center bg-red-100 text-red-700 rounded-full text-xs font-bold">{data.stats.totalStudents - 4 + i}</span>
+                      <span className="text-sm font-medium text-slate-700">{s.name}</span>
+                    </div>
+                    <span className="text-sm font-bold text-slate-900">{s.avgPoints} pts</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+              <h3 className="text-lg font-bold text-slate-900 mb-6">Performance Distribution</h3>
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={data.distribution} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                      {data.distribution.map((_entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+              <h3 className="text-lg font-bold text-slate-900 mb-6">Subject Averages</h3>
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={data.subjectAverages}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                    <YAxis domain={[0, 12]} tick={{ fontSize: 10 }} />
+                    <Tooltip />
+                    <Bar dataKey="average" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex items-center gap-3">
+              <Award size={20} className="text-blue-600" />
+              <h3 className="text-lg font-bold text-slate-900">Full Student Rankings</h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-widest">
+                    <th className="px-4 py-3 text-left font-bold">Rank</th>
+                    <th className="px-4 py-3 text-left font-bold">Student</th>
+                    {data.subjects.map(sub => (
+                      <th key={sub.id} className="px-4 py-3 text-center font-bold">{sub.subject_name}</th>
+                    ))}
+                    <th className="px-4 py-3 text-center font-bold">Avg Pts</th>
+                    <th className="px-4 py-3 text-center font-bold">Total</th>
+                    <th className="px-4 py-3 text-center font-bold">Grade</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {data.rankedStudents.map((s, i) => (
+                    <tr key={i} className={`hover:bg-slate-50 transition-colors ${i < 3 ? 'bg-amber-50/30' : ''}`}>
+                      <td className="px-4 py-3 font-bold text-slate-400">{i + 1}</td>
+                      <td className="px-4 py-3 font-bold text-slate-900">{s.name}</td>
+                      {data.subjects.map(sub => (
+                        <td key={sub.id} className="px-4 py-3 text-center text-slate-600">{s.subjectMarks[sub.id]}</td>
+                      ))}
+                      <td className="px-4 py-3 text-center font-bold text-blue-600">{s.avgPoints}</td>
+                      <td className="px-4 py-3 text-center text-slate-600">{s.totalScore}</td>
+                      <td className="px-4 py-3 text-center">
+                        <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded-md text-xs font-bold">{getOverallGrade(s.avgPoints)}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : (
+        (!isSuperAdmin || selectedSchool) && selectedExam && selectedGrade ? (
+          <div className="flex items-center justify-center min-h-[200px]">
+            <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : (
+          !isSuperAdmin && (
+            <div className="bg-slate-50 rounded-xl p-12 text-center text-slate-400">
+              <BarChart3 size={48} className="mx-auto mb-4 opacity-30" />
+              <p className="font-medium">Select an exam and grade to view analytics</p>
+            </div>
+          )
+        )
+      )}
+    </div>
+  );
+};
+
+export default Analytics;

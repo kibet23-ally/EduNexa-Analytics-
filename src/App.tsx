@@ -49,8 +49,9 @@ const RoleProtectedRoute: React.FC<{ children: React.ReactNode; allowedRoles: st
   if (!isAuthenticated) return <Navigate to="/login" />;
   if (!user) return <Navigate to="/login" />;
   
-  const normalizedUserRole = user.role.toLowerCase();
-  const normalizedAllowedRoles = allowedRoles.map(r => r.toLowerCase());
+  const normalize = (r: string) => r.toLowerCase().replace(/_/g, '').replace('school', '');
+  const normalizedUserRole = normalize(user.role);
+  const normalizedAllowedRoles = allowedRoles.map(r => normalize(r));
   
   if (!normalizedAllowedRoles.includes(normalizedUserRole)) return <Navigate to="/" />;
   return <>{children}</>;

@@ -4,6 +4,7 @@ import { School } from '../types';
 import { Building2, Plus, Globe, Image as ImageIcon, X, Check, Trash2, Users, BookOpen, FileText, Settings, LayoutDashboard, AlertTriangle, Key, Eye, EyeOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { fetchWithProxy, writeWithProxy } from '../lib/fetchProxy';
+import { supabase } from '../lib/supabase';
 
 const Schools = () => {
   const { user } = useAuth();
@@ -221,6 +222,8 @@ const Schools = () => {
     }
 
     setLoadingAction(true);
+    let schoolIdCreated: number | null = null;
+    
     try {
       // 1. Create the school first to get its ID
       const { data: createdArr } = await writeWithProxy('schools', 'insert', [{
@@ -233,36 +236,48 @@ const Schools = () => {
 
       const schoolData = Array.isArray(createdArr) ? createdArr[0] : createdArr;
       if (!schoolData) throw new Error('Failed to retrieve created school data');
+      
+      schoolIdCreated = schoolData.id;
 
-      // 2. Create the school admin user via the high-privilege server proxy
-      // This ensures they are created in Auth + users + teachers tables correctly
-      const adminResponse = await fetch('/api/admin/create-school-admin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: formData.admin_email,
-          password: formData.admin_password,
-          name: formData.admin_name,
-          schoolId: schoolData.id,
-          role: 'Admin'
-        })
+      // 2. Create the school admin auth account
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: formData.admin_email,
+        password: formData.admin_password,
+        options: {
+          data: {
+            full_name: formData.admin_name,
+            role: 'school_admin'
+          }
+        }
       });
 
-      const adminResult = await adminResponse.json();
-      if (!adminResponse.ok) {
-        // If admin creation fails, we might want to warn the user but the school is already created.
-        // Or we could delete the school, but usually it's better to just show an error.
-        console.error('Admin provision error:', adminResult.error);
-        throw new Error(`School created, but Admin account failed: ${adminResult.error}. Please go to User Directory to fix.`);
-      }
-      
+      if (authError) throw authError;
+      if (!authData.user) throw new Error('Admin auth account creation failed');
+
+      // 3. Insert into public.users
+      await writeWithProxy('users', 'insert', [{
+        id: authData.user.id,
+        email: formData.admin_email,
+        name: formData.admin_name,
+        role: 'school_admin',
+        school_id: schoolData.id
+      }]);
+
+      // 4. Insert into public.teachers
+      await writeWithProxy('teachers', 'insert', [{
+        name: formData.admin_name,
+        email: formData.admin_email,
+        role: 'Admin',
+        school_id: schoolData.id
+      }]);
+
       // Store credentials for the success modal
       setCreatedCredentials({
         email: formData.admin_email,
         password: formData.admin_password,
         name: formData.admin_name
       });
-      
+
       setFormData({ 
         name: '', 
         slug: '', 
@@ -277,6 +292,14 @@ const Schools = () => {
       fetchSchools();
     } catch (err: unknown) {
       console.error('Submission caught error:', err);
+      // Clean up the school if it was created but admin setup failed
+      if (schoolIdCreated) {
+        try {
+          await writeWithProxy('schools', 'delete', null, { id: schoolIdCreated });
+        } catch (delErr) {
+          console.error('Cleanup failed:', delErr);
+        }
+      }
       setError(err instanceof Error ? err.message : 'Failed to add school');
     } finally {
       setLoadingAction(false);
@@ -288,41 +311,25 @@ const Schools = () => {
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!resetModalEmail) return;
-    if (newPassword.length < 8) {
-      setError('Password must be at least 8 characters long');
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setError('Passwords do not match');
-      return;
-    }
 
     setLoadingAction(true);
     setError(null);
     setSuccess(null);
 
     try {
-      // Then update password using the new server proxy (bypasses browser CORS/network restrictions and RLS)
-      setLoadingAction(true);
-      const response = await fetch('/api/admin/reset-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: resetModalEmail, newPassword: newPassword })
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(resetModalEmail, {
+        redirectTo: `${window.location.origin}/reset-password`
       });
 
-      const data = await response.json();
+      if (resetError) throw resetError;
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to reset password via server');
-      }
-
-      setSuccess(`Password reset successfully for ${resetModalEmail}. New password: ${newPassword}`);
+      setSuccess(`Password reset email sent to ${resetModalEmail}`);
       setNewPassword('');
       setConfirmPassword('');
-      alert('Password reset successfully!');
+      alert('Password reset email sent');
       setResetModalSchool(null);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to reset password');
+      setError(err instanceof Error ? err.message : 'Failed for reset password request');
     } finally {
       setLoadingAction(false);
     }

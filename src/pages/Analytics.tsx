@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useAuth } from '../useAuth';
 import { Exam, Grade, Subject, Mark, Student } from '../types';
 import { getOverallGrade } from '../lib/utils';

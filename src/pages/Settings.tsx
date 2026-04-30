@@ -46,13 +46,16 @@ const SettingsPage = () => {
 
   useEffect(() => {
     const fetchSettings = async () => {
-      const userLocal = JSON.parse(localStorage.getItem('edunexa_user') || '{}');
-      const schoolId = userLocal.school_id;
-      const userEmail = userLocal.email;
-      
-      if (!userEmail) return;
-
       try {
+        const userLocal = JSON.parse(localStorage.getItem('edunexa_user') || '{}');
+        const schoolId = userLocal.school_id;
+        const userEmail = userLocal.email;
+        
+        if (!userEmail) {
+          setLoading(false);
+          return;
+        }
+
         const [
           { data: userData, error: userError },
           { data: schoolDataResp }
@@ -64,11 +67,11 @@ const SettingsPage = () => {
         if (userError) throw userError;
 
         setFormData({
-          name: userData.name || '',
-          email: userData.email || '',
-          avatar_url: userData.avatar_url || '',
-          theme_preference: userData.theme_preference || 'light',
-          notifications_enabled: userData.notifications_enabled ?? true
+          name: userData?.name || '',
+          email: userData?.email || '',
+          avatar_url: userData?.avatar_url || '',
+          theme_preference: userData?.theme_preference || 'light',
+          notifications_enabled: userData?.notifications_enabled ?? true
         });
 
         if (schoolDataResp) {

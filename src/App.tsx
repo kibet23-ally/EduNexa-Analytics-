@@ -98,11 +98,13 @@ const AppRoutes = () => {
       <Route path="/status" element={<Suspense fallback={<div>Loading...</div>}><SystemStatus /></Suspense>} />
       
       {/* Super Admin Routes */}
-      <Route path="/super-admin" element={<RoleProtectedRoute allowedRoles={['SuperAdmin']}><Layout><SuperAdminDashboard /></Layout></RoleProtectedRoute>} />
-      <Route path="/super/dashboard" element={<RoleProtectedRoute allowedRoles={['SuperAdmin']}><Layout><SuperAdminDashboard /></Layout></RoleProtectedRoute>} />
-      <Route path="/super/schools" element={<RoleProtectedRoute allowedRoles={['SuperAdmin']}><Layout><Schools /></Layout></RoleProtectedRoute>} />
-      <Route path="/super/users" element={<RoleProtectedRoute allowedRoles={['SuperAdmin']}><Layout><GlobalUsers /></Layout></RoleProtectedRoute>} />
-      <Route path="/super/subscriptions" element={<RoleProtectedRoute allowedRoles={['SuperAdmin']}><Layout><Subscriptions /></Layout></RoleProtectedRoute>} />
+      <Route path="/super-admin" element={<RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}><Layout><SuperAdminDashboard /></Layout></RoleProtectedRoute>} />
+      <Route path="/super/dashboard" element={<RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}><Layout><SuperAdminDashboard /></Layout></RoleProtectedRoute>} />
+      <Route path="/super/schools" element={<RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}><Layout><Schools /></Layout></RoleProtectedRoute>} />
+      <Route path="/super/users" element={<RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}><Layout><GlobalUsers /></Layout></RoleProtectedRoute>} />
+      <Route path="/super/subscriptions" element={<RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}><Layout><Subscriptions /></Layout></RoleProtectedRoute>} />
+      <Route path="/super/analytics" element={<RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}><Layout><ErrorBoundary name="Analytics"><Analytics /></ErrorBoundary></Layout></RoleProtectedRoute>} />
+      <Route path="/super/settings" element={<RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}><Layout><ErrorBoundary name="Settings"><SettingsPage /></ErrorBoundary></Layout></RoleProtectedRoute>} />
     </Routes>
   );
 };

@@ -33,7 +33,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Apply theme on mount and when it changes
   useEffect(() => {
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
@@ -46,7 +45,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const fetchLatestProfile = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
-
         if (session?.user) {
           setToken(session.access_token);
           localStorage.setItem('edunexa_token', session.access_token);
@@ -60,21 +58,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (profile) {
             setUser(profile as User);
             localStorage.setItem('edunexa_user', JSON.stringify(profile));
-          } else {
-            // Fallback to auth metadata
-            const fallbackUser = {
-              id: session.user.id,
-              email: session.user.email || '',
-              name: session.user.user_metadata?.name || '',
-              role: session.user.user_metadata?.role || 'school_admin',
-              school_id: session.user.user_metadata?.school_id || null,
-              password: '',
-            } as unknown as User;
-            setUser(fallbackUser);
-            localStorage.setItem('edunexa_user', JSON.stringify(fallbackUser));
           }
         } else {
-          // No active session — clear everything
           setToken(null);
           setUser(null);
           localStorage.removeItem('edunexa_token');
@@ -87,30 +72,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     fetchLatestProfile();
 
-    // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (event === 'TOKEN_REFRESHED' && session) {
           setToken(session.access_token);
           localStorage.setItem('edunexa_token', session.access_token);
         }
-
         if (event === 'SIGNED_IN' && session) {
           setToken(session.access_token);
           localStorage.setItem('edunexa_token', session.access_token);
-
           const { data: profile } = await supabase
             .from('users')
             .select('*')
             .eq('id', session.user.id)
             .maybeSingle();
-
           if (profile) {
             setUser(profile as User);
             localStorage.setItem('edunexa_user', JSON.stringify(profile));
           }
         }
-
         if (event === 'SIGNED_OUT') {
           setToken(null);
           setUser(null);
@@ -123,7 +103,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     );
 
-    // Multi-tab sync
     const handleStorage = () => {
       const savedToken = localStorage.getItem('edunexa_token');
       const savedUser = localStorage.getItem('edunexa_user');
@@ -138,7 +117,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     window.addEventListener('storage', handleStorage);
-
     return () => {
       subscription.unsubscribe();
       window.removeEventListener('storage', handleStorage);
@@ -157,16 +135,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await supabase.auth.signOut();
     } catch (err) {
       console.error('Logout error:', err);
-    } finally {
-      setToken(null);
-      setUser(null);
-      localStorage.removeItem('edunexa_token');
-      localStorage.removeItem('edunexa_user');
-      document.documentElement.classList.remove('dark');
-      setThemeState('light');
-      localStorage.setItem('edunexa_theme', 'light');
-      window.location.href = '/login';
     }
+    // Clear state regardless of signOut result
+    setToken(null);
+    setUser(null);
+    localStorage.removeItem('edunexa_token');
+    localStorage.removeItem('edunexa_user');
+    document.documentElement.classList.remove('dark');
+    setThemeState('light');
+    localStorage.setItem('edunexa_theme', 'light');
+    // Hard redirect — most reliable way to reset app state
+    window.location.replace('/login');
   };
 
   return (

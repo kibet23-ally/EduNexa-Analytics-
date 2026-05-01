@@ -88,11 +88,11 @@ const AppRoutes = () => {
       <Route path="/attendance" element={<ProtectedRoute><Layout><Attendance /></Layout></ProtectedRoute>} />
       <Route path="/attendance/report" element={<ProtectedRoute><Layout><AttendanceReport /></Layout></ProtectedRoute>} />
       <Route path="/marks" element={<ProtectedRoute><Layout><MarksEntry /></Layout></ProtectedRoute>} />
-      <Route path="/analytics" element={<ProtectedRoute><Layout><Analytics /></Layout></ProtectedRoute>} />
+      <Route path="/analytics" element={<ProtectedRoute><Layout><ErrorBoundary name="Analytics"><Analytics /></ErrorBoundary></Layout></ProtectedRoute>} />
       <Route path="/reports" element={<ProtectedRoute><Layout><Reports /></Layout></ProtectedRoute>} />
       <Route path="/teachers" element={<RoleProtectedRoute allowedRoles={['Admin', 'Principal', 'SuperAdmin']}><Layout><Teachers /></Layout></RoleProtectedRoute>} />
       <Route path="/subscription" element={<RoleProtectedRoute allowedRoles={['Admin', 'Principal', 'SuperAdmin']}><Layout><SchoolSubscription /></Layout></RoleProtectedRoute>} />
-      <Route path="/settings" element={<ProtectedRoute><Layout><SettingsPage /></Layout></ProtectedRoute>} />
+      <Route path="/settings" element={<ProtectedRoute><Layout><ErrorBoundary name="Settings"><SettingsPage /></ErrorBoundary></Layout></ProtectedRoute>} />
       <Route path="/order" element={<Suspense fallback={<div>Loading...</div>}><OrderForm /></Suspense>} />
       <Route path="/status" element={<Suspense fallback={<div>Loading...</div>}><SystemStatus /></Suspense>} />
       

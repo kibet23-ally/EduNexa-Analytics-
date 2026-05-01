@@ -1,5 +1,5 @@
 useEffect(() => {
-  fetchLatestProfile();
+  const fetchLatestProfile = async () => {
 
 // Auto-refresh session on mobile
 supabase.auth.onAuthStateChange((event, session) => {

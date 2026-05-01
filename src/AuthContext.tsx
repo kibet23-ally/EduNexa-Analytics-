@@ -1,20 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AuthContext } from './useAuth';
+import { User } from './types';
 import { supabase } from './lib/supabase';
-
-// User type matching your database
-interface User {
-  id: string;
-  name?: string;
-  email: string;
-  role: string;
-  school_id?: number | null;
-  school_name?: string;
-  avatar_url?: string;
-  theme_preference?: string;
-  notifications_enabled?: boolean;
-  [key: string]: unknown;
-}
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(() => {
@@ -46,7 +33,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Apply theme on mount
+  // Apply theme on mount and when it changes
   useEffect(() => {
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
@@ -56,7 +43,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [theme]);
 
   useEffect(() => {
-    // Fetch latest profile from Supabase session
     const fetchLatestProfile = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
@@ -65,7 +51,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setToken(session.access_token);
           localStorage.setItem('edunexa_token', session.access_token);
 
-          // Fetch user profile from users table
           const { data: profile } = await supabase
             .from('users')
             .select('*')
@@ -73,22 +58,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .maybeSingle();
 
           if (profile) {
-            setUser(profile);
+            setUser(profile as User);
             localStorage.setItem('edunexa_user', JSON.stringify(profile));
           } else {
-            // Fallback: use auth metadata if no users record
-            const fallbackUser: User = {
+            // Fallback to auth metadata
+            const fallbackUser = {
               id: session.user.id,
               email: session.user.email || '',
               name: session.user.user_metadata?.name || '',
               role: session.user.user_metadata?.role || 'school_admin',
               school_id: session.user.user_metadata?.school_id || null,
-            };
+              password: '',
+            } as unknown as User;
             setUser(fallbackUser);
             localStorage.setItem('edunexa_user', JSON.stringify(fallbackUser));
           }
         } else {
-          // No active session — clear state
+          // No active session — clear everything
           setToken(null);
           setUser(null);
           localStorage.removeItem('edunexa_token');
@@ -101,7 +87,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     fetchLatestProfile();
 
-    // Listen for auth state changes (token refresh, sign out, etc.)
+    // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (event === 'TOKEN_REFRESHED' && session) {
@@ -120,7 +106,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .maybeSingle();
 
           if (profile) {
-            setUser(profile);
+            setUser(profile as User);
             localStorage.setItem('edunexa_user', JSON.stringify(profile));
           }
         }
@@ -137,7 +123,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     );
 
-    // Listen for storage changes (multi-tab support)
+    // Multi-tab sync
     const handleStorage = () => {
       const savedToken = localStorage.getItem('edunexa_token');
       const savedUser = localStorage.getItem('edunexa_user');
@@ -167,14 +153,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = async () => {
-    await supabase.auth.signOut();
-    setToken(null);
-    setUser(null);
-    localStorage.removeItem('edunexa_token');
-    localStorage.removeItem('edunexa_user');
-    document.documentElement.classList.remove('dark');
-    setThemeState('light');
-    localStorage.setItem('edunexa_theme', 'light');
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.error('Logout error:', err);
+    } finally {
+      setToken(null);
+      setUser(null);
+      localStorage.removeItem('edunexa_token');
+      localStorage.removeItem('edunexa_user');
+      document.documentElement.classList.remove('dark');
+      setThemeState('light');
+      localStorage.setItem('edunexa_theme', 'light');
+      window.location.href = '/login';
+    }
   };
 
   return (

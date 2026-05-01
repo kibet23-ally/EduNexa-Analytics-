@@ -1,4 +1,3 @@
-import { ErrorBoundary } from './components/ErrorBoundary';
 import React, { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './AuthContext';
@@ -7,6 +6,7 @@ import { Skeleton } from './components/ui/Skeleton';
 import Sidebar from './components/Sidebar';
 import GlobalHeader from './components/GlobalHeader';
 import SubscriptionBanner from './components/SubscriptionBanner';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 // Lazy load all pages
 const Login = lazy(() => import('./pages/Login'));
@@ -22,6 +22,7 @@ const Teachers = lazy(() => import('./pages/Teachers'));
 const OrderForm = lazy(() => import('./pages/OrderForm'));
 const Schools = lazy(() => import('./pages/Schools'));
 const SuperAdminDashboard = lazy(() => import('./pages/SuperAdminDashboard'));
+const SuperAdminAnalytics = lazy(() => import('./pages/SuperAdminAnalytics'));
 const GlobalUsers = lazy(() => import('./pages/GlobalUsers'));
 const Subscriptions = lazy(() => import('./pages/Subscriptions'));
 const SettingsPage = lazy(() => import('./pages/Settings'));
@@ -49,14 +50,22 @@ const RoleProtectedRoute: React.FC<{ children: React.ReactNode; allowedRoles: st
   const { user, isAuthenticated } = useAuth();
   if (!isAuthenticated) return <Navigate to="/login" />;
   if (!user) return <Navigate to="/login" />;
-  
+
   const normalize = (r: string) => r.toLowerCase().replace(/_/g, '').replace('school', '');
   const normalizedUserRole = normalize(user.role);
   const normalizedAllowedRoles = allowedRoles.map(r => normalize(r));
-  
+
   if (!normalizedAllowedRoles.includes(normalizedUserRole)) return <Navigate to="/" />;
   return <>{children}</>;
 };
+
+const wrap = (component: React.ReactNode, name?: string) => (
+  <ErrorBoundary name={name}>
+    <Suspense fallback={<PageFallback />}>
+      {component}
+    </Suspense>
+  </ErrorBoundary>
+);
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return (
@@ -66,9 +75,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         <SubscriptionBanner />
         <GlobalHeader />
         <main className="flex-1 p-6 overflow-auto bg-slate-50 dark:bg-slate-950">
-          <Suspense fallback={<PageFallback />}>
-            {children}
-          </Suspense>
+          {children}
         </main>
       </div>
     </div>
@@ -78,40 +85,82 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 const AppRoutes = () => {
   return (
     <Routes>
+      {/* Public */}
       <Route path="/login" element={<Suspense fallback={<div className="h-screen flex items-center justify-center bg-slate-50">Loading...</div>}><Login /></Suspense>} />
-      <Route path="/" element={<ProtectedRoute><Layout><Dashboard /></Layout></ProtectedRoute>} />
-      <Route path="/school-admin" element={<ProtectedRoute><Layout><Dashboard /></Layout></ProtectedRoute>} />
-      <Route path="/teacher" element={<ProtectedRoute><Layout><Dashboard /></Layout></ProtectedRoute>} />
-      <Route path="/students" element={<ProtectedRoute><Layout><Students /></Layout></ProtectedRoute>} />
-      <Route path="/grades" element={<ProtectedRoute><Layout><Grades /></Layout></ProtectedRoute>} />
-      <Route path="/subjects" element={<ProtectedRoute><Layout><Subjects /></Layout></ProtectedRoute>} />
-      <Route path="/exams" element={<ProtectedRoute><Layout><Exams /></Layout></ProtectedRoute>} />
-      <Route path="/attendance" element={<ProtectedRoute><Layout><Attendance /></Layout></ProtectedRoute>} />
-      <Route path="/attendance/report" element={<ProtectedRoute><Layout><AttendanceReport /></Layout></ProtectedRoute>} />
-      <Route path="/marks" element={<ProtectedRoute><Layout><MarksEntry /></Layout></ProtectedRoute>} />
-      <Route path="/analytics" element={<ProtectedRoute><Layout><ErrorBoundary name="Analytics"><Analytics /></ErrorBoundary></Layout></ProtectedRoute>} />
-      <Route path="/reports" element={<ProtectedRoute><Layout><Reports /></Layout></ProtectedRoute>} />
-      <Route path="/teachers" element={<RoleProtectedRoute allowedRoles={['Admin', 'Principal', 'SuperAdmin']}><Layout><Teachers /></Layout></RoleProtectedRoute>} />
-      <Route path="/subscription" element={<RoleProtectedRoute allowedRoles={['Admin', 'Principal', 'SuperAdmin']}><Layout><SchoolSubscription /></Layout></RoleProtectedRoute>} />
-      <Route path="/settings" element={<ProtectedRoute><Layout><ErrorBoundary name="Settings"><SettingsPage /></ErrorBoundary></Layout></ProtectedRoute>} />
       <Route path="/order" element={<Suspense fallback={<div>Loading...</div>}><OrderForm /></Suspense>} />
       <Route path="/status" element={<Suspense fallback={<div>Loading...</div>}><SystemStatus /></Suspense>} />
-      
+
+      {/* Shared authenticated routes */}
+      <Route path="/" element={<ProtectedRoute><Layout>{wrap(<Dashboard />, 'Dashboard')}</Layout></ProtectedRoute>} />
+      <Route path="/school-admin" element={<ProtectedRoute><Layout>{wrap(<Dashboard />, 'Dashboard')}</Layout></ProtectedRoute>} />
+      <Route path="/teacher" element={<ProtectedRoute><Layout>{wrap(<Dashboard />, 'Dashboard')}</Layout></ProtectedRoute>} />
+
+      {/* School Admin & Teacher routes */}
+      <Route path="/students" element={<ProtectedRoute><Layout>{wrap(<Students />, 'Students')}</Layout></ProtectedRoute>} />
+      <Route path="/grades" element={<ProtectedRoute><Layout>{wrap(<Grades />, 'Grades')}</Layout></ProtectedRoute>} />
+      <Route path="/subjects" element={<ProtectedRoute><Layout>{wrap(<Subjects />, 'Subjects')}</Layout></ProtectedRoute>} />
+      <Route path="/exams" element={<ProtectedRoute><Layout>{wrap(<Exams />, 'Exams')}</Layout></ProtectedRoute>} />
+      <Route path="/marks" element={<ProtectedRoute><Layout>{wrap(<MarksEntry />, 'Marks Entry')}</Layout></ProtectedRoute>} />
+      <Route path="/attendance" element={<ProtectedRoute><Layout>{wrap(<Attendance />, 'Attendance')}</Layout></ProtectedRoute>} />
+      <Route path="/attendance/report" element={<ProtectedRoute><Layout>{wrap(<AttendanceReport />, 'Attendance Report')}</Layout></ProtectedRoute>} />
+      <Route path="/analytics" element={<ProtectedRoute><Layout>{wrap(<Analytics />, 'Analytics')}</Layout></ProtectedRoute>} />
+      <Route path="/reports" element={<ProtectedRoute><Layout>{wrap(<Reports />, 'Reports')}</Layout></ProtectedRoute>} />
+      <Route path="/settings" element={<ProtectedRoute><Layout>{wrap(<SettingsPage />, 'Settings')}</Layout></ProtectedRoute>} />
+
+      {/* School Admin only routes */}
+      <Route path="/teachers" element={
+        <RoleProtectedRoute allowedRoles={['Admin', 'admin', 'school_admin', 'Principal', 'SuperAdmin', 'super_admin']}>
+          <Layout>{wrap(<Teachers />, 'Teachers')}</Layout>
+        </RoleProtectedRoute>
+      } />
+      <Route path="/subscription" element={
+        <RoleProtectedRoute allowedRoles={['Admin', 'admin', 'school_admin', 'Principal', 'SuperAdmin', 'super_admin']}>
+          <Layout>{wrap(<SchoolSubscription />, 'Subscription')}</Layout>
+        </RoleProtectedRoute>
+      } />
+
       {/* Super Admin Routes */}
-      <Route path="/super-admin" element={<RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}><Layout><SuperAdminDashboard /></Layout></RoleProtectedRoute>} />
-      <Route path="/super/dashboard" element={<RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}><Layout><SuperAdminDashboard /></Layout></RoleProtectedRoute>} />
-      <Route path="/super/schools" element={<RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}><Layout><Schools /></Layout></RoleProtectedRoute>} />
-      <Route path="/super/users" element={<RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}><Layout><GlobalUsers /></Layout></RoleProtectedRoute>} />
-      <Route path="/super/subscriptions" element={<RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}><Layout><Subscriptions /></Layout></RoleProtectedRoute>} />
-      <Route path="/super/analytics" element={<RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}><Layout><ErrorBoundary name="Analytics"><Analytics /></ErrorBoundary></Layout></RoleProtectedRoute>} />
-      <Route path="/super/settings" element={<RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}><Layout><ErrorBoundary name="Settings"><SettingsPage /></ErrorBoundary></Layout></RoleProtectedRoute>} />
+      <Route path="/super-admin" element={
+        <RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}>
+          <Layout>{wrap(<SuperAdminDashboard />, 'Super Admin Dashboard')}</Layout>
+        </RoleProtectedRoute>
+      } />
+      <Route path="/super/dashboard" element={
+        <RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}>
+          <Layout>{wrap(<SuperAdminDashboard />, 'Super Admin Dashboard')}</Layout>
+        </RoleProtectedRoute>
+      } />
+      <Route path="/super/schools" element={
+        <RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}>
+          <Layout>{wrap(<Schools />, 'Schools')}</Layout>
+        </RoleProtectedRoute>
+      } />
+      <Route path="/super/users" element={
+        <RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}>
+          <Layout>{wrap(<GlobalUsers />, 'Global Users')}</Layout>
+        </RoleProtectedRoute>
+      } />
+      <Route path="/super/subscriptions" element={
+        <RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}>
+          <Layout>{wrap(<Subscriptions />, 'Subscriptions')}</Layout>
+        </RoleProtectedRoute>
+      } />
+      <Route path="/super/analytics" element={
+        <RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}>
+          <Layout>{wrap(<SuperAdminAnalytics />, 'Platform Analytics')}</Layout>
+        </RoleProtectedRoute>
+      } />
+      <Route path="/super/settings" element={
+        <RoleProtectedRoute allowedRoles={['SuperAdmin', 'super_admin']}>
+          <Layout>{wrap(<SettingsPage />, 'Settings')}</Layout>
+        </RoleProtectedRoute>
+      } />
     </Routes>
   );
 };
 
 export default function App() {
   React.useEffect(() => {
-    // Force light mode as default if nothing set
     if (!localStorage.getItem('edunexa_theme')) {
       document.documentElement.classList.remove('dark');
       localStorage.setItem('edunexa_theme', 'light');

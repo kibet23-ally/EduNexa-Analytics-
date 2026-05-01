@@ -33,11 +33,20 @@ const Login = () => {
     const cleanEmail = email.toLowerCase().trim();
 
     try {
-      // Step 1: Sign in with Supabase Auth
-      const { data, error: authError } = await supabase.auth.signInWithPassword({
+      // Step 1: Sign in with timeout to prevent hanging on mobile
+      const authPromise = supabase.auth.signInWithPassword({
         email: cleanEmail,
         password,
       });
+
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Login timed out. Please check your connection and try again.')), 10000)
+      );
+
+      const { data, error: authError } = await Promise.race([
+        authPromise,
+        timeoutPromise
+      ]) as Awaited<typeof authPromise>;
 
       if (authError || !data.session || !data.user) {
         throw new Error(authError?.message || 'Invalid email or password');

@@ -1,11 +1,10 @@
 import React, { useMemo } from 'react';
-import { useData } from './hooks/useData';
-import { School, Student } from './types';
+import { useData } from '../hooks/useData';
+import { School, Student } from '../types';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell, Legend
 } from 'recharts';
-import { Building2, Users, TrendingUp, CreditCard, Skeleton } from './components/ui/Skeleton';
 import { Building2 as B2, Users as U, TrendingUp as T, CreditCard as CC } from 'lucide-react';
 
 const COLORS = ['#1d4ed8', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];

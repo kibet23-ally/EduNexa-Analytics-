@@ -130,21 +130,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('edunexa_user', JSON.stringify(newUser));
   };
 
-  const logout = async () => {
-    try {
-      await supabase.auth.signOut();
-    } catch (err) {
-      console.error('Logout error:', err);
-    }
-    // Clear state regardless of signOut result
+  const logout = () => {
+    // Clear everything immediately — don't wait for Supabase
     setToken(null);
     setUser(null);
     localStorage.removeItem('edunexa_token');
     localStorage.removeItem('edunexa_user');
+    localStorage.removeItem('sb-zclwokyzsqzitqwmugtt-auth-token');
     document.documentElement.classList.remove('dark');
     setThemeState('light');
     localStorage.setItem('edunexa_theme', 'light');
-    // Hard redirect — most reliable way to reset app state
+    // Sign out in background — don't await
+    supabase.auth.signOut().catch(() => {});
+    // Hard redirect
     window.location.replace('/login');
   };
 

@@ -6,14 +6,13 @@ import { fetchWithProxy, writeWithProxy } from '../lib/fetchProxy';
  * Generic hook for fetching data via proxy with React Query caching
  */
 export function useData<T>(
-  key: string, 
-  table: string, 
-  options: { 
-    select?: string; 
-    filters?: Record<string, any>; 
+  key: string,
+  table: string,
+  options: {
+    select?: string;
+    filters?: Record<string, any>;
     orderBy?: { column: string; ascending?: boolean };
     limit?: number;
-    range?: { from: number; to: number };
     single?: boolean;
     countOnly?: boolean;
   } = {},
@@ -23,13 +22,30 @@ export function useData<T>(
   return useQuery({
     queryKey: [table, key, JSON.stringify(options)],
     queryFn: async () => {
-      const fetchOptions = { ...options };
-      if (options.countOnly) {
-        fetchOptions.options = { ...options.options, count: 'exact', head: true };
-      }
+      // Strip out any null/undefined filter values to avoid broken queries
+      const cleanFilters = options.filters
+        ? Object.fromEntries(
+            Object.entries(options.filters).filter(
+              ([, v]) => v !== null && v !== undefined
+            )
+          )
+        : undefined;
+
+      const fetchOptions = {
+        select: options.select,
+        filters: cleanFilters && Object.keys(cleanFilters).length > 0
+          ? cleanFilters
+          : undefined,
+        orderBy: options.orderBy,
+        limit: options.limit,
+        single: options.single,
+        countOnly: options.countOnly,
+      };
+
       const res = await fetchWithProxy(table, fetchOptions);
+
       if (options.countOnly) return res.count ?? 0;
-      return res.data as T[];
+      return (res.data ?? []) as T[];
     },
     enabled,
     staleTime,
@@ -43,28 +59,26 @@ export function useDataMutation(table: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ 
-      operation, 
-      payload, 
-      filters 
-    }: { 
-      operation: 'insert' | 'update' | 'delete' | 'upsert'; 
-      payload?: any; 
+    mutationFn: async ({
+      operation,
+      payload,
+      filters,
+    }: {
+      operation: 'insert' | 'update' | 'delete' | 'upsert';
+      payload?: any;
       filters?: any;
     }) => {
       return await writeWithProxy(table, operation, payload, filters);
     },
     onSuccess: () => {
-      // Invalidate all queries related to this table to trigger refetch
-      queryClient.invalidateQueries({ 
+      queryClient.invalidateQueries({
         queryKey: [table],
         exact: false,
-        type: 'all'
+        type: 'all',
       });
     },
     onSettled: () => {
-      // Final backup invalidation to ensure UI reflects database
       queryClient.invalidateQueries({ queryKey: [table] });
-    }
+    },
   });
 }

@@ -17,7 +17,7 @@ export function useData<T>(
     countOnly?: boolean;
   } = {},
   enabled: boolean = true,
-  staleTime: number = 0
+  staleTime: number = 60000
 ) {
   return useQuery({
     queryKey: [table, key, JSON.stringify(options)],
@@ -49,6 +49,10 @@ export function useData<T>(
     },
     enabled,
     staleTime,
+    gcTime: 300000,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
+    retry: 1,
   });
 }
 

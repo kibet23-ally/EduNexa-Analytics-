@@ -24,6 +24,7 @@ const Schools = lazy(() => import('./pages/Schools'));
 const SuperAdminDashboard = lazy(() => import('./pages/SuperAdminDashboard'));
 const SuperAdminAnalytics = lazy(() => import('./pages/SuperAdminAnalytics'));
 const GlobalUsers = lazy(() => import('./pages/GlobalUsers'));
+const Subscriptions = lazy(() => import('./pages/Subscriptions'));
 const SchoolSubscription = lazy(() => import('./pages/SchoolSubscription'));
 const TeacherAssignments = lazy(() => import('./pages/TeacherAssignments'));
 const SettingsPage = lazy(() => import('./pages/Settings'));

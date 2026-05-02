@@ -10,20 +10,21 @@ import debounce from 'lodash/debounce';
 
 const PAGE_SIZE = 50;
 
+const isAdmin = (role?: string) =>
+  ['Admin', 'admin', 'school_admin', 'Principal', 'SuperAdmin', 'super_admin'].includes(role || '');
+
 const Students = () => {
   const { user } = useAuth();
   const { isReadOnly } = useSubscription();
-  
-  // State for search and pagination
+
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [page, setPage] = useState(0);
 
-  // Debounce search input to reduce API calls
   const debouncedSetSearch = useMemo(
     () => debounce((val: string) => {
       setDebouncedSearch(val);
-      setPage(0); // Reset to first page on search
+      setPage(0);
     }, 500),
     []
   );
@@ -33,29 +34,28 @@ const Students = () => {
     debouncedSetSearch(e.target.value);
   };
 
-  // Optimized fetching with caching and pagination
-  const gradesQuery = useData<Grade>('grades-list', 'grades', { 
+  const gradesQuery = useData<Grade>('grades-list', 'grades', {
     select: 'id, grade_name',
     orderBy: { column: 'grade_name', ascending: true }
   }, !!user?.school_id);
+
   const studentsQuery = useData<Student & { grades: { grade_name: string } }>(
-    'students-page', 
-    'students', 
-    { 
+    'students-page',
+    'students',
+    {
       select: 'id, name, admission_number, gender, grade_id, grades:grade_id(grade_name)',
       range: { from: page * PAGE_SIZE, to: (page + 1) * PAGE_SIZE - 1 },
-    }, 
+    },
     !!user?.school_id
   );
 
   const studentsMutation = useDataMutation('students');
 
-  // Local UI State
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
+
   const [formData, setFormData] = useState({
     name: '',
     admission_number: '',
@@ -66,8 +66,8 @@ const Students = () => {
   const students = useMemo(() => {
     let items = studentsQuery.data || [];
     if (debouncedSearch) {
-      items = items.filter(s => 
-        s.name.toLowerCase().includes(debouncedSearch.toLowerCase()) || 
+      items = items.filter(s =>
+        s.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
         s.admission_number.includes(debouncedSearch)
       );
     }
@@ -76,8 +76,7 @@ const Students = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isReadOnly) return setError("Read-only mode (Subscription expired)");
-    
+    if (isReadOnly) return setError('Read-only mode (Subscription expired)');
     setError(null);
     try {
       const payload = {
@@ -87,17 +86,15 @@ const Students = () => {
         grade_id: parseInt(formData.grade_id),
         school_id: Number(user?.school_id)
       };
-
       if (editingId) {
         await studentsMutation.mutateAsync({ operation: 'update', payload, filters: { id: editingId } });
       } else {
         await studentsMutation.mutateAsync({ operation: 'insert', payload: [payload] });
       }
-
       setShowModal(false);
       setEditingId(null);
       setFormData({ name: '', admission_number: '', gender: 'Male', grade_id: '' });
-    } catch (err: any) { 
+    } catch (err: any) {
       setError(err?.message || 'Failed to save student');
     }
   };
@@ -132,9 +129,9 @@ const Students = () => {
           <h1 className="text-2xl font-bold text-slate-900">Students</h1>
           <p className="text-slate-500 text-sm">Manage student records and enrollment.</p>
         </div>
-        {user?.role === 'Admin' && (
+        {isAdmin(user?.role) && (
           <div className="flex gap-2">
-            <button 
+            <button
               disabled={isReadOnly}
               onClick={() => {
                 setEditingId(null);
@@ -163,39 +160,28 @@ const Students = () => {
         <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row gap-4 items-center">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input 
-              type="text" 
+            <input
+              type="text"
               placeholder="Search by name or admission number..."
               value={search}
               onChange={handleSearchChange}
               className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20"
             />
           </div>
-          
           <div className="flex items-center gap-2">
-             <button 
-                onClick={() => setPage(p => Math.max(0, p - 1))} 
-                disabled={page === 0}
-                className="p-2 border rounded-lg disabled:opacity-50"
-             >
-               <ChevronLeft size={18} />
-             </button>
-             <span className="text-xs font-bold text-slate-500">Page {page + 1}</span>
-             <button 
-                onClick={() => setPage(p => p + 1)}
-                disabled={(studentsQuery.data?.length || 0) < PAGE_SIZE}
-                className="p-2 border rounded-lg disabled:opacity-50"
-             >
-               <ChevronRight size={18} />
-             </button>
+            <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="p-2 border rounded-lg disabled:opacity-50">
+              <ChevronLeft size={18} />
+            </button>
+            <span className="text-xs font-bold text-slate-500">Page {page + 1}</span>
+            <button onClick={() => setPage(p => p + 1)} disabled={(studentsQuery.data?.length || 0) < PAGE_SIZE} className="p-2 border rounded-lg disabled:opacity-50">
+              <ChevronRight size={18} />
+            </button>
           </div>
         </div>
 
         <div className="overflow-x-auto">
           {studentsQuery.isLoading ? (
-            <div className="p-8">
-              <TableSkeleton rows={10} cols={5} />
-            </div>
+            <div className="p-8"><TableSkeleton rows={10} cols={5} /></div>
           ) : (
             <table className="w-full text-left border-collapse">
               <thead>
@@ -215,12 +201,12 @@ const Students = () => {
                     <td className="px-6 py-4 text-slate-600">{student.gender}</td>
                     <td className="px-6 py-4">
                       <span className="px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 text-xs font-medium">
-                        {student.grades?.grade_name || 'N/A'}
+                        {(student.grades as any)?.grade_name || 'N/A'}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        {user?.role === 'Admin' && (
+                        {isAdmin(user?.role) && (
                           <>
                             {deleteConfirmId === student.id ? (
                               <div className="flex items-center gap-1">
@@ -254,23 +240,23 @@ const Students = () => {
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
               <div className="space-y-1">
                 <label className="text-xs font-bold text-slate-500 uppercase">Full Name</label>
-                <input required value={formData.name} onChange={(e) => setFormData({...formData, name: e.target.value})} className="w-full px-4 py-2 border rounded-lg text-sm outline-none" />
+                <input required value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full px-4 py-2 border rounded-lg text-sm outline-none" />
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-bold text-slate-500 uppercase">Admission Number</label>
-                <input required value={formData.admission_number} onChange={(e) => setFormData({...formData, admission_number: e.target.value})} className="w-full px-4 py-2 border rounded-lg text-sm outline-none" />
+                <input required value={formData.admission_number} onChange={(e) => setFormData({ ...formData, admission_number: e.target.value })} className="w-full px-4 py-2 border rounded-lg text-sm outline-none" />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-500 uppercase">Gender</label>
-                  <select value={formData.gender} onChange={(e) => setFormData({...formData, gender: e.target.value})} className="w-full px-4 py-2 border rounded-lg text-sm">
+                  <select value={formData.gender} onChange={(e) => setFormData({ ...formData, gender: e.target.value })} className="w-full px-4 py-2 border rounded-lg text-sm">
                     <option>Male</option>
                     <option>Female</option>
                   </select>
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-500 uppercase">Grade</label>
-                  <select required value={formData.grade_id} onChange={(e) => setFormData({...formData, grade_id: e.target.value})} className="w-full px-4 py-2 border rounded-lg text-sm">
+                  <select required value={formData.grade_id} onChange={(e) => setFormData({ ...formData, grade_id: e.target.value })} className="w-full px-4 py-2 border rounded-lg text-sm">
                     <option value="">Select Grade</option>
                     {grades.map(g => <option key={g.id} value={g.id.toString()}>{g.grade_name}</option>)}
                   </select>
@@ -278,7 +264,7 @@ const Students = () => {
               </div>
               <div className="flex gap-3 pt-4">
                 <button type="button" onClick={() => setShowModal(false)} className="flex-1 px-4 py-2 border rounded-lg text-sm font-medium">Cancel</button>
-                <button type="submit" disabled={studentsMutation.isPending} className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium">
+                <button type="submit" disabled={studentsMutation.isPending} className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">
                   {studentsMutation.isPending ? 'Saving...' : (editingId ? 'Update' : 'Save')}
                 </button>
               </div>

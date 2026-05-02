@@ -24,7 +24,8 @@ const Schools = lazy(() => import('./pages/Schools'));
 const SuperAdminDashboard = lazy(() => import('./pages/SuperAdminDashboard'));
 const SuperAdminAnalytics = lazy(() => import('./pages/SuperAdminAnalytics'));
 const GlobalUsers = lazy(() => import('./pages/GlobalUsers'));
-const Subscriptions = lazy(() => import('./pages/Subscriptions'));
+const SchoolSubscription = lazy(() => import('./pages/SchoolSubscription'));
+const TeacherAssignments = lazy(() => import('./pages/TeacherAssignments'));
 const SettingsPage = lazy(() => import('./pages/Settings'));
 const SystemStatus = lazy(() => import('./pages/SystemStatus'));
 const Attendance = lazy(() => import('./pages/Attendance'));
@@ -106,6 +107,13 @@ const AppRoutes = () => {
       <Route path="/analytics" element={<ProtectedRoute><Layout>{wrap(<Analytics />, 'Analytics')}</Layout></ProtectedRoute>} />
       <Route path="/reports" element={<ProtectedRoute><Layout>{wrap(<Reports />, 'Reports')}</Layout></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><Layout>{wrap(<SettingsPage />, 'Settings')}</Layout></ProtectedRoute>} />
+
+      {/* School Admin only routes */}
+      <Route path="/assignments" element={
+        <RoleProtectedRoute allowedRoles={['Admin', 'admin', 'school_admin', 'Principal']}>
+          <Layout>{wrap(<TeacherAssignments />, 'Teacher Assignments')}</Layout>
+        </RoleProtectedRoute>
+      } />
 
       {/* School Admin only routes */}
       <Route path="/teachers" element={

@@ -30,7 +30,6 @@ const SettingsPage = lazy(() => import('./pages/Settings'));
 const SystemStatus = lazy(() => import('./pages/SystemStatus'));
 const Attendance = lazy(() => import('./pages/Attendance'));
 const AttendanceReport = lazy(() => import('./pages/AttendanceReport'));
-const SchoolSubscription = lazy(() => import('./pages/SchoolSubscription'));
 
 const PageFallback = () => (
   <div className="space-y-6 animate-in fade-in duration-500">

@@ -17,6 +17,7 @@ import {
   PieChart,
   Settings,
   UserCheck,
+  BookOpen,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -37,11 +38,9 @@ interface NavItem {
 const Sidebar = () => {
   const { user, logout } = useAuth();
   const location = useLocation();
-  
-  // 4. Remember state - save in localStorage
+
   const [isCollapsed, setIsCollapsed] = useState(() => {
     const saved = localStorage.getItem('sidebar-collapsed');
-    // If not saved, default to collapsed on small screens
     if (saved === null) return window.innerWidth < 768;
     return saved === 'true';
   });
@@ -56,18 +55,12 @@ const Sidebar = () => {
     }));
   };
 
-  // 1. Auto-collapse on mobile - sidebar should automatically collapse to just icons on small screens
   useEffect(() => {
     const handleResize = () => {
-      if (window.innerWidth < 768) {
-        setIsCollapsed(true);
-      }
+      if (window.innerWidth < 768) setIsCollapsed(true);
     };
-
     window.addEventListener('resize', handleResize);
-    // Initial check
     handleResize();
-    
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
@@ -75,9 +68,16 @@ const Sidebar = () => {
     localStorage.setItem('sidebar-collapsed', isCollapsed.toString());
   }, [isCollapsed]);
 
-  const isSuperAdminRole = user?.role?.toLowerCase() === 'superadmin' || user?.role?.toLowerCase() === 'super_admin' || user?.role?.toLowerCase().includes('super');
-  
-  const navItems: NavItem[] = isSuperAdminRole ? [
+  const handleNavItemClick = () => {
+    if (window.innerWidth < 768) setIsCollapsed(true);
+  };
+
+  // Normalize role for checks
+  const rawRole = (user?.role || '').toLowerCase();
+  const isSuperAdminRole = rawRole === 'superadmin' || rawRole === 'super_admin' || rawRole.includes('super');
+  const isSchoolAdmin = rawRole === 'admin' || rawRole === 'school_admin' || rawRole === 'principal' || rawRole === 'schooladmin';
+
+  const superAdminNav: NavItem[] = [
     { to: '/super-admin', icon: LayoutDashboard, label: 'Dashboard' },
     { to: '/super/schools', icon: Building2, label: 'My Institution' },
     { to: '/super/users', icon: Users2, label: 'User Management' },
@@ -85,35 +85,38 @@ const Sidebar = () => {
     { to: '/super/analytics', icon: PieChart, label: 'Analytics' },
     { to: '/status', icon: ClipboardList, label: 'Audit Logs' },
     { to: '/super/settings', icon: Settings, label: 'Settings' },
-  ] : [
+  ];
+
+  const schoolAdminNav: NavItem[] = [
     { to: '/school-admin', icon: LayoutDashboard, label: 'Dashboard' },
     { to: '/students', icon: Users, label: 'Students' },
-    { 
-      icon: GraduationCap, 
+    {
+      icon: GraduationCap,
       label: 'Academics',
       subItems: [
         { to: '/grades', label: 'Grades' },
         { to: '/subjects', label: 'Subjects' },
+        { to: '/assignments', label: 'Teacher Assignments' },
       ]
     },
-    { 
-      icon: ClipboardList, 
+    {
+      icon: ClipboardList,
       label: 'Examinations',
       subItems: [
         { to: '/exams', label: 'Exams' },
         { to: '/marks', label: 'Marks Entry' },
       ]
     },
-    { 
-      icon: UserCheck, 
+    {
+      icon: UserCheck,
       label: 'Attendance',
       subItems: [
         { to: '/attendance', label: 'Take Attendance' },
         { to: '/attendance/report', label: 'Attendance Report' },
       ]
     },
-    { 
-      icon: BarChart3, 
+    {
+      icon: BarChart3,
       label: 'Analytics & Reports',
       subItems: [
         { to: '/analytics', label: 'Analytics' },
@@ -122,31 +125,24 @@ const Sidebar = () => {
     },
   ];
 
-  if (user?.role === 'Admin' || user?.role === 'Principal' || user?.role === 'admin') {
-    // Add subscription for school admins
-    navItems.push({ to: '/subscription', icon: CreditCard, label: 'Subscription' });
-    
-    // Insert teachers before subscription
-    const subIndex = navItems.findIndex(i => i.to === '/subscription');
-    navItems.splice(subIndex, 0, { to: '/teachers', icon: Users2, label: 'Teachers' });
+  // Add Teachers and Subscription for school admins
+  if (isSchoolAdmin) {
+    schoolAdminNav.push(
+      { to: '/teachers', icon: Users2, label: 'Teachers' },
+      { to: '/subscription', icon: CreditCard, label: 'Subscription' }
+    );
   }
 
-  // Settings should always be at the bottom for non-SuperAdmin too
+  // Settings always at bottom for non-super-admin
   if (!isSuperAdminRole) {
-    navItems.push({ to: '/settings', icon: Settings, label: 'Settings' });
+    schoolAdminNav.push({ to: '/settings', icon: Settings, label: 'Settings' });
   }
 
-  // 6. Auto-collapse after navigation on mobile
-  const handleNavItemClick = () => {
-    if (window.innerWidth < 768) {
-      setIsCollapsed(true);
-    }
-  };
+  const navItems = isSuperAdminRole ? superAdminNav : schoolAdminNav;
 
   return (
-    <motion.aside 
+    <motion.aside
       initial={false}
-      // 5. Smooth animation - transition width
       animate={{ width: isCollapsed ? 80 : 256 }}
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
       className="bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 flex flex-col h-screen sticky top-0 z-40 shadow-xl border-r border-slate-100 dark:border-slate-800 transition-colors duration-300"
@@ -168,9 +164,7 @@ const Sidebar = () => {
             </motion.div>
           )}
         </AnimatePresence>
-        
-        {/* 2. Toggle button */}
-        <button 
+        <button
           onClick={() => setIsCollapsed(!isCollapsed)}
           className={cn(
             "p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-400 dark:text-slate-500",
@@ -204,13 +198,8 @@ const Sidebar = () => {
                   <item.icon size={20} className={cn("shrink-0", !isCollapsed && "group-hover:scale-110 transition-transform")} />
                   {!isCollapsed && (
                     <>
-                      <span className="flex-1 text-left whitespace-nowrap overflow-hidden">
-                        {item.label}
-                      </span>
-                      <ChevronDown 
-                        size={16} 
-                        className={cn("transition-transform duration-200 text-slate-400", isSubMenuOpen && "rotate-180")} 
-                      />
+                      <span className="flex-1 text-left whitespace-nowrap overflow-hidden">{item.label}</span>
+                      <ChevronDown size={16} className={cn("transition-transform duration-200 text-slate-400", isSubMenuOpen && "rotate-180")} />
                     </>
                   )}
                   {isCollapsed && (
@@ -235,8 +224,8 @@ const Sidebar = () => {
                           onClick={handleNavItemClick}
                           className={({ isActive }) => cn(
                             "block px-3 py-2 rounded-md text-xs font-medium transition-all",
-                            isActive 
-                              ? "text-primary bg-primary/5 font-bold" 
+                            isActive
+                              ? "text-primary bg-primary/5 font-bold"
                               : "text-slate-500 dark:text-slate-400 hover:text-primary hover:bg-slate-50 dark:hover:bg-slate-800/50"
                           )}
                         >
@@ -258,8 +247,8 @@ const Sidebar = () => {
               title={isCollapsed ? item.label : ''}
               className={({ isActive }) => cn(
                 "flex items-center gap-3 px-4 py-2.5 rounded-lg transition-all text-sm font-medium group relative",
-                isActive 
-                  ? "bg-primary/10 text-primary shadow-sm border-l-4 border-primary" 
+                isActive
+                  ? "bg-primary/10 text-primary shadow-sm border-l-4 border-primary"
                   : "text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white",
                 isCollapsed && "justify-center px-0 border-l-0"
               )}
@@ -290,7 +279,7 @@ const Sidebar = () => {
       <div className={cn("p-4 border-t border-slate-50 dark:border-slate-800/50", isCollapsed && "px-2")}>
         <div className={cn("flex items-center gap-3 px-4 py-3 mb-2 rounded-lg bg-slate-50 dark:bg-slate-800/50", isCollapsed && "px-0 justify-center")}>
           <div className="w-8 h-8 shrink-0 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold border border-primary/20 shadow-sm text-primary">
-            {user?.name.charAt(0)}
+            {(user?.name || 'U').charAt(0)}
           </div>
           {!isCollapsed && (
             <div className="flex-1 overflow-hidden">

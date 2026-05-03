@@ -70,7 +70,7 @@ const Grades = () => {
         </div>
       )}
 
-      {(user?.role === 'Admin' || user?.role === 'Principal' || user?.role === 'SuperAdmin') && (
+      {(['Admin', 'admin', 'school_admin', 'Principal', 'SuperAdmin', 'super_admin'].includes(user?.role || '')) && (
         <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 flex gap-4">
           <input 
             required
@@ -112,7 +112,7 @@ const Grades = () => {
                   <td className="px-6 py-4 text-slate-400 font-mono">{grade.id}</td>
                   <td className="px-6 py-4 font-medium text-slate-900">{grade.grade_name}</td>
                   <td className="px-6 py-4 text-right">
-                    {(user?.role === 'Admin' || user?.role === 'Principal' || user?.role === 'SuperAdmin') && (
+                    {(['Admin', 'admin', 'school_admin', 'Principal', 'SuperAdmin', 'super_admin'].includes(user?.role || '')) && (
                       <button 
                         onClick={() => handleDelete(grade.id)}
                         className="text-red-400 hover:text-red-600 p-2 hover:bg-red-50 rounded-lg transition-all"

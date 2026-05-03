@@ -115,7 +115,7 @@ const Subjects = () => {
         </div>
       )}
 
-      {user?.role === 'Admin' && (
+      {(['Admin', 'admin', 'school_admin', 'Principal'].includes(user?.role || '')) && (
         <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
           <div className="space-y-1">
             <label className="text-xs font-bold text-slate-500 uppercase">Subject Name</label>
@@ -179,7 +179,7 @@ const Subjects = () => {
               )}
             </div>
             
-            {user?.role === 'Admin' && (
+            {(['Admin', 'admin', 'school_admin', 'Principal'].includes(user?.role || '')) && (
               <div className="flex gap-1 ml-2">
                 {editingId === subject.id ? (
                   <>

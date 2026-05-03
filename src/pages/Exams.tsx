@@ -99,7 +99,7 @@ const Exams = () => {
         <p className="text-slate-500 text-sm">Schedule and manage examination periods.</p>
       </header>
 
-      {user?.role === 'Admin' && (
+      {(['Admin', 'admin', 'school_admin', 'Principal'].includes(user?.role || '')) && (
         <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
           <div className="space-y-1 md:col-span-2">
             <label className="text-xs font-bold text-slate-500 uppercase">Exam Name</label>
@@ -189,7 +189,7 @@ const Exams = () => {
               )}
             </div>
             <div className="flex items-center gap-2 ml-4">
-              {user?.role === 'Admin' && (
+              {(['Admin', 'admin', 'school_admin', 'Principal'].includes(user?.role || '')) && (
                 <div className="flex gap-1">
                   {editingId === exam.id ? (
                     <>

@@ -96,7 +96,6 @@ const Sidebar = () => {
       subItems: [
         { to: '/grades', label: 'Grades' },
         { to: '/subjects', label: 'Subjects' },
-        { to: '/assignments', label: 'Teacher Assignments' },
       ]
     },
     {

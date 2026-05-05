@@ -1,0 +1,165 @@
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { createClient } from '@supabase/supabase-js';
+import { Clock, Mail, LogOut, RefreshCw } from 'lucide-react';
+
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+);
+
+export default function AwaitingApproval() {
+  const navigate = useNavigate();
+
+  const [schoolName, setSchoolName] = useState('');
+  const [email,      setEmail]      = useState('');
+  const [checking,   setChecking]   = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { navigate('/login'); return; }
+
+      setEmail(user.email ?? '');
+
+      const { data: userRow } = await supabase
+        .from('users')
+        .select('school_id')
+        .eq('auth_id', user.id)
+        .single();
+
+      if (userRow?.school_id) {
+        const { data: school } = await supabase
+          .from('schools')
+          .select('name, status')
+          .eq('id', userRow.school_id)
+          .single();
+
+        if (school?.status === 'active')    { navigate('/'); return; }
+        if (school?.status === 'suspended') { navigate('/login'); return; }
+        setSchoolName(school?.name ?? '');
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const checkStatus = async () => {
+    setChecking(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { navigate('/login'); return; }
+
+    const { data: userRow } = await supabase
+      .from('users')
+      .select('school_id')
+      .eq('auth_id', user.id)
+      .single();
+
+    if (userRow?.school_id) {
+      const { data: school } = await supabase
+        .from('schools')
+        .select('status')
+        .eq('id', userRow.school_id)
+        .single();
+
+      if (school?.status === 'active') navigate('/');
+    }
+    setChecking(false);
+  };
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    navigate('/login');
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4">
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl" />
+      </div>
+
+      <div className="w-full max-w-lg relative">
+        {/* Logo */}
+        <div className="text-center mb-8">
+          <div className="w-12 h-12 bg-amber-500 rounded-xl flex items-center justify-center mx-auto mb-3">
+            <span className="text-slate-900 font-bold text-xl">E</span>
+          </div>
+          <span className="text-xl font-bold text-white">EduNexa</span>
+        </div>
+
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-10 text-center">
+          {/* Pulsing clock */}
+          <div className="relative w-24 h-24 mx-auto mb-8">
+            <div className="w-24 h-24 bg-amber-500/10 rounded-full flex items-center justify-center">
+              <Clock className="w-12 h-12 text-amber-400" />
+            </div>
+            <div className="absolute inset-0 border-2 border-amber-500/20 rounded-full animate-pulse" />
+          </div>
+
+          <h1 className="text-2xl font-bold text-white mb-3">Under Review</h1>
+          {schoolName && <p className="text-amber-400 font-medium mb-2">{schoolName}</p>}
+          <p className="text-slate-400 leading-relaxed mb-8">
+            Your school registration is under review.
+            You will be notified once your account has been approved.
+          </p>
+
+          {/* Progress steps */}
+          <div className="text-left space-y-3 mb-8">
+            {[
+              { label: 'Registration submitted', done: true,  active: false },
+              { label: 'Under admin review',     done: true,  active: true  },
+              { label: 'Account approved',       done: false, active: false },
+              { label: 'Full access granted',    done: false, active: false },
+            ].map(step => (
+              <div key={step.label} className="flex items-center gap-3">
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${
+                  step.active
+                    ? 'bg-amber-500/20 border border-amber-500/40'
+                    : step.done
+                    ? 'bg-emerald-500/20 border border-emerald-500/40'
+                    : 'bg-slate-800 border border-slate-700'
+                }`}>
+                  {step.active  && <span className="w-2 h-2 bg-amber-400 rounded-full animate-pulse" />}
+                  {step.done && !step.active && <span className="text-emerald-400 text-xs">✓</span>}
+                </div>
+                <span className={`text-sm ${
+                  step.active ? 'text-amber-300 font-medium'
+                  : step.done ? 'text-slate-300'
+                  : 'text-slate-600'
+                }`}>
+                  {step.label}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Email notice */}
+          {email && (
+            <div className="flex items-center gap-2 bg-slate-800 rounded-xl p-3 mb-6 text-left">
+              <Mail className="w-4 h-4 text-slate-500 shrink-0" />
+              <p className="text-slate-400 text-sm">
+                We'll notify you at <span className="text-slate-200">{email}</span>
+              </p>
+            </div>
+          )}
+
+          <div className="flex gap-3">
+            <button
+              onClick={checkStatus} disabled={checking}
+              className="flex-1 flex items-center justify-center gap-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 rounded-xl py-3 px-4 text-sm font-medium transition-all disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${checking ? 'animate-spin' : ''}`} />
+              {checking ? 'Checking…' : 'Check Status'}
+            </button>
+            <button
+              onClick={signOut}
+              className="flex-1 flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 rounded-xl py-3 px-4 text-sm font-medium transition-all"
+            >
+              <LogOut className="w-4 h-4" />
+              Sign Out
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

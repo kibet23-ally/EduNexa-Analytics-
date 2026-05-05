@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../useAuth';
 import { GraduationCap, Lock, Mail, BarChart3, Building, Zap, Dot } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -112,16 +112,24 @@ const Login = () => {
         };
       }
 
-      // Step 5: Check if school is suspended
+      // Step 5: Check school status (pending / suspended)
       if (profile.school_id) {
         const { data: schoolData } = await supabase
           .from('schools')
-          .select('subscription_status')
+          .select('status, subscription_status')
           .eq('id', profile.school_id)
           .maybeSingle();
 
-        const status = (schoolData?.subscription_status || '').toLowerCase();
-        if (status === 'suspended') {
+        // Pending approval — redirect without logging in
+        if (schoolData?.status === 'pending') {
+          await supabase.auth.signOut();
+          navigate('/awaiting-approval');
+          return;
+        }
+
+        // Suspended
+        const subStatus = (schoolData?.subscription_status || '').toLowerCase();
+        if (schoolData?.status === 'suspended' || subStatus === 'suspended') {
           await supabase.auth.signOut();
           throw new Error('Your school account is currently suspended. Please contact your administrator.');
         }
@@ -228,6 +236,29 @@ const Login = () => {
               {loading ? 'Authenticating...' : 'Sign In to Dashboard'}
             </button>
           </form>
+
+          {/* Divider */}
+          <div className="relative my-6">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-slate-100" />
+            </div>
+            <div className="relative flex justify-center">
+              <span className="bg-white/80 px-3 text-slate-400 text-xs font-bold uppercase tracking-wider">
+                New to EduNexa?
+              </span>
+            </div>
+          </div>
+
+          {/* Register button */}
+          <Link
+            to="/register"
+            className="flex items-center justify-center w-full py-4 px-6 rounded-2xl
+                       border-2 border-primary/20 text-primary font-bold text-sm
+                       hover:bg-primary/5 hover:border-primary/40
+                       transition-all duration-200 active:scale-[0.98]"
+          >
+            Register Your School
+          </Link>
         </div>
 
         <div className="text-center space-y-4">

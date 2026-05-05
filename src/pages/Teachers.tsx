@@ -5,6 +5,7 @@ import { User, Subject, Grade } from '../types';
 import { UserPlus, Link as LinkIcon, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useData, useDataMutation } from '../hooks/useData';
 import { TableSkeleton } from '../components/ui/Skeleton';
+import { supabase } from '../lib/supabase';
 
 const PAGE_SIZE = 50;
 
@@ -22,7 +23,7 @@ const Teachers = () => {
   const { user } = useAuth();
   const { isReadOnly } = useSubscription();
   const [page, setPage] = useState(0);
-  
+
   // Mutations
   const teachersMutation = useDataMutation('teachers');
   const assignmentMutation = useDataMutation('teacher_assignments');
@@ -46,7 +47,7 @@ const Teachers = () => {
   const assignmentsQuery = useData<AssignmentRecord>('assignments-list', 'teacher_assignments', {
     select: '*, teachers:teacher_id(id, name), subjects:subject_id(id, subject_name), grades:grade_id(id, grade_name)'
   }, !!user?.school_id);
-  
+
   // Local UI State
   const [showTeacherModal, setShowTeacherModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
@@ -54,11 +55,16 @@ const Teachers = () => {
   const [feedback, setFeedback] = useState<{type: 'success' | 'error', message: string} | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [assignmentDeleteConfirmId, setAssignmentDeleteConfirmId] = useState<number | null>(null);
-  
+
   const [teacherForm, setTeacherForm] = useState({ name: '', email: '', password: '', role: 'Teacher' });
   const [assignForm, setAssignForm] = useState({ teacher_id: '', subject_id: '', grade_id: '' });
 
-  const teachers = useMemo(() => teachersQuery.data || [], [teachersQuery.data]);
+  const NON_TEACHER_ROLES = ['superadmin', 'super_admin', 'admin'];
+  const teachers = useMemo(() => {
+    return (teachersQuery.data || []).filter(
+      t => !NON_TEACHER_ROLES.includes((t.role || '').toLowerCase().replace(/_/g, ''))
+    );
+  }, [teachersQuery.data]);
   const subjects = useMemo(() => subjectsQuery.data || [], [subjectsQuery.data]);
   const grades = useMemo(() => gradesQuery.data || [], [gradesQuery.data]);
   const rawAssignments = useMemo(() => assignmentsQuery.data || [], [assignmentsQuery.data]);
@@ -79,21 +85,63 @@ const Teachers = () => {
     e.preventDefault();
     if (isReadOnly) return;
 
+    // Password is required so the teacher can log in
+    if (!teacherForm.password || teacherForm.password.length < 6) {
+      setFeedback({ type: 'error', message: 'Password must be at least 6 characters.' });
+      return;
+    }
+
     setLoading(true);
+    setFeedback(null);
+
     try {
+      // Step 1 — Insert into teachers table (existing behaviour)
       const payload = {
-        name: teacherForm.name,
-        email: teacherForm.email,
-        password: teacherForm.password,
-        role: teacherForm.role || 'Teacher',
-        school_id: Number(user?.school_id)
+        name:      teacherForm.name,
+        email:     teacherForm.email,
+        password:  teacherForm.password,
+        role:      teacherForm.role || 'Teacher',
+        school_id: Number(user?.school_id),
       };
 
-      await teachersMutation.mutateAsync({ operation: 'insert', payload: [payload] });
-      setFeedback({ type: 'success', message: 'Teacher registered successfully!' });
+      const result = await teachersMutation.mutateAsync({
+        operation: 'insert',
+        payload: [payload],
+      });
+
+      // Step 2 — Create Supabase Auth account via Edge Function
+      // This is what allows the teacher to actually log in
+      const teacherId = Array.isArray(result) ? result[0]?.id : result?.id;
+
+      const { error: fnError } = await supabase.functions.invoke('create-teacher-auth', {
+        body: {
+          teacher_id: teacherId ?? null,
+          name:       teacherForm.name,
+          email:      teacherForm.email,
+          password:   teacherForm.password,
+          role:       teacherForm.role?.toLowerCase() === 'admin' ? 'school_admin' : 'teacher',
+          school_id:  Number(user?.school_id),
+        },
+      });
+
+      if (fnError) {
+        // Teacher row was saved but auth account failed
+        // Show warning — admin can re-save to retry
+        setFeedback({
+          type: 'error',
+          message: `Teacher saved but login setup failed: ${fnError.message}. Please delete and re-add the teacher.`,
+        });
+        setShowTeacherModal(false);
+        setTeacherForm({ name: '', email: '', password: '', role: 'Teacher' });
+        return;
+      }
+
+      // All good
+      setFeedback({ type: 'success', message: `${teacherForm.name} registered successfully and can now log in.` });
       setShowTeacherModal(false);
       setTeacherForm({ name: '', email: '', password: '', role: 'Teacher' });
-      setTimeout(() => setFeedback(null), 3000);
+      setTimeout(() => setFeedback(null), 4000);
+
     } catch (err: unknown) {
       setFeedback({ type: 'error', message: (err as Error).message || 'Failed to register teacher' });
     } finally {
@@ -163,14 +211,14 @@ const Teachers = () => {
           <p className="text-slate-500 text-sm">Manage staff and assignments.</p>
         </div>
         <div className="flex gap-3">
-          <button 
+          <button
             disabled={isReadOnly}
             onClick={() => setShowAssignModal(true)}
             className="inline-flex items-center gap-2 px-4 py-2 border rounded-lg text-sm bg-white hover:bg-slate-50"
           >
             <LinkIcon size={18} /> Assign Subject
           </button>
-          <button 
+          <button
             disabled={isReadOnly}
             onClick={() => setShowTeacherModal(true)}
             className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"
@@ -185,9 +233,9 @@ const Teachers = () => {
           <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
             <h3 className="font-bold text-slate-900 text-sm">Staff List</h3>
             <div className="flex items-center gap-2">
-               <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="p-1 border rounded disabled:opacity-30"><ChevronLeft size={16}/></button>
-               <span className="text-xs font-bold">Page {page + 1}</span>
-               <button onClick={() => setPage(p => p + 1)} disabled={teachers.length < PAGE_SIZE} className="p-1 border rounded disabled:opacity-30"><ChevronRight size={16}/></button>
+              <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="p-1 border rounded disabled:opacity-30"><ChevronLeft size={16}/></button>
+              <span className="text-xs font-bold">Page {page + 1}</span>
+              <button onClick={() => setPage(p => p + 1)} disabled={teachers.length < PAGE_SIZE} className="p-1 border rounded disabled:opacity-30"><ChevronRight size={16}/></button>
             </div>
           </div>
           <div className="overflow-x-auto min-h-[300px]">
@@ -234,9 +282,9 @@ const Teachers = () => {
             <h3 className="font-bold text-slate-900 text-sm">Active Assignments</h3>
           </div>
           <div className="overflow-x-auto">
-             {assignmentsQuery.isLoading ? (
-               <div className="p-6"><TableSkeleton rows={8} cols={4} /></div>
-             ) : (
+            {assignmentsQuery.isLoading ? (
+              <div className="p-6"><TableSkeleton rows={8} cols={4} /></div>
+            ) : (
               <table className="w-full text-left">
                 <thead className="text-xs text-slate-400 uppercase font-bold border-b">
                   <tr>
@@ -251,8 +299,8 @@ const Teachers = () => {
                       <td className="px-6 py-4 font-bold text-slate-800">{a.teacher_name}</td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
-                           <span className="text-[10px] font-bold px-2 py-0.5 bg-blue-50 text-blue-700 rounded-lg">{a.subject_name}</span>
-                           <span className="text-[10px] font-bold px-2 py-0.5 bg-slate-50 text-slate-700 rounded-lg">{a.grade_name}</span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 bg-blue-50 text-blue-700 rounded-lg">{a.subject_name}</span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 bg-slate-50 text-slate-700 rounded-lg">{a.grade_name}</span>
                         </div>
                       </td>
                       <td className="px-6 py-4 text-right">
@@ -266,28 +314,88 @@ const Teachers = () => {
                   ))}
                 </tbody>
               </table>
-             )}
+            )}
           </div>
         </div>
       </div>
 
+      {/* Add Teacher Modal */}
       {showTeacherModal && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-            <div className="p-6 border-b"><h3 className="text-lg font-bold">Add Teacher</h3></div>
+            <div className="p-6 border-b">
+              <h3 className="text-lg font-bold">Add Teacher</h3>
+              <p className="text-slate-400 text-xs mt-1">The teacher will use this email and password to log in.</p>
+            </div>
             <form onSubmit={handleCreateTeacher} className="p-6 space-y-4">
-              <input required placeholder="Full Name" value={teacherForm.name} onChange={e => setTeacherForm({...teacherForm, name: e.target.value})} className="w-full px-4 py-2 border rounded-lg" />
-              <input type="email" required placeholder="Email" value={teacherForm.email} onChange={e => setTeacherForm({...teacherForm, email: e.target.value})} className="w-full px-4 py-2 border rounded-lg" />
-              <input type="password" placeholder="Password (Optional)" value={teacherForm.password} onChange={e => setTeacherForm({...teacherForm, password: e.target.value})} className="w-full px-4 py-2 border rounded-lg" />
+              <input
+                required
+                placeholder="Full Name"
+                value={teacherForm.name}
+                onChange={e => setTeacherForm({...teacherForm, name: e.target.value})}
+                className="w-full px-4 py-2 border rounded-lg"
+              />
+              <input
+                type="email"
+                required
+                placeholder="Email"
+                value={teacherForm.email}
+                onChange={e => setTeacherForm({...teacherForm, email: e.target.value})}
+                className="w-full px-4 py-2 border rounded-lg"
+              />
+              {/* Password is now required — teacher needs it to log in */}
+              <div>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  placeholder="Password (min. 6 characters)"
+                  value={teacherForm.password}
+                  onChange={e => setTeacherForm({...teacherForm, password: e.target.value})}
+                  className="w-full px-4 py-2 border rounded-lg"
+                />
+                <p className="text-slate-400 text-xs mt-1 ml-1">
+                  Share this password with the teacher so they can log in.
+                </p>
+              </div>
+              <select
+                value={teacherForm.role}
+                onChange={e => setTeacherForm({...teacherForm, role: e.target.value})}
+                className="w-full px-4 py-2 border rounded-lg"
+              >
+                <option value="Teacher">Teacher</option>
+                <option value="Admin">Admin</option>
+              </select>
               <div className="flex gap-3 mt-6">
-                <button type="button" onClick={() => setShowTeacherModal(false)} className="flex-1 px-4 py-2 border rounded-lg">Cancel</button>
-                <button type="submit" disabled={loading} className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg font-bold disabled:opacity-50">Save</button>
+                <button
+                  type="button"
+                  onClick={() => { setShowTeacherModal(false); setTeacherForm({ name: '', email: '', password: '', role: 'Teacher' }); }}
+                  className="flex-1 px-4 py-2 border rounded-lg"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg font-bold disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {loading ? (
+                    <>
+                      <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                      </svg>
+                      Setting up…
+                    </>
+                  ) : 'Save Teacher'}
+                </button>
               </div>
             </form>
           </div>
         </div>
       )}
 
+      {/* Assign Subject Modal */}
       {showAssignModal && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">

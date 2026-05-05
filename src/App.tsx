@@ -9,28 +9,31 @@ import SubscriptionBanner from './components/SubscriptionBanner';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 // Lazy load all pages
-const Login = lazy(() => import('./pages/Login'));
-const Dashboard = lazy(() => import('./pages/Dashboard'));
-const Students = lazy(() => import('./pages/Students'));
-const Grades = lazy(() => import('./pages/Grades'));
-const Subjects = lazy(() => import('./pages/Subjects'));
-const Exams = lazy(() => import('./pages/Exams'));
-const MarksEntry = lazy(() => import('./pages/MarksEntry'));
-const Analytics = lazy(() => import('./pages/Analytics'));
-const Reports = lazy(() => import('./pages/Reports'));
-const Teachers = lazy(() => import('./pages/Teachers'));
-const OrderForm = lazy(() => import('./pages/OrderForm'));
-const Schools = lazy(() => import('./pages/Schools'));
-const SuperAdminDashboard = lazy(() => import('./pages/SuperAdminDashboard'));
-const SuperAdminAnalytics = lazy(() => import('./pages/SuperAdminAnalytics'));
-const GlobalUsers = lazy(() => import('./pages/GlobalUsers'));
-const Subscriptions = lazy(() => import('./pages/Subscriptions'));
-const SchoolSubscription = lazy(() => import('./pages/SchoolSubscription'));
-const TeacherAssignments = lazy(() => import('./pages/TeacherAssignments'));
-const SettingsPage = lazy(() => import('./pages/Settings'));
-const SystemStatus = lazy(() => import('./pages/SystemStatus'));
-const Attendance = lazy(() => import('./pages/Attendance'));
-const AttendanceReport = lazy(() => import('./pages/AttendanceReport'));
+const Login             = lazy(() => import('./pages/Login'));
+const Register          = lazy(() => import('./pages/Register'));
+const AwaitingApproval  = lazy(() => import('./pages/AwaitingApproval'));
+const Dashboard         = lazy(() => import('./pages/Dashboard'));
+const Students          = lazy(() => import('./pages/Students'));
+const Grades            = lazy(() => import('./pages/Grades'));
+const Subjects          = lazy(() => import('./pages/Subjects'));
+const Exams             = lazy(() => import('./pages/Exams'));
+const MarksEntry        = lazy(() => import('./pages/MarksEntry'));
+const Analytics         = lazy(() => import('./pages/Analytics'));
+const Reports           = lazy(() => import('./pages/Reports'));
+const Teachers          = lazy(() => import('./pages/Teachers'));
+const OrderForm         = lazy(() => import('./pages/OrderForm'));
+const Schools           = lazy(() => import('./pages/Schools'));
+const SuperAdminDashboard   = lazy(() => import('./pages/SuperAdminDashboard'));
+const SuperAdminAnalytics   = lazy(() => import('./pages/SuperAdminAnalytics'));
+const GlobalUsers           = lazy(() => import('./pages/GlobalUsers'));
+const Subscriptions         = lazy(() => import('./pages/Subscriptions'));
+const SchoolSubscription    = lazy(() => import('./pages/SchoolSubscription'));
+const TeacherAssignments    = lazy(() => import('./pages/TeacherAssignments'));
+const SettingsPage          = lazy(() => import('./pages/Settings'));
+const SystemStatus          = lazy(() => import('./pages/SystemStatus'));
+const Attendance            = lazy(() => import('./pages/Attendance'));
+const AttendanceReport      = lazy(() => import('./pages/AttendanceReport'));
+const StudentPromotion      = lazy(() => import('./pages/StudentPromotion'));
 
 const PageFallback = () => (
   <div className="space-y-6 animate-in fade-in duration-500">
@@ -88,6 +91,8 @@ const AppRoutes = () => {
     <Routes>
       {/* Public */}
       <Route path="/login" element={<Suspense fallback={<div className="h-screen flex items-center justify-center bg-slate-50">Loading...</div>}><Login /></Suspense>} />
+      <Route path="/register" element={<Suspense fallback={<div className="h-screen flex items-center justify-center bg-slate-50">Loading...</div>}><Register /></Suspense>} />
+      <Route path="/awaiting-approval" element={<Suspense fallback={<div className="h-screen flex items-center justify-center bg-slate-50">Loading...</div>}><AwaitingApproval /></Suspense>} />
       <Route path="/order" element={<Suspense fallback={<div>Loading...</div>}><OrderForm /></Suspense>} />
       <Route path="/status" element={<Suspense fallback={<div>Loading...</div>}><SystemStatus /></Suspense>} />
 
@@ -108,14 +113,19 @@ const AppRoutes = () => {
       <Route path="/reports" element={<ProtectedRoute><Layout>{wrap(<Reports />, 'Reports')}</Layout></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><Layout>{wrap(<SettingsPage />, 'Settings')}</Layout></ProtectedRoute>} />
 
+      {/* Student Promotion — school admin only */}
+      <Route path="/promotion" element={
+        <RoleProtectedRoute allowedRoles={['Admin', 'admin', 'school_admin', 'Principal', 'SuperAdmin', 'super_admin']}>
+          <Layout>{wrap(<StudentPromotion />, 'Student Promotion')}</Layout>
+        </RoleProtectedRoute>
+      } />
+
       {/* School Admin only routes */}
       <Route path="/assignments" element={
         <RoleProtectedRoute allowedRoles={['Admin', 'admin', 'school_admin', 'Principal']}>
           <Layout>{wrap(<TeacherAssignments />, 'Teacher Assignments')}</Layout>
         </RoleProtectedRoute>
       } />
-
-      {/* School Admin only routes */}
       <Route path="/teachers" element={
         <RoleProtectedRoute allowedRoles={['Admin', 'admin', 'school_admin', 'Principal', 'SuperAdmin', 'super_admin']}>
           <Layout>{wrap(<Teachers />, 'Teachers')}</Layout>

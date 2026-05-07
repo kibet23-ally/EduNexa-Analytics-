@@ -10,21 +10,42 @@ interface ProxyQuery {
   countOnly?: boolean;
 }
 
+/**
+ * Coerce filter values to their correct types.
+ * After a page refresh, values from localStorage are strings.
+ * Supabase bigint columns (school_id, grade_id, etc.) need numbers —
+ * otherwise RLS policy comparisons silently return no rows.
+ */
+function coerceValue(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    // Numeric string → number (covers school_id, grade_id, exam_id etc.)
+    if (value !== '' && !isNaN(Number(value)) && !value.includes('-') === false) {
+      // Keep UUIDs as strings (they contain hyphens)
+      return value;
+    }
+    if (value !== '' && /^\d+$/.test(value)) {
+      return Number(value);
+    }
+  }
+  return value;
+}
+
 export async function fetchWithProxy(table: string, query: ProxyQuery = {}) {
   try {
-    // Build select string
     const selectStr = query.select || '*';
 
-    // Handle count-only requests
+    // ── Count-only ──────────────────────────────────────────
     if (query.countOnly) {
       let countQuery = supabase
         .from(table)
         .select('*', { count: 'exact', head: true });
 
-      // Apply filters
       if (query.filters) {
         for (const [key, value] of Object.entries(query.filters)) {
-          countQuery = countQuery.eq(key, value as string);
+          countQuery = countQuery.eq(key, coerceValue(value) as string);
         }
       }
 
@@ -33,29 +54,25 @@ export async function fetchWithProxy(table: string, query: ProxyQuery = {}) {
       return { data: null, count: count ?? 0 };
     }
 
-    // Build main query
+    // ── Main query ──────────────────────────────────────────
     let dbQuery = supabase.from(table).select(selectStr);
 
-    // Apply filters
     if (query.filters) {
       for (const [key, value] of Object.entries(query.filters)) {
-        dbQuery = dbQuery.eq(key, value as string);
+        dbQuery = dbQuery.eq(key, coerceValue(value) as string);
       }
     }
 
-    // Apply ordering
     if (query.orderBy) {
       dbQuery = dbQuery.order(query.orderBy.column, {
         ascending: query.orderBy.ascending,
       });
     }
 
-    // Apply limit
     if (query.limit) {
       dbQuery = dbQuery.limit(query.limit);
     }
 
-    // Single record
     if (query.single) {
       const { data, error } = await (dbQuery as ReturnType<typeof supabase.from>).maybeSingle();
       if (error) throw new Error(error.message);
@@ -108,11 +125,9 @@ export async function writeWithProxy(
       let updateQuery = supabase
         .from(table)
         .update(payload as Record<string, unknown>);
-
       for (const [key, value] of Object.entries(filters)) {
-        updateQuery = updateQuery.eq(key, value as string);
+        updateQuery = updateQuery.eq(key, coerceValue(value) as string);
       }
-
       const { data, error } = await updateQuery.select();
       if (error) throw new Error(error.message);
       result = data;
@@ -121,11 +136,9 @@ export async function writeWithProxy(
     else if (operation === 'delete') {
       if (!filters) throw new Error('Delete requires filters');
       let deleteQuery = supabase.from(table).delete();
-
       for (const [key, value] of Object.entries(filters)) {
-        deleteQuery = deleteQuery.eq(key, value as string);
+        deleteQuery = deleteQuery.eq(key, coerceValue(value) as string);
       }
-
       const { data, error } = await deleteQuery.select();
       if (error) throw new Error(error.message);
       result = data;

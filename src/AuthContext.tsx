@@ -3,28 +3,32 @@ import { AuthContext } from './useAuth';
 import { User } from './types';
 import { supabase } from './lib/supabase';
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(() => {
-    try {
-      const savedUser = localStorage.getItem('edunexa_user');
-      return savedUser ? JSON.parse(savedUser) : null;
-    } catch {
-      localStorage.removeItem('edunexa_user');
-      return null;
-    }
-  });
+/** Always parse school_id as a number so bigint RLS comparisons work */
+function normalizeUser(raw: User | null): User | null {
+  if (!raw) return null;
+  return {
+    ...raw,
+    school_id: raw.school_id !== undefined && raw.school_id !== null
+      ? Number(raw.school_id)
+      : raw.school_id,
+  };
+}
 
+function loadUserFromStorage(): User | null {
+  try {
+    const saved = localStorage.getItem('edunexa_user');
+    return saved ? normalizeUser(JSON.parse(saved)) : null;
+  } catch {
+    localStorage.removeItem('edunexa_user');
+    return null;
+  }
+}
+
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [user,  setUser]  = useState<User | null>(loadUserFromStorage);
   const [token, setToken] = useState<string | null>(
     () => localStorage.getItem('edunexa_token')
   );
-
-  // If we already have a token in localStorage, start as NOT loading
-  // so returning users never see the spinner. Only show spinner when
-  // there is no cached session at all.
-  const [loading, setLoading] = useState<boolean>(
-    () => !localStorage.getItem('edunexa_token')
-  );
-
   const [theme, setThemeState] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('edunexa_theme');
     return saved === 'dark' ? 'dark' : 'light';
@@ -33,41 +37,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const setTheme = (newTheme: 'light' | 'dark') => {
     setThemeState(newTheme);
     localStorage.setItem('edunexa_theme', newTheme);
-    if (newTheme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
+    document.documentElement.classList.toggle('dark', newTheme === 'dark');
   };
 
   useEffect(() => {
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
+    document.documentElement.classList.toggle('dark', theme === 'dark');
   }, [theme]);
 
   useEffect(() => {
     let cancelled = false;
 
     const restoreSession = async () => {
-      // Safety net: no matter what happens, loading ends in 3 seconds
-      const safetyTimer = setTimeout(() => {
-        if (!cancelled) setLoading(false);
-      }, 3000);
-
       try {
         const { data: { session } } = await supabase.auth.getSession();
-
         if (cancelled) return;
 
         if (session?.user) {
-          // Update token
           setToken(session.access_token);
           localStorage.setItem('edunexa_token', session.access_token);
 
-          // Fetch fresh profile using correct auth_id column
+          // FIX: use auth_id not id
           const { data: profile } = await supabase
             .from('users')
             .select('*')
@@ -77,12 +66,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (cancelled) return;
 
           if (profile) {
-            setUser(profile as User);
-            localStorage.setItem('edunexa_user', JSON.stringify(profile));
+            const normalized = normalizeUser(profile as User)!;
+            setUser(normalized);
+            localStorage.setItem('edunexa_user', JSON.stringify(normalized));
           }
-          // If profile is null, keep whatever is in localStorage
+          // No profile → keep cached user, don't lock them out
         } else {
-          // No Supabase session — clear everything
+          // No session — clear state
           setToken(null);
           setUser(null);
           localStorage.removeItem('edunexa_token');
@@ -90,18 +80,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       } catch (err) {
         console.error('AuthContext restore error:', err);
-        // On any error, keep localStorage values — don't lock user out
-      } finally {
-        clearTimeout(safetyTimer);
-        if (!cancelled) setLoading(false);
+        // Keep cached data on error — don't lock the user out
       }
     };
 
     restoreSession();
 
-    // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        if (cancelled) return;
+
         if (event === 'TOKEN_REFRESHED' && session) {
           setToken(session.access_token);
           localStorage.setItem('edunexa_token', session.access_token);
@@ -117,9 +105,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .eq('auth_id', session.user.id)
             .maybeSingle();
 
-          if (profile) {
-            setUser(profile as User);
-            localStorage.setItem('edunexa_user', JSON.stringify(profile));
+          if (profile && !cancelled) {
+            const normalized = normalizeUser(profile as User)!;
+            setUser(normalized);
+            localStorage.setItem('edunexa_user', JSON.stringify(normalized));
           }
         }
 
@@ -135,22 +124,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     );
 
-    // Sync across browser tabs
+    // Sync across tabs
     const handleStorage = () => {
-      const savedToken = localStorage.getItem('edunexa_token');
-      const savedUser  = localStorage.getItem('edunexa_user');
-      const savedTheme = localStorage.getItem('edunexa_theme') as 'light' | 'dark';
-      setToken(savedToken);
-      try {
-        setUser(savedUser ? JSON.parse(savedUser) : null);
-      } catch {
-        setUser(null);
-      }
-      if (savedTheme) setThemeState(savedTheme);
+      setToken(localStorage.getItem('edunexa_token'));
+      setUser(loadUserFromStorage());
+      const t = localStorage.getItem('edunexa_theme') as 'light' | 'dark';
+      if (t) setThemeState(t);
     };
 
     window.addEventListener('storage', handleStorage);
-
     return () => {
       cancelled = true;
       subscription.unsubscribe();
@@ -159,10 +141,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const login = (newToken: string, newUser: User) => {
+    const normalized = normalizeUser(newUser)!;
     setToken(newToken);
-    setUser(newUser);
+    setUser(normalized);
     localStorage.setItem('edunexa_token', newToken);
-    localStorage.setItem('edunexa_user', JSON.stringify(newUser));
+    localStorage.setItem('edunexa_user', JSON.stringify(normalized));
   };
 
   const logout = () => {
@@ -177,28 +160,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     supabase.auth.signOut().catch(() => {});
     window.location.replace('/login');
   };
-
-  // Only show spinner if loading AND no cached user
-  // This means first-time visitors see a brief spinner
-  // but returning users go straight to their dashboard
-  if (loading && !user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 bg-blue-700 rounded-xl flex items-center justify-center shadow-lg">
-            <span className="text-white font-black text-xl">E</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <svg className="animate-spin w-4 h-4 text-blue-600" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-            </svg>
-            <span className="text-slate-400 text-sm font-medium">Loading EduNexa…</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <AuthContext.Provider

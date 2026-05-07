@@ -3,14 +3,11 @@ import { AuthContext } from './useAuth';
 import { User } from './types';
 import { supabase } from './lib/supabase';
 
-/** Always parse school_id as a number so bigint RLS comparisons work */
 function normalizeUser(raw: User | null): User | null {
   if (!raw) return null;
   return {
     ...raw,
-    school_id: raw.school_id !== undefined && raw.school_id !== null
-      ? Number(raw.school_id)
-      : raw.school_id,
+    school_id: raw.school_id != null ? Number(raw.school_id) : raw.school_id,
   };
 }
 
@@ -25,11 +22,12 @@ function loadUserFromStorage(): User | null {
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user,  setUser]  = useState<User | null>(loadUserFromStorage);
-  const [token, setToken] = useState<string | null>(
-    () => localStorage.getItem('edunexa_token')
-  );
-  const [theme, setThemeState] = useState<'light' | 'dark'>(() => {
+  const [user,         setUser]         = useState<User | null>(loadUserFromStorage);
+  const [token,        setToken]        = useState<string | null>(() => localStorage.getItem('edunexa_token'));
+  // sessionReady = true once Supabase has confirmed the session
+  // Queries must not fire until this is true
+  const [sessionReady, setSessionReady] = useState(false);
+  const [theme,        setThemeState]   = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('edunexa_theme');
     return saved === 'dark' ? 'dark' : 'light';
   });
@@ -56,7 +54,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setToken(session.access_token);
           localStorage.setItem('edunexa_token', session.access_token);
 
-          // FIX: use auth_id not id
           const { data: profile } = await supabase
             .from('users')
             .select('*')
@@ -70,17 +67,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setUser(normalized);
             localStorage.setItem('edunexa_user', JSON.stringify(normalized));
           }
-          // No profile → keep cached user, don't lock them out
         } else {
-          // No session — clear state
+          // No session — clear storage
           setToken(null);
           setUser(null);
           localStorage.removeItem('edunexa_token');
           localStorage.removeItem('edunexa_user');
         }
       } catch (err) {
-        console.error('AuthContext restore error:', err);
-        // Keep cached data on error — don't lock the user out
+        console.error('AuthContext restore:', err);
+      } finally {
+        // Always mark session as ready so queries can fire
+        if (!cancelled) setSessionReady(true);
       }
     };
 
@@ -110,11 +108,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setUser(normalized);
             localStorage.setItem('edunexa_user', JSON.stringify(normalized));
           }
+          if (!cancelled) setSessionReady(true);
         }
 
         if (event === 'SIGNED_OUT') {
           setToken(null);
           setUser(null);
+          setSessionReady(false);
           localStorage.removeItem('edunexa_token');
           localStorage.removeItem('edunexa_user');
           document.documentElement.classList.remove('dark');
@@ -124,7 +124,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     );
 
-    // Sync across tabs
     const handleStorage = () => {
       setToken(localStorage.getItem('edunexa_token'));
       setUser(loadUserFromStorage());
@@ -144,6 +143,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const normalized = normalizeUser(newUser)!;
     setToken(newToken);
     setUser(normalized);
+    setSessionReady(true);
     localStorage.setItem('edunexa_token', newToken);
     localStorage.setItem('edunexa_user', JSON.stringify(normalized));
   };
@@ -151,6 +151,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = () => {
     setToken(null);
     setUser(null);
+    setSessionReady(false);
     localStorage.removeItem('edunexa_token');
     localStorage.removeItem('edunexa_user');
     localStorage.removeItem('sb-zclwokyzsqzitqwmugtt-auth-token');
@@ -167,6 +168,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         token,
         theme,
+        sessionReady,
         login,
         logout,
         setTheme,

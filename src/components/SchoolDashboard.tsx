@@ -122,7 +122,7 @@ const SchoolDashboard = () => {
           ) : (
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-8">
               {[
-                { label: 'Total Expected', value: attendanceSummary.total,   bg: 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800',     text: 'text-slate-900 dark:text-white',             label_color: 'text-slate-400 dark:text-slate-500' },
+                { label: 'Total Expected', value: studentCount.data ?? 0,   bg: 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800',     text: 'text-slate-900 dark:text-white',             label_color: 'text-slate-400 dark:text-slate-500' },
                 { label: 'Present',        value: attendanceSummary.present,  bg: 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-100 dark:border-emerald-900/30', text: 'text-emerald-700 dark:text-emerald-400',   label_color: 'text-emerald-600 dark:text-emerald-400' },
                 { label: 'Absent',         value: attendanceSummary.absent,   bg: 'bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-900/30',         text: 'text-red-700 dark:text-red-400',             label_color: 'text-red-600 dark:text-red-400' },
                 { label: 'Late',           value: attendanceSummary.late,     bg: 'bg-amber-50 dark:bg-amber-900/20 border-amber-100 dark:border-amber-900/30', text: 'text-amber-700 dark:text-amber-400',         label_color: 'text-amber-600 dark:text-amber-400' },

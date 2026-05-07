@@ -140,8 +140,16 @@ export async function writeWithProxy(
 
     else if (operation === 'upsert') {
       const upsertData = Array.isArray(payload) ? payload : [payload];
-      const opts = onConflict ? { onConflict } : {};
-      const { data, error } = await db.from(table).upsert(upsertData, opts).select();
+      // Always specify onConflict for upsert — without it Postgres
+      // falls back to the primary key and hits unique constraints
+      const upsertOptions: Record<string, unknown> = {};
+      if (onConflict) {
+        upsertOptions.onConflict = onConflict;
+      }
+      const { data, error } = await db
+        .from(table)
+        .upsert(upsertData, upsertOptions)
+        .select();
       if (error) throw new Error(error.message);
       result = data;
     }

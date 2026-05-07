@@ -91,12 +91,14 @@ export function useDataMutation(table: string) {
       operation,
       payload,
       filters,
+      onConflict,
     }: {
       operation: 'insert' | 'update' | 'delete' | 'upsert';
       payload?: any;
       filters?: any;
+      onConflict?: string;
     }) => {
-      return await writeWithProxy(table, operation, payload, filters);
+      return await writeWithProxy(table, operation, payload, filters, onConflict);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({

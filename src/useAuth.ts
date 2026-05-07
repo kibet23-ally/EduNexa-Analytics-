@@ -5,6 +5,7 @@ export interface AuthContextType {
   user: User | null;
   token: string | null;
   theme: 'light' | 'dark';
+  sessionReady: boolean;   // true once Supabase session is confirmed
   login: (token: string, user: User) => void;
   logout: () => void;
   setTheme: (theme: 'light' | 'dark') => void;

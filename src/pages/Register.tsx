@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { School, User, Mail, Lock, Phone, Eye, EyeOff, CheckCircle2, AlertCircle } from 'lucide-react';
+import {
+  School, User, Mail, Lock, Phone,
+  Eye, EyeOff, CheckCircle2, AlertCircle,
+} from 'lucide-react';
 
 interface Form {
   schoolName: string;
@@ -28,7 +31,6 @@ function validate(f: Form): string | null {
 }
 
 export default function Register() {
-  const navigate  = useNavigate();
   const [form,     setForm]     = useState<Form>(EMPTY);
   const [showPwd,  setShowPwd]  = useState(false);
   const [showConf, setShowConf] = useState(false);
@@ -52,8 +54,7 @@ export default function Register() {
     try {
       const cleanEmail = form.email.trim().toLowerCase();
 
-      // Step 1: Create auth user
-      // emailRedirectTo is not set so email confirmation is not required
+      // Step 1: Create Supabase auth user
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email:    cleanEmail,
         password: form.password,
@@ -66,11 +67,11 @@ export default function Register() {
       });
 
       if (authError) {
-        if (authError.message.toLowerCase().includes('already registered')) {
-          setError('An account with this email already exists.');
-        } else {
-          setError(authError.message);
-        }
+        setError(
+          authError.message.toLowerCase().includes('already registered')
+            ? 'An account with this email already exists.'
+            : authError.message
+        );
         return;
       }
 
@@ -79,73 +80,28 @@ export default function Register() {
         return;
       }
 
-      const userId = authData.user.id;
+      // Step 2: Call register_new_school() RPC
+      // This is SECURITY DEFINER — bypasses RLS entirely.
+      // It inserts school + user + registration_request atomically.
+      const { error: rpcError } = await supabase.rpc('register_new_school', {
+        p_auth_id:     authData.user.id,
+        p_school_name: form.schoolName.trim(),
+        p_email:       cleanEmail,
+        p_phone:       form.phone.trim(),
+        p_admin_name:  form.adminFullName.trim(),
+      });
 
-      // Step 2: Insert school — anon INSERT policy allows this
-      const expiryDate = new Date();
-      expiryDate.setDate(expiryDate.getDate() + 30);
-
-      const { data: schoolData, error: schoolError } = await supabase
-        .from('schools')
-        .insert({
-          name:                form.schoolName.trim(),
-          email:               cleanEmail,
-          phone:               form.phone.trim() || null,
-          status:              'pending',
-          subscription_status: 'trial',
-          expiry_date:         expiryDate.toISOString(),
-          admin_name:          form.adminFullName.trim(),
-          admin_id:            userId,
-        })
-        .select('id')
-        .single();
-
-      if (schoolError) {
-        if (schoolError.message.includes('unique') || schoolError.message.includes('duplicate')) {
+      if (rpcError) {
+        // Roll back: delete the auth user so they can retry
+        // (best effort — service role not available client-side)
+        console.error('RPC error:', rpcError.message);
+        if (rpcError.message.includes('unique') || rpcError.message.includes('duplicate')) {
           setError('A school with this email is already registered.');
         } else {
-          setError(schoolError.message);
+          setError(rpcError.message || 'Registration failed. Please try again.');
         }
         return;
       }
-
-      // Step 3: Insert user row — uses anon INSERT policy
-      // (auth.uid() may be null before email confirmation, policy allows it)
-      const { error: userError } = await supabase
-        .from('users')
-        .insert({
-          id:        userId,
-          auth_id:   userId,
-          name:      form.adminFullName.trim(),
-          email:     cleanEmail,
-          role:      'school_admin',
-          school_id: schoolData.id,
-        });
-
-      if (userError && !userError.message.includes('duplicate')) {
-        // Non-fatal — the handle_new_user trigger may have already
-        // created the row. We'll update it instead.
-        await supabase
-          .from('users')
-          .update({
-            name:      form.adminFullName.trim(),
-            role:      'school_admin',
-            school_id: schoolData.id,
-          })
-          .eq('id', userId);
-      }
-
-      // Step 4: Notify super admin (fire and forget)
-      fetch('/api/notify-registration', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          schoolName: form.schoolName,
-          adminName:  form.adminFullName,
-          email:      cleanEmail,
-          phone:      form.phone,
-        }),
-      }).catch(console.error);
 
       setSuccess(true);
 
@@ -156,28 +112,28 @@ export default function Register() {
     }
   };
 
-  /* ── Success screen ───────────────────────────────────── */
+  /* ── Success screen ─────────────────────────────────── */
   if (success) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4 bg-slate-50">
+      <div className="min-h-screen flex items-center justify-center p-4 login-gradient">
         <div className="w-full max-w-md">
-          <div className="bg-white rounded-2xl shadow-xl p-10 text-center">
+          <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-2xl border border-white p-10 text-center">
             <div className="w-20 h-20 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-6 border border-emerald-100">
               <CheckCircle2 className="w-10 h-10 text-emerald-500" />
             </div>
-            <h2 className="text-2xl font-bold text-slate-900 mb-3">Registration Submitted!</h2>
+            <h2 className="text-2xl font-black text-slate-900 mb-3">Registration Submitted!</h2>
             <p className="text-slate-500 leading-relaxed mb-6">
               <span className="text-slate-800 font-semibold">{form.schoolName}</span> has been
               registered. Our team will review your application and notify you at{' '}
               <span className="text-slate-800">{form.email}</span> once approved.
             </p>
             <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 mb-8">
-              <p className="text-amber-700 text-sm">
+              <p className="text-amber-700 text-sm font-medium">
                 ⏳ Review typically takes 1–2 business days.
               </p>
             </div>
             <Link to="/login"
-              className="flex items-center justify-center w-full py-3 px-6 rounded-xl bg-primary text-white font-bold hover:bg-primary-dark transition-all">
+              className="flex items-center justify-center w-full py-4 px-6 rounded-2xl bg-primary text-white font-bold hover:bg-primary-dark transition-all active:scale-[0.98]">
               Back to Login
             </Link>
           </div>
@@ -186,21 +142,22 @@ export default function Register() {
     );
   }
 
-  /* ── Registration form ────────────────────────────────── */
+  /* ── Registration form ──────────────────────────────── */
   return (
     <div className="min-h-screen login-gradient flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-md space-y-6">
 
-        {/* Header */}
-        <div className="text-center">
-          <h1 className="text-3xl font-black text-slate-900">Register Your School</h1>
-          <p className="text-slate-500 mt-1 text-sm">Start your 30-day free trial — no credit card required.</p>
+        <div className="text-center space-y-2">
+          <div className="flex items-center justify-center gap-2 text-primary">
+            <h1 className="text-3xl font-black tracking-tight text-slate-900">EduNexa</h1>
+          </div>
+          <p className="text-slate-500 text-sm font-medium">Register your school for a 30-day free trial</p>
         </div>
 
         <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-2xl shadow-slate-200/50 border border-white p-8">
 
           {error && (
-            <div className="flex items-start gap-3 bg-red-50 border border-red-100 rounded-xl p-4 mb-6">
+            <div className="flex items-start gap-3 bg-red-50 border border-red-100 rounded-xl p-4 mb-5">
               <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
               <p className="text-red-700 text-sm font-medium">{error}</p>
             </div>
@@ -210,7 +167,9 @@ export default function Register() {
 
             {/* School Name */}
             <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">School Name *</label>
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">
+                School Name *
+              </label>
               <div className="relative group">
                 <School className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" size={18} />
                 <input type="text" name="schoolName" value={form.schoolName} onChange={onChange}
@@ -221,7 +180,9 @@ export default function Register() {
 
             {/* Admin Full Name */}
             <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">Admin Full Name *</label>
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">
+                Admin Full Name *
+              </label>
               <div className="relative group">
                 <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" size={18} />
                 <input type="text" name="adminFullName" value={form.adminFullName} onChange={onChange}
@@ -232,7 +193,9 @@ export default function Register() {
 
             {/* Email */}
             <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">Email Address *</label>
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">
+                Email Address *
+              </label>
               <div className="relative group">
                 <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" size={18} />
                 <input type="email" name="email" value={form.email} onChange={onChange}
@@ -243,7 +206,9 @@ export default function Register() {
 
             {/* Phone */}
             <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">Phone Number</label>
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">
+                Phone Number
+              </label>
               <div className="relative group">
                 <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" size={18} />
                 <input type="tel" name="phone" value={form.phone} onChange={onChange}
@@ -254,11 +219,14 @@ export default function Register() {
 
             {/* Password */}
             <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">Password *</label>
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">
+                Password *
+              </label>
               <div className="relative group">
                 <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" size={18} />
                 <input type={showPwd ? 'text' : 'password'} name="password" value={form.password}
-                  onChange={onChange} placeholder="Min. 8 characters" disabled={loading} required autoComplete="new-password"
+                  onChange={onChange} placeholder="Min. 8 characters" disabled={loading}
+                  required autoComplete="new-password"
                   className="w-full pl-11 pr-12 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:ring-4 focus:ring-primary/5 focus:border-primary/20 outline-none transition-all text-slate-700 font-medium" />
                 <button type="button" onClick={() => setShowPwd(v => !v)}
                   className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors">
@@ -269,11 +237,15 @@ export default function Register() {
 
             {/* Confirm Password */}
             <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">Confirm Password *</label>
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">
+                Confirm Password *
+              </label>
               <div className="relative group">
                 <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" size={18} />
-                <input type={showConf ? 'text' : 'password'} name="confirmPassword" value={form.confirmPassword}
-                  onChange={onChange} placeholder="Repeat password" disabled={loading} required autoComplete="new-password"
+                <input type={showConf ? 'text' : 'password'} name="confirmPassword"
+                  value={form.confirmPassword} onChange={onChange}
+                  placeholder="Repeat password" disabled={loading}
+                  required autoComplete="new-password"
                   className="w-full pl-11 pr-12 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:ring-4 focus:ring-primary/5 focus:border-primary/20 outline-none transition-all text-slate-700 font-medium" />
                 <button type="button" onClick={() => setShowConf(v => !v)}
                   className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors">

@@ -225,29 +225,15 @@ const Login = () => {
           <p className="text-[10px] items-center justify-center gap-1 font-bold text-slate-400 uppercase tracking-widest flex">
             Trusted by schools across Kenya 🇰🇪
           </p>
-          
-          <div className="relative my-6">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-slate-700" />
-            </div>
-            <div className="relative flex justify-center">
-              <span className="bg-slate-800/70 px-3 text-slate-500 text-xs uppercase tracking-wider">
-                New to EduNexa?
-              </span>
-            </div>
+          <div className="text-[10px] text-slate-400/50 flex items-center justify-center gap-2">
+            <span>v1.5.0</span>
+            <Dot size={8} />
+            <span>EduNexa Platform Services</span>
           </div>
-
-          <Link
-            href="/register"
-            className="flex items-center justify-center w-full py-3 px-6 rounded-xl
-                       border border-amber-500/40 text-amber-400 font-semibold text-sm
-                       hover:bg-amber-500/10 hover:border-amber-500/70
-                       transition-all duration-200"
-          >
-            Register Your School
-          </Link>
         </div>
       </div>
     </div>
   );
-}
+};
+
+export default Login;

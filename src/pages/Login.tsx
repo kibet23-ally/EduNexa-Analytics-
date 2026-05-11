@@ -1,10 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../useAuth';
-import { 
-  GraduationCap, Lock, Mail, BarChart3, Building, Zap, Dot, 
-  Menu, X, ArrowRight, BookOpen, ClipboardList, Shield, Smartphone, Award, TrendingUp
-} from 'lucide-react';
+import { GraduationCap, Lock, Mail, BarChart3, Building, Zap, Dot } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 const Login = () => {
@@ -12,19 +9,8 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [scrolled, setScrolled] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
-
-  // Handle scroll for sticky navbar
-  useEffect(() => {
-    const handleScroll = () => {
-      setScrolled(window.scrollY > 50);
-    };
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
 
   const redirectBasedOnRole = (rawRole: string) => {
     const role = (rawRole || '').toLowerCase().replace(/_/g, '');
@@ -47,19 +33,11 @@ const Login = () => {
     const cleanEmail = email.toLowerCase().trim();
 
     try {
-      const authPromise = supabase.auth.signInWithPassword({
+      // Step 1: Sign in with Supabase Auth
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
         email: cleanEmail,
         password,
       });
-
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Login timed out. Please check your connection and try again.')), 10000)
-      );
-
-      const { data, error: authError } = await Promise.race([
-        authPromise,
-        timeoutPromise
-      ]) as Awaited<typeof authPromise>;
 
       if (authError || !data.session || !data.user) {
         throw new Error(authError?.message || 'Invalid email or password');
@@ -68,6 +46,7 @@ const Login = () => {
       const session = data.session;
       const authUser = data.user;
 
+      // Step 2: Fetch user profile from users table
       let profile = null;
       const { data: userData } = await supabase
         .from('users')
@@ -77,6 +56,7 @@ const Login = () => {
 
       profile = userData;
 
+      // Step 3: Fallback to teachers table if not in users
       if (!profile) {
         const { data: teacherData } = await supabase
           .from('teachers')
@@ -85,6 +65,7 @@ const Login = () => {
           .maybeSingle();
 
         if (teacherData) {
+          // Auto-provision into users table
           const role = teacherData.role === 'Admin' ? 'school_admin'
             : teacherData.role === 'SuperAdmin' ? 'super_admin'
             : 'teacher';
@@ -111,6 +92,7 @@ const Login = () => {
         }
       }
 
+      // Step 4: Final fallback to auth metadata
       if (!profile) {
         profile = {
           id: authUser.id,
@@ -121,26 +103,22 @@ const Login = () => {
         };
       }
 
+      // Step 5: Check if school is suspended
       if (profile.school_id) {
         const { data: schoolData } = await supabase
           .from('schools')
-          .select('status, subscription_status')
+          .select('subscription_status')
           .eq('id', profile.school_id)
           .maybeSingle();
 
-        if (schoolData?.status === 'pending') {
-          await supabase.auth.signOut();
-          navigate('/awaiting-approval');
-          return;
-        }
-
-        const subStatus = (schoolData?.subscription_status || '').toLowerCase();
-        if (schoolData?.status === 'suspended' || subStatus === 'suspended') {
+        const status = (schoolData?.subscription_status || '').toLowerCase();
+        if (status === 'suspended') {
           await supabase.auth.signOut();
           throw new Error('Your school account is currently suspended. Please contact your administrator.');
         }
       }
 
+      // Step 6: Login and redirect
       const fullUser = {
         ...authUser,
         ...profile,
@@ -160,450 +138,100 @@ const Login = () => {
     }
   };
 
-  const FeatureCard = ({ icon: Icon, title, description }: {
-    icon: React.ElementType; title: string; description: string;
-  }) => (
-    <div className="bg-white p-6 rounded-2xl shadow-md border border-slate-100 hover:shadow-xl hover:-translate-y-1 transition-all">
-      <div className="bg-primary/10 w-12 h-12 rounded-xl flex items-center justify-center mb-4">
-        <Icon size={24} className="text-primary" />
-      </div>
-      <h3 className="text-lg font-bold text-slate-900 mb-2">{title}</h3>
-      <p className="text-sm text-slate-600">{description}</p>
-    </div>
-  );
-
-  const HowItWorksStep = ({ number, title, description }: {
-    number: number; title: string; description: string;
-  }) => (
-    <div className="flex flex-col items-center text-center">
-      <div className="bg-primary text-white w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg mb-4 shadow-lg">
-        {number}
-      </div>
-      <h3 className="text-lg font-bold text-slate-900 mb-2">{title}</h3>
-      <p className="text-sm text-slate-600">{description}</p>
-    </div>
-  );
-
-  const BenefitItem = ({ icon: Icon, title, description }: {
-    icon: React.ElementType; title: string; description: string;
-  }) => (
-    <div className="flex gap-4">
-      <div className="bg-accent/10 w-10 h-10 rounded-lg flex items-center justify-center shrink-0">
-        <Icon size={20} className="text-accent" />
-      </div>
-      <div>
-        <h4 className="font-bold text-slate-900 mb-1">{title}</h4>
-        <p className="text-sm text-slate-600">{description}</p>
-      </div>
-    </div>
-  );
-
   return (
-    <div className="min-h-screen bg-white">
-      {/* Sticky Navbar */}
-      <nav className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
-        scrolled ? 'bg-white shadow-lg' : 'bg-transparent'
-      }`}>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            {/* Logo */}
-            <Link to="/" className="flex items-center gap-2 text-primary font-display font-bold text-xl">
-              <GraduationCap size={28} />
-              <span>EduNexa</span>
-            </Link>
+    <div className="min-h-screen login-gradient flex flex-col items-center justify-center p-4">
+      <div className="w-full max-w-md space-y-8">
+        <div className="text-center space-y-2">
+          <span className="text-accent font-bold tracking-widest text-xs uppercase bg-white/50 backdrop-blur px-3 py-1 rounded-full border border-white/50">
+            Welcome Back! 👋
+          </span>
+          <div className="flex items-center justify-center gap-2 text-primary font-display">
+            <GraduationCap size={40} strokeWidth={2.5} />
+            <h1 className="text-4xl font-black tracking-tight">EduNexa</h1>
+          </div>
+          <p className="text-slate-500 font-medium text-sm">Multi-School Management System</p>
+          <p className="text-slate-500 text-xs mt-4 max-w-xs mx-auto leading-relaxed">
+            Empowering schools with <span className="text-primary font-semibold">smart analytics</span>, seamless management and <span className="text-accent font-semibold">data-driven insights</span> — all in one place.
+          </p>
+          <div className="flex items-center justify-center gap-4 pt-4">
+            <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 bg-white/30 px-2 py-1 rounded-md">
+              <BarChart3 size={12} className="text-primary" />
+              SMART ANALYTICS
+            </div>
+            <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 bg-white/30 px-2 py-1 rounded-md">
+              <Building size={12} className="text-primary" />
+              MULTI-SCHOOL
+            </div>
+            <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 bg-white/30 px-2 py-1 rounded-md">
+              <Zap size={12} className="text-primary" />
+              REAL-TIME DATA
+            </div>
+          </div>
+        </div>
 
-            {/* Desktop Menu */}
-            <div className="hidden md:flex items-center gap-8">
-              <a href="#features" className="text-slate-600 hover:text-primary font-medium transition">Features</a>
-              <a href="#how-it-works" className="text-slate-600 hover:text-primary font-medium transition">How It Works</a>
-              <a href="#about" className="text-slate-600 hover:text-primary font-medium transition">About</a>
+        <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-2xl shadow-slate-200/50 border border-white p-8 md:p-10">
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {error && (
+              <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm border border-red-100 animate-shake">
+                <p className="font-bold">{error}</p>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">
+                Email Address
+              </label>
+              <div className="relative group">
+                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" size={20} />
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:ring-4 focus:ring-primary/5 focus:border-primary/20 outline-none transition-all text-slate-700 font-medium"
+                  placeholder="teacher@school.com"
+                />
+              </div>
             </div>
 
-            {/* Desktop Buttons */}
-            <div className="hidden md:flex items-center gap-4">
-              <a
-                href="#login-form"
-                className="text-primary font-bold hover:text-primary-dark transition"
-              >
-                Log In
-              </a>
-              <Link
-                to="/register"
-                className="bg-primary text-white px-6 py-2 rounded-lg font-bold hover:bg-primary-dark transition"
-              >
-                Get Started
-              </Link>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">
+                Password
+              </label>
+              <div className="relative group">
+                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" size={20} />
+                <input
+                  type="password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:ring-4 focus:ring-primary/5 focus:border-primary/20 outline-none transition-all text-slate-700 font-medium"
+                  placeholder="••••••••"
+                />
+              </div>
             </div>
 
-            {/* Mobile Menu Button */}
             <button
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="md:hidden text-slate-900"
+              type="submit"
+              disabled={loading}
+              className="w-full bg-primary hover:bg-primary-dark text-white font-bold py-4 rounded-2xl transition-all shadow-xl shadow-primary/20 disabled:opacity-50 active:scale-[0.98]"
             >
-              {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+              {loading ? 'Authenticating...' : 'Sign In to Dashboard'}
             </button>
-          </div>
-
-          {/* Mobile Menu */}
-          {mobileMenuOpen && (
-            <div className="md:hidden pb-4 space-y-4">
-              <a href="#features" className="block text-slate-600 font-medium">Features</a>
-              <a href="#how-it-works" className="block text-slate-600 font-medium">How It Works</a>
-              <a href="#about" className="block text-slate-600 font-medium">About</a>
-              <div className="flex flex-col gap-2 pt-4 border-t">
-                <a href="#login-form" className="text-center text-primary font-bold py-2">Log In</a>
-                <Link to="/register" className="text-center bg-primary text-white px-6 py-2 rounded-lg font-bold">Get Started</Link>
-              </div>
-            </div>
-          )}
+          </form>
         </div>
-      </nav>
 
-      {/* Hero Section */}
-      <section className="pt-32 pb-20 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-slate-50 via-white to-slate-50">
-        <div className="max-w-4xl mx-auto text-center">
-          <h1 className="text-5xl md:text-6xl font-display font-black text-slate-900 mb-6 leading-tight">
-            EduNexa
-          </h1>
-          <h2 className="text-3xl md:text-4xl font-bold text-slate-700 mb-6">
-            Simplify School Management with Ease
-          </h2>
-          <p className="text-lg text-slate-600 mb-8 max-w-2xl mx-auto leading-relaxed">
-            Transform your school operations with our comprehensive management system. Streamline student records, teacher assignments, exams, and analytics—all in one intuitive platform.
+        <div className="text-center space-y-4">
+          <p className="text-[10px] items-center justify-center gap-1 font-bold text-slate-400 uppercase tracking-widest flex">
+            Trusted by schools across Kenya 🇰🇪
           </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link
-              to="/register"
-              className="bg-primary text-white px-8 py-4 rounded-lg font-bold text-lg hover:bg-primary-dark transition flex items-center justify-center gap-2 shadow-lg"
-            >
-              Get Started <ArrowRight size={20} />
-            </Link>
-            <a
-              href="#login-form"
-              className="border-2 border-primary text-primary px-8 py-4 rounded-lg font-bold text-lg hover:bg-primary/5 transition"
-            >
-              Log In
-            </a>
+          <div className="text-[10px] text-slate-400/50 flex items-center justify-center gap-2">
+            <span>v1.5.0</span>
+            <Dot size={8} />
+            <span>EduNexa Platform Services</span>
           </div>
         </div>
-      </section>
-
-      {/* Features Section */}
-      <section id="features" className="py-20 px-4 sm:px-6 lg:px-8 bg-slate-50">
-        <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-16">
-            <h2 className="text-4xl font-display font-bold text-slate-900 mb-4">Powerful Features</h2>
-            <p className="text-lg text-slate-600">Everything you need to manage your school effectively</p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            <FeatureCard
-              icon={Building}
-              title="Student Management"
-              description="Easily manage student records, enrollment, and academic progress in one centralized system."
-            />
-            <FeatureCard
-              icon={BookOpen}
-              title="Teacher Management"
-              description="Assign teachers, manage schedules, and track performance with our intuitive interface."
-            />
-            <FeatureCard
-              icon={ClipboardList}
-              title="Exams & Results"
-              description="Create exams, record marks, and generate comprehensive result reports automatically."
-            />
-            <FeatureCard
-              icon={BarChart3}
-              title="Analytics"
-              description="Get actionable insights with real-time dashboards and detailed analytics reports."
-            />
-            <FeatureCard
-              icon={Shield}
-              title="Secure System"
-              description="Enterprise-grade security with role-based access control and data encryption."
-            />
-            <FeatureCard
-              icon={Smartphone}
-              title="Mobile Friendly"
-              description="Access your school data anytime, anywhere with our responsive mobile interface."
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* How It Works Section */}
-      <section id="how-it-works" className="py-20 px-4 sm:px-6 lg:px-8 bg-white">
-        <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-16">
-            <h2 className="text-4xl font-display font-bold text-slate-900 mb-4">How It Works</h2>
-            <p className="text-lg text-slate-600">Get started in just a few simple steps</p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-            <HowItWorksStep
-              number={1}
-              title="Register"
-              description="Create your school account and provide basic information."
-            />
-            <div className="hidden md:flex items-center justify-center">
-              <ArrowRight size={32} className="text-primary" />
-            </div>
-            <HowItWorksStep
-              number={2}
-              title="Get Approval"
-              description="Wait for admin approval of your school registration."
-            />
-            <div className="hidden md:flex items-center justify-center">
-              <ArrowRight size={32} className="text-primary" />
-            </div>
-            <HowItWorksStep
-              number={3}
-              title="Add Data"
-              description="Add teachers, students, and academic information."
-            />
-            <div className="hidden md:flex items-center justify-center">
-              <ArrowRight size={32} className="text-primary" />
-            </div>
-            <HowItWorksStep
-              number={4}
-              title="Start Using"
-              description="Begin managing your school operations seamlessly."
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* Benefits Section */}
-      <section className="py-20 px-4 sm:px-6 lg:px-8 bg-slate-50">
-        <div className="max-w-6xl mx-auto">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-            <div>
-              <h2 className="text-4xl font-display font-bold text-slate-900 mb-8">Why Choose EduNexa?</h2>
-              <div className="space-y-6">
-                <BenefitItem
-                  icon={TrendingUp}
-                  title="Increase Efficiency"
-                  description="Automate repetitive tasks and save hours of administrative work every week."
-                />
-                <BenefitItem
-                  icon={BarChart3}
-                  title="Data-Driven Decisions"
-                  description="Make informed decisions with comprehensive analytics and real-time reports."
-                />
-                <BenefitItem
-                  icon={Shield}
-                  title="Secure & Reliable"
-                  description="Enterprise-grade security ensures your school data is always protected."
-                />
-                <BenefitItem
-                  icon={Award}
-                  title="Trusted by Schools"
-                  description="Join hundreds of schools across Kenya already using EduNexa."
-                />
-              </div>
-            </div>
-            <div className="bg-gradient-to-br from-primary to-primary-dark p-12 rounded-2xl text-white shadow-xl">
-              <h3 className="text-2xl font-bold mb-6">Why Schools Love EduNexa</h3>
-              <div className="space-y-4">
-                <div>
-                  <p className="text-2xl font-bold">Easy to Use</p>
-                  <p className="text-white/80">Intuitive interface for all users</p>
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">Secure</p>
-                  <p className="text-white/80">Enterprise-grade data protection</p>
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">Reliable</p>
-                  <p className="text-white/80">99.9% uptime guarantee</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* About Section */}
-      <section id="about" className="py-20 px-4 sm:px-6 lg:px-8 bg-white">
-        <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-4xl font-display font-bold text-slate-900 mb-6">About EduNexa</h2>
-          <p className="text-lg text-slate-600 leading-relaxed mb-8">
-            EduNexa is a comprehensive school management and analytics platform designed to simplify educational administration. We empower schools with smart analytics, seamless management tools, and data-driven insights—all in one intuitive platform. Our mission is to help educators focus on what matters most: student success.
-          </p>
-          <p className="text-lg text-slate-600 leading-relaxed">
-            Built with schools across Kenya in mind, EduNexa combines powerful features with ease of use, ensuring that both administrators and teachers can manage their responsibilities efficiently and effectively.
-          </p>
-        </div>
-      </section>
-
-      {/* Final CTA Section */}
-      <section className="py-20 px-4 sm:px-6 lg:px-8 bg-gradient-to-r from-primary to-primary-dark text-white">
-        <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-4xl font-display font-bold mb-6">Ready to Transform Your School?</h2>
-          <p className="text-lg text-white/90 mb-8">
-            Join hundreds of schools already using EduNexa. Get started today with a 30-day free trial.
-          </p>
-          <Link
-            to="/register"
-            className="inline-flex items-center gap-2 bg-white text-primary px-8 py-4 rounded-lg font-bold text-lg hover:bg-slate-100 transition shadow-lg"
-          >
-            Get Started Now <ArrowRight size={20} />
-          </Link>
-        </div>
-      </section>
-
-      {/* Login Form Section */}
-      <section id="login-form" className="py-20 px-4 sm:px-6 lg:px-8 bg-slate-50">
-        <div className="max-w-md mx-auto">
-          <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-2xl shadow-slate-200/50 border border-white p-8 md:p-10">
-            <div className="text-center mb-8">
-              <h2 className="text-2xl font-display font-bold text-slate-900">Sign In to Your Account</h2>
-              <p className="text-slate-600 text-sm mt-2">Access your school dashboard</p>
-            </div>
-
-            <form onSubmit={handleSubmit} className="space-y-6">
-              {error && (
-                <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm border border-red-100 animate-shake">
-                  <p className="font-bold">{error}</p>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">
-                  Email Address
-                </label>
-                <div className="relative group">
-                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" size={20} />
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:ring-4 focus:ring-primary/5 focus:border-primary/20 outline-none transition-all text-slate-700 font-medium"
-                    placeholder="teacher@school.com"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">
-                  Password
-                </label>
-                <div className="relative group">
-                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" size={20} />
-                  <input
-                    type="password"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:ring-4 focus:ring-primary/5 focus:border-primary/20 outline-none transition-all text-slate-700 font-medium"
-                    placeholder="••••••••"
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full bg-primary hover:bg-primary-dark text-white font-bold py-4 rounded-2xl transition-all shadow-xl shadow-primary/20 disabled:opacity-50 active:scale-[0.98]"
-              >
-                {loading ? 'Authenticating...' : 'Sign In to Dashboard'}
-              </button>
-            </form>
-
-            {/* Divider */}
-            <div className="relative my-6">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-slate-100" />
-              </div>
-              <div className="relative flex justify-center">
-                <span className="bg-white/80 px-3 text-slate-400 text-xs font-bold uppercase tracking-wider">
-                  New to EduNexa?
-                </span>
-              </div>
-            </div>
-
-            {/* Register button */}
-            <Link
-              to="/register"
-              className="flex items-center justify-center w-full py-4 px-6 rounded-2xl
-                         border-2 border-primary/20 text-primary font-bold text-sm
-                         hover:bg-primary/5 hover:border-primary/40
-                         transition-all duration-200 active:scale-[0.98]"
-            >
-              Register Your School
-            </Link>
-          </div>
-
-          <div className="text-center space-y-4 mt-8">
-            <p className="text-[10px] items-center justify-center gap-1 font-bold text-slate-400 uppercase tracking-widest flex">
-              Trusted by schools across Kenya 🇰🇪
-            </p>
-            <div className="text-[10px] text-slate-400/50 flex items-center justify-center gap-2">
-              <span>v1.5.0</span>
-              <Dot size={8} />
-              <span>EduNexa Platform Services</span>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Footer */}
-      <footer className="bg-slate-900 text-white py-12 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-6xl mx-auto">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
-            {/* Brand */}
-            <div>
-              <div className="flex items-center gap-2 mb-4">
-                <GraduationCap size={24} />
-                <span className="font-display font-bold text-lg">EduNexa</span>
-              </div>
-              <p className="text-slate-400 text-sm">
-                Simplifying school management with smart analytics and data-driven insights.
-              </p>
-            </div>
-
-            {/* Product */}
-            <div>
-              <h4 className="font-bold mb-4">Product</h4>
-              <ul className="space-y-2 text-slate-400 text-sm">
-                <li><a href="#features" className="hover:text-white transition">Features</a></li>
-                <li><a href="#how-it-works" className="hover:text-white transition">How It Works</a></li>
-                <li><a href="/status" className="hover:text-white transition">System Status</a></li>
-              </ul>
-            </div>
-
-            {/* Company */}
-            <div>
-              <h4 className="font-bold mb-4">Company</h4>
-              <ul className="space-y-2 text-slate-400 text-sm">
-                <li><a href="#about" className="hover:text-white transition">About Us</a></li>
-                <li><a href="#" className="hover:text-white transition">Contact</a></li>
-                <li><a href="#" className="hover:text-white transition">Support</a></li>
-              </ul>
-            </div>
-
-            {/* Legal */}
-            <div>
-              <h4 className="font-bold mb-4">Legal</h4>
-              <ul className="space-y-2 text-slate-400 text-sm">
-                <li><a href="#" className="hover:text-white transition">Privacy Policy</a></li>
-                <li><a href="#" className="hover:text-white transition">Terms of Service</a></li>
-              </ul>
-            </div>
-          </div>
-
-          {/* Bottom */}
-          <div className="border-t border-slate-800 pt-8 flex flex-col md:flex-row justify-between items-center">
-            <p className="text-slate-400 text-sm">
-              &copy; 2024 EduNexa. All rights reserved.
-            </p>
-            <div className="flex items-center gap-2 text-slate-400 text-xs mt-4 md:mt-0">
-              <span>v1.5.0</span>
-              <Dot size={8} />
-              <span>EduNexa Platform Services</span>
-            </div>
-          </div>
-        </div>
-      </footer>
+      </div>
     </div>
   );
 };

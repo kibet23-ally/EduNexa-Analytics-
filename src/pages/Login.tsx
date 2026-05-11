@@ -1,239 +1,174 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../useAuth';
-import { GraduationCap, Lock, Mail, BarChart3, Building, Zap, Dot } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+'use client';
+// src/app/login/page.tsx
 
-const Login = () => {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
-  const navigate = useNavigate();
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { createClient } from '@/lib/supabase/client';
+import { Mail, Lock, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
-  const redirectBasedOnRole = (rawRole: string) => {
-    const role = (rawRole || '').toLowerCase().replace(/_/g, '');
-    if (role === 'superadmin') {
-      navigate('/super-admin');
-    } else if (role === 'admin' || role === 'schooladmin') {
-      navigate('/school-admin');
-    } else if (role === 'teacher') {
-      navigate('/teacher');
-    } else {
-      navigate('/');
-    }
-  };
+export default function LoginPage() {
+  const router = useRouter();
+  const supabase = createClient();
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const [email, setEmail]               = useState('');
+  const [password, setPassword]         = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading]           = useState(false);
+  const [error, setError]               = useState<string | null>(null);
+
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError('');
-
-    const cleanEmail = email.toLowerCase().trim();
+    setError(null);
 
     try {
-      // Step 1: Sign in with Supabase Auth
-      const { data, error: authError } = await supabase.auth.signInWithPassword({
-        email: cleanEmail,
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
         password,
       });
 
-      if (authError || !data.session || !data.user) {
-        throw new Error(authError?.message || 'Invalid email or password');
-      }
+      if (signInError) throw new Error(signInError.message);
+      if (!data.user) throw new Error('Login failed. Please try again.');
 
-      const session = data.session;
-      const authUser = data.user;
-
-      // Step 2: Fetch user profile from users table
-      let profile = null;
-      const { data: userData } = await supabase
+      // Fetch user row to determine where to redirect
+      const { data: userRow } = await supabase
         .from('users')
-        .select('id, role, name, school_id, email')
-        .eq('id', authUser.id)
-        .maybeSingle();
+        .select('role, school_id')
+        .eq('auth_id', data.user.id)
+        .single();
 
-      profile = userData;
-
-      // Step 3: Fallback to teachers table if not in users
-      if (!profile) {
-        const { data: teacherData } = await supabase
-          .from('teachers')
-          .select('id, role, name, school_id, email')
-          .ilike('email', cleanEmail)
-          .maybeSingle();
-
-        if (teacherData) {
-          // Auto-provision into users table
-          const role = teacherData.role === 'Admin' ? 'school_admin'
-            : teacherData.role === 'SuperAdmin' ? 'super_admin'
-            : 'teacher';
-
-          const { data: newProfile } = await supabase
-            .from('users')
-            .upsert({
-              id: authUser.id,
-              email: cleanEmail,
-              name: teacherData.name,
-              role,
-              school_id: teacherData.school_id,
-            })
-            .select()
-            .maybeSingle();
-
-          profile = newProfile || {
-            id: authUser.id,
-            email: cleanEmail,
-            name: teacherData.name,
-            role,
-            school_id: teacherData.school_id,
-          };
-        }
+      if (userRow?.role === 'super_admin') {
+        router.push('/admin');
+        return;
       }
 
-      // Step 4: Final fallback to auth metadata
-      if (!profile) {
-        profile = {
-          id: authUser.id,
-          email: cleanEmail,
-          name: authUser.user_metadata?.name || cleanEmail.split('@')[0],
-          role: authUser.user_metadata?.role || 'school_admin',
-          school_id: authUser.user_metadata?.school_id || null,
-        };
+      if (!userRow?.school_id) {
+        router.push('/awaiting-approval');
+        return;
       }
 
-      // Step 5: Check if school is suspended
-      if (profile.school_id) {
-        const { data: schoolData } = await supabase
-          .from('schools')
-          .select('subscription_status')
-          .eq('id', profile.school_id)
-          .maybeSingle();
+      // Fetch school status
+      const { data: school } = await supabase
+        .from('schools')
+        .select('status')
+        .eq('id', userRow.school_id)
+        .single();
 
-        const status = (schoolData?.subscription_status || '').toLowerCase();
-        if (status === 'suspended') {
-          await supabase.auth.signOut();
-          throw new Error('Your school account is currently suspended. Please contact your administrator.');
-        }
-      }
-
-      // Step 6: Login and redirect
-      const fullUser = {
-        ...authUser,
-        ...profile,
-        role: profile.role,
-        name: profile.name,
-        school_id: profile.school_id,
-      };
-
-      login(session.access_token, fullUser);
-      redirectBasedOnRole(profile.role);
-
+      if (school?.status === 'pending')        router.push('/awaiting-approval');
+      else if (school?.status === 'suspended') router.push('/account-suspended');
+      else                                     router.push('/dashboard');
     } catch (err: unknown) {
-      console.error('Login error:', err);
-      setError(err instanceof Error ? err.message : 'Login failed. Please try again.');
+      setError(err instanceof Error ? err.message : 'Login failed.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen login-gradient flex flex-col items-center justify-center p-4">
-      <div className="w-full max-w-md space-y-8">
-        <div className="text-center space-y-2">
-          <span className="text-accent font-bold tracking-widest text-xs uppercase bg-white/50 backdrop-blur px-3 py-1 rounded-full border border-white/50">
-            Welcome Back! 👋
-          </span>
-          <div className="flex items-center justify-center gap-2 text-primary font-display">
-            <GraduationCap size={40} strokeWidth={2.5} />
-            <h1 className="text-4xl font-black tracking-tight">EduNexa</h1>
+    <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4">
+      {/* Background glow */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl" />
+      </div>
+
+      <div className="w-full max-w-md relative animate-fadeIn">
+        {/* Logo */}
+        <div className="text-center mb-10">
+          <div className="w-14 h-14 bg-amber-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-amber-500/20">
+            <span className="text-slate-900 font-display font-bold text-2xl">E</span>
           </div>
-          <p className="text-slate-500 font-medium text-sm">Multi-School Management System</p>
-          <p className="text-slate-500 text-xs mt-4 max-w-xs mx-auto leading-relaxed">
-            Empowering schools with <span className="text-primary font-semibold">smart analytics</span>, seamless management and <span className="text-accent font-semibold">data-driven insights</span> — all in one place.
-          </p>
-          <div className="flex items-center justify-center gap-4 pt-4">
-            <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 bg-white/30 px-2 py-1 rounded-md">
-              <BarChart3 size={12} className="text-primary" />
-              SMART ANALYTICS
-            </div>
-            <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 bg-white/30 px-2 py-1 rounded-md">
-              <Building size={12} className="text-primary" />
-              MULTI-SCHOOL
-            </div>
-            <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 bg-white/30 px-2 py-1 rounded-md">
-              <Zap size={12} className="text-primary" />
-              REAL-TIME DATA
-            </div>
-          </div>
+          <h1 className="font-display text-3xl font-bold text-white">EduNexa</h1>
+          <p className="text-slate-400 mt-1">School Management Platform</p>
         </div>
 
-        <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-2xl shadow-slate-200/50 border border-white p-8 md:p-10">
-          <form onSubmit={handleSubmit} className="space-y-6">
-            {error && (
-              <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm border border-red-100 animate-shake">
-                <p className="font-bold">{error}</p>
-              </div>
-            )}
+        <div className="glass-card rounded-2xl p-8">
+          <h2 className="font-display text-xl font-bold text-white mb-6">Welcome back</h2>
 
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">
+          {error && (
+            <div className="flex items-start gap-3 bg-red-500/10 border border-red-500/20 rounded-xl p-4 mb-5">
+              <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+              <p className="text-red-300 text-sm">{error}</p>
+            </div>
+          )}
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-slate-300 text-sm font-medium mb-2">
                 Email Address
               </label>
-              <div className="relative group">
-                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" size={20} />
+              <div className="relative">
+                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
                 <input
                   type="email"
-                  required
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:ring-4 focus:ring-primary/5 focus:border-primary/20 outline-none transition-all text-slate-700 font-medium"
-                  placeholder="teacher@school.com"
+                  onChange={e => { setEmail(e.target.value); setError(null); }}
+                  placeholder="admin@school.edu"
+                  className="edu-input pl-10"
+                  disabled={loading}
+                  required
+                  autoComplete="email"
                 />
               </div>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">
+            <div>
+              <label className="block text-slate-300 text-sm font-medium mb-2">
                 Password
               </label>
-              <div className="relative group">
-                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" size={20} />
+              <div className="relative">
+                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
                 <input
-                  type="password"
-                  required
+                  type={showPassword ? 'text' : 'password'}
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:ring-4 focus:ring-primary/5 focus:border-primary/20 outline-none transition-all text-slate-700 font-medium"
-                  placeholder="••••••••"
+                  onChange={e => { setPassword(e.target.value); setError(null); }}
+                  placeholder="Your password"
+                  className="edu-input pl-10 pr-12"
+                  disabled={loading}
+                  required
+                  autoComplete="current-password"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
             </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-primary hover:bg-primary-dark text-white font-bold py-4 rounded-2xl transition-all shadow-xl shadow-primary/20 disabled:opacity-50 active:scale-[0.98]"
-            >
-              {loading ? 'Authenticating...' : 'Sign In to Dashboard'}
+            <button type="submit" className="edu-btn-primary mt-2" disabled={loading}>
+              {loading ? (
+                <><span className="spinner" /> Signing in...</>
+              ) : (
+                'Sign In'
+              )}
             </button>
           </form>
-        </div>
 
-        <div className="text-center space-y-4">
-          <p className="text-[10px] items-center justify-center gap-1 font-bold text-slate-400 uppercase tracking-widest flex">
-            Trusted by schools across Kenya 🇰🇪
-          </p>
-          <div className="text-[10px] text-slate-400/50 flex items-center justify-center gap-2">
-            <span>v1.5.0</span>
-            <Dot size={8} />
-            <span>EduNexa Platform Services</span>
+          <div className="relative my-6">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-slate-700" />
+            </div>
+            <div className="relative flex justify-center">
+              <span className="bg-slate-800/70 px-3 text-slate-500 text-xs uppercase tracking-wider">
+                New to EduNexa?
+              </span>
+            </div>
           </div>
+
+          <Link
+            href="/register"
+            className="flex items-center justify-center w-full py-3 px-6 rounded-xl
+                       border border-amber-500/40 text-amber-400 font-semibold text-sm
+                       hover:bg-amber-500/10 hover:border-amber-500/70
+                       transition-all duration-200"
+          >
+            Register Your School
+          </Link>
         </div>
       </div>
     </div>
   );
-};
-
-export default Login;
+}

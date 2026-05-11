@@ -9,6 +9,7 @@ import SubscriptionBanner from './components/SubscriptionBanner';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 // Lazy load all pages
+const Landing           = lazy(() => import('./pages/Landing'));
 const Login             = lazy(() => import('./pages/Login'));
 const Register          = lazy(() => import('./pages/Register'));
 const AwaitingApproval  = lazy(() => import('./pages/AwaitingApproval'));
@@ -90,6 +91,7 @@ const AppRoutes = () => {
   return (
     <Routes>
       {/* Public */}
+      <Route path="/" element={<Suspense fallback={<div className="h-screen flex items-center justify-center bg-slate-50">Loading...</div>}><Landing /></Suspense>} />
       <Route path="/login" element={<Suspense fallback={<div className="h-screen flex items-center justify-center bg-slate-50">Loading...</div>}><Login /></Suspense>} />
       <Route path="/register" element={<Suspense fallback={<div className="h-screen flex items-center justify-center bg-slate-50">Loading...</div>}><Register /></Suspense>} />
       <Route path="/awaiting-approval" element={<Suspense fallback={<div className="h-screen flex items-center justify-center bg-slate-50">Loading...</div>}><AwaitingApproval /></Suspense>} />
@@ -97,7 +99,7 @@ const AppRoutes = () => {
       <Route path="/status" element={<Suspense fallback={<div>Loading...</div>}><SystemStatus /></Suspense>} />
 
       {/* Shared authenticated routes */}
-      <Route path="/" element={<ProtectedRoute><Layout>{wrap(<Dashboard />, 'Dashboard')}</Layout></ProtectedRoute>} />
+      <Route path="/dashboard" element={<ProtectedRoute><Layout>{wrap(<Dashboard />, 'Dashboard')}</Layout></ProtectedRoute>} />
       <Route path="/school-admin" element={<ProtectedRoute><Layout>{wrap(<Dashboard />, 'Dashboard')}</Layout></ProtectedRoute>} />
       <Route path="/teacher" element={<ProtectedRoute><Layout>{wrap(<Dashboard />, 'Dashboard')}</Layout></ProtectedRoute>} />
 

@@ -2,12 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../useAuth';
 import { 
-  GraduationCap, Lock, Mail, BarChart3, Building, Zap, Dot, Building2, Users, CreditCard, 
-  AlertTriangle, CheckCircle2, Clock, TrendingUp, Menu, X, ArrowRight, BookOpen, 
-  ClipboardList, LineChart, Shield, Smartphone, Award
+  GraduationCap, Lock, Mail, BarChart3, Building, Zap, Dot, 
+  Menu, X, ArrowRight, BookOpen, ClipboardList, Shield, Smartphone, Award, TrendingUp
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { School } from '../types';
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -19,15 +17,6 @@ const Login = () => {
   const { login } = useAuth();
   const navigate = useNavigate();
 
-  // System details state
-  const [systemStats, setSystemStats] = useState<{
-    totalSchools: number;
-    totalStudents: number;
-    activeSubscriptions: number;
-    expiredSchools: number;
-  } | null>(null);
-  const [statsLoading, setStatsLoading] = useState(true);
-
   // Handle scroll for sticky navbar
   useEffect(() => {
     const handleScroll = () => {
@@ -35,45 +24,6 @@ const Login = () => {
     };
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
-
-  // Fetch system statistics for the landing page
-  useEffect(() => {
-    const fetchSystemStats = async () => {
-      try {
-        const { data: schoolsData, error: schoolsError } = await supabase
-          .from('schools')
-          .select('id, subscription_status, created_at');
-
-        if (schoolsError) throw schoolsError;
-
-        const { count: studentsCount, error: studentsError } = await supabase
-          .from('students')
-          .select('id', { count: 'exact', head: true });
-
-        if (studentsError) throw studentsError;
-
-        const schools = schoolsData as School[] || [];
-        setSystemStats({
-          totalSchools: schools.length,
-          totalStudents: studentsCount || 0,
-          activeSubscriptions: schools.filter(s => s.subscription_status?.toLowerCase() === 'active').length,
-          expiredSchools: schools.filter(s => s.subscription_status?.toLowerCase() === 'expired').length,
-        });
-      } catch (err) {
-        console.error('Error fetching system stats:', err);
-        setSystemStats({
-          totalSchools: 0,
-          totalStudents: 0,
-          activeSubscriptions: 0,
-          expiredSchools: 0,
-        });
-      } finally {
-        setStatsLoading(false);
-      }
-    };
-
-    fetchSystemStats();
   }, []);
 
   const redirectBasedOnRole = (rawRole: string) => {
@@ -210,27 +160,6 @@ const Login = () => {
     }
   };
 
-  const StatCard = ({ label, value, icon: Icon, color, trend }: {
-    label: string; value: number; icon: React.ElementType; color: string; trend: string;
-  }) => (
-    <div className="bg-white/60 backdrop-blur-md p-6 rounded-2xl shadow-lg border border-white/50 relative overflow-hidden group hover:shadow-xl transition-all">
-      <div className={`absolute top-0 right-0 w-24 h-24 -mr-6 -mt-6 ${color} opacity-[0.08] rounded-full group-hover:scale-125 transition-transform duration-500`} />
-      <div className="flex items-center gap-4 relative z-10">
-        <div className={`${color} text-white p-3 rounded-xl shadow-lg`}>
-          <Icon size={20} />
-        </div>
-        <div>
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{label}</p>
-          <h4 className="text-2xl font-display font-bold text-slate-900 mt-1">{value}</h4>
-        </div>
-      </div>
-      <div className="mt-4 flex items-center gap-2 text-xs font-bold text-accent">
-        <div className="bg-accent/10 p-1 rounded-lg"><TrendingUp size={12} /></div>
-        {trend}
-      </div>
-    </div>
-  );
-
   const FeatureCard = ({ icon: Icon, title, description }: {
     icon: React.ElementType; title: string; description: string;
   }) => (
@@ -292,12 +221,12 @@ const Login = () => {
 
             {/* Desktop Buttons */}
             <div className="hidden md:flex items-center gap-4">
-              <Link
-                to="/login"
+              <a
+                href="#login-form"
                 className="text-primary font-bold hover:text-primary-dark transition"
               >
                 Log In
-              </Link>
+              </a>
               <Link
                 to="/register"
                 className="bg-primary text-white px-6 py-2 rounded-lg font-bold hover:bg-primary-dark transition"
@@ -322,7 +251,7 @@ const Login = () => {
               <a href="#how-it-works" className="block text-slate-600 font-medium">How It Works</a>
               <a href="#about" className="block text-slate-600 font-medium">About</a>
               <div className="flex flex-col gap-2 pt-4 border-t">
-                <Link to="/login" className="text-center text-primary font-bold py-2">Log In</Link>
+                <a href="#login-form" className="text-center text-primary font-bold py-2">Log In</a>
                 <Link to="/register" className="text-center bg-primary text-white px-6 py-2 rounded-lg font-bold">Get Started</Link>
               </div>
             </div>
@@ -349,57 +278,15 @@ const Login = () => {
             >
               Get Started <ArrowRight size={20} />
             </Link>
-            <Link
-              to="/login"
+            <a
+              href="#login-form"
               className="border-2 border-primary text-primary px-8 py-4 rounded-lg font-bold text-lg hover:bg-primary/5 transition"
             >
               Log In
-            </Link>
+            </a>
           </div>
         </div>
       </section>
-
-      {/* System Stats Section */}
-      {!statsLoading && systemStats && (
-        <section className="py-16 px-4 sm:px-6 lg:px-8 bg-white">
-          <div className="max-w-6xl mx-auto">
-            <div className="text-center mb-12">
-              <h2 className="text-3xl font-display font-bold text-slate-900 mb-2">Platform Overview</h2>
-              <p className="text-slate-600">Trusted by schools across Kenya</p>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <StatCard 
-                label="Active Schools" 
-                value={systemStats.totalSchools} 
-                icon={Building2} 
-                color="bg-primary" 
-                trend="Growing network" 
-              />
-              <StatCard 
-                label="Total Students" 
-                value={systemStats.totalStudents} 
-                icon={Users} 
-                color="bg-accent" 
-                trend="Across platform" 
-              />
-              <StatCard 
-                label="Active Subscriptions" 
-                value={systemStats.activeSubscriptions} 
-                icon={CreditCard} 
-                color="bg-primary" 
-                trend="Premium tier" 
-              />
-              <StatCard 
-                label="System Health" 
-                value={99} 
-                icon={CheckCircle2} 
-                color="bg-green-600" 
-                trend="Uptime %" 
-              />
-            </div>
-          </div>
-        </section>
-      )}
 
       {/* Features Section */}
       <section id="features" className="py-20 px-4 sm:px-6 lg:px-8 bg-slate-50">
@@ -410,7 +297,7 @@ const Login = () => {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             <FeatureCard
-              icon={Users}
+              icon={Building}
               title="Student Management"
               description="Easily manage student records, enrollment, and academic progress in one centralized system."
             />
@@ -514,19 +401,19 @@ const Login = () => {
               </div>
             </div>
             <div className="bg-gradient-to-br from-primary to-primary-dark p-12 rounded-2xl text-white shadow-xl">
-              <h3 className="text-2xl font-bold mb-6">Quick Stats</h3>
+              <h3 className="text-2xl font-bold mb-6">Why Schools Love EduNexa</h3>
               <div className="space-y-4">
                 <div>
-                  <p className="text-4xl font-bold">{systemStats?.totalSchools || 0}+</p>
-                  <p className="text-white/80">Schools Using EduNexa</p>
+                  <p className="text-2xl font-bold">Easy to Use</p>
+                  <p className="text-white/80">Intuitive interface for all users</p>
                 </div>
                 <div>
-                  <p className="text-4xl font-bold">{systemStats?.totalStudents || 0}+</p>
-                  <p className="text-white/80">Students Managed</p>
+                  <p className="text-2xl font-bold">Secure</p>
+                  <p className="text-white/80">Enterprise-grade data protection</p>
                 </div>
                 <div>
-                  <p className="text-4xl font-bold">99.9%</p>
-                  <p className="text-white/80">System Uptime</p>
+                  <p className="text-2xl font-bold">Reliable</p>
+                  <p className="text-white/80">99.9% uptime guarantee</p>
                 </div>
               </div>
             </div>
@@ -560,6 +447,102 @@ const Login = () => {
           >
             Get Started Now <ArrowRight size={20} />
           </Link>
+        </div>
+      </section>
+
+      {/* Login Form Section */}
+      <section id="login-form" className="py-20 px-4 sm:px-6 lg:px-8 bg-slate-50">
+        <div className="max-w-md mx-auto">
+          <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-2xl shadow-slate-200/50 border border-white p-8 md:p-10">
+            <div className="text-center mb-8">
+              <h2 className="text-2xl font-display font-bold text-slate-900">Sign In to Your Account</h2>
+              <p className="text-slate-600 text-sm mt-2">Access your school dashboard</p>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-6">
+              {error && (
+                <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm border border-red-100 animate-shake">
+                  <p className="font-bold">{error}</p>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">
+                  Email Address
+                </label>
+                <div className="relative group">
+                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" size={20} />
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:ring-4 focus:ring-primary/5 focus:border-primary/20 outline-none transition-all text-slate-700 font-medium"
+                    placeholder="teacher@school.com"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">
+                  Password
+                </label>
+                <div className="relative group">
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" size={20} />
+                  <input
+                    type="password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:ring-4 focus:ring-primary/5 focus:border-primary/20 outline-none transition-all text-slate-700 font-medium"
+                    placeholder="••••••••"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full bg-primary hover:bg-primary-dark text-white font-bold py-4 rounded-2xl transition-all shadow-xl shadow-primary/20 disabled:opacity-50 active:scale-[0.98]"
+              >
+                {loading ? 'Authenticating...' : 'Sign In to Dashboard'}
+              </button>
+            </form>
+
+            {/* Divider */}
+            <div className="relative my-6">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-slate-100" />
+              </div>
+              <div className="relative flex justify-center">
+                <span className="bg-white/80 px-3 text-slate-400 text-xs font-bold uppercase tracking-wider">
+                  New to EduNexa?
+                </span>
+              </div>
+            </div>
+
+            {/* Register button */}
+            <Link
+              to="/register"
+              className="flex items-center justify-center w-full py-4 px-6 rounded-2xl
+                         border-2 border-primary/20 text-primary font-bold text-sm
+                         hover:bg-primary/5 hover:border-primary/40
+                         transition-all duration-200 active:scale-[0.98]"
+            >
+              Register Your School
+            </Link>
+          </div>
+
+          <div className="text-center space-y-4 mt-8">
+            <p className="text-[10px] items-center justify-center gap-1 font-bold text-slate-400 uppercase tracking-widest flex">
+              Trusted by schools across Kenya 🇰🇪
+            </p>
+            <div className="text-[10px] text-slate-400/50 flex items-center justify-center gap-2">
+              <span>v1.5.0</span>
+              <Dot size={8} />
+              <span>EduNexa Platform Services</span>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -626,4 +609,3 @@ const Login = () => {
 };
 
 export default Login;
-            

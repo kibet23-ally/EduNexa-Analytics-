@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { 
-  GraduationCap, Menu, X, ArrowRight, BookOpen, ClipboardList, Shield, Smartphone, Award, TrendingUp, BarChart3, Dot
+  GraduationCap, Menu, X, ArrowRight, BookOpen, ClipboardList, Shield, Smartphone, Award, TrendingUp, BarChart3, Dot,
+  Zap, Users, LineChart, CheckCircle, ArrowUpRight, Sparkles, Globe
 } from 'lucide-react';
 
 const Landing = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
 
-  // Handle scroll for sticky navbar
   useEffect(() => {
     const handleScroll = () => {
       setScrolled(window.scrollY > 50);
@@ -17,76 +17,154 @@ const Landing = () => {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  const FeatureCard = ({ icon: Icon, title, description }: {
-    icon: React.ElementType; title: string; description: string;
-  }) => (
-    <div className="bg-white p-6 rounded-2xl shadow-md border border-slate-100 hover:shadow-xl hover:-translate-y-1 transition-all">
-      <div className="bg-primary/10 w-12 h-12 rounded-xl flex items-center justify-center mb-4">
-        <Icon size={24} className="text-primary" />
+  // Abstract Dashboard Illustration Component
+  const DashboardIllustration = () => (
+    <div className="relative w-full h-full min-h-96 rounded-2xl overflow-hidden bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 border border-white/40 backdrop-blur-xl shadow-2xl">
+      {/* Blurred background elements */}
+      <div className="absolute inset-0 opacity-30">
+        <div className="absolute top-4 right-4 w-32 h-32 bg-blue-400 rounded-full blur-3xl opacity-20"></div>
+        <div className="absolute bottom-4 left-4 w-40 h-40 bg-purple-400 rounded-full blur-3xl opacity-20"></div>
       </div>
-      <h3 className="text-lg font-bold text-slate-900 mb-2">{title}</h3>
-      <p className="text-sm text-slate-600">{description}</p>
+
+      {/* Abstract chart/widget placeholders */}
+      <div className="relative p-6 space-y-4">
+        {/* Header bar */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="w-24 h-3 bg-gradient-to-r from-blue-300 to-blue-200 rounded-full opacity-60"></div>
+          <div className="flex gap-2">
+            <div className="w-2 h-2 bg-blue-300 rounded-full opacity-60"></div>
+            <div className="w-2 h-2 bg-blue-300 rounded-full opacity-60"></div>
+          </div>
+        </div>
+
+        {/* Chart area */}
+        <div className="space-y-2">
+          <div className="flex items-end justify-between gap-1 h-20">
+            {[0.4, 0.6, 0.3, 0.8, 0.5, 0.7, 0.9].map((height, i) => (
+              <div
+                key={i}
+                className="flex-1 bg-gradient-to-t from-blue-400 to-blue-300 rounded-t opacity-40 blur-sm"
+                style={{ height: `${height * 100}%` }}
+              ></div>
+            ))}
+          </div>
+        </div>
+
+        {/* Stats row */}
+        <div className="grid grid-cols-3 gap-3 pt-4">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="bg-white/30 backdrop-blur-md p-3 rounded-lg border border-white/20">
+              <div className="w-8 h-2 bg-gradient-to-r from-indigo-300 to-indigo-200 rounded-full opacity-50 mb-2"></div>
+              <div className="w-12 h-3 bg-gradient-to-r from-blue-300 to-blue-200 rounded-full opacity-40"></div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 
-  const HowItWorksStep = ({ number, title, description }: {
-    number: number; title: string; description: string;
+  // Feature Card Component
+  const FeatureCard = ({ icon: Icon, title, description, gradient }: {
+    icon: React.ElementType; title: string; description: string; gradient: string;
   }) => (
-    <div className="flex flex-col items-center text-center">
-      <div className="bg-primary text-white w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg mb-4 shadow-lg">
-        {number}
+    <div className="group relative h-full">
+      {/* Gradient background on hover */}
+      <div className={`absolute inset-0 ${gradient} opacity-0 group-hover:opacity-10 rounded-2xl transition-opacity duration-300 blur-xl`}></div>
+      
+      <div className="relative bg-white/50 backdrop-blur-xl border border-white/60 rounded-2xl p-8 h-full transition-all duration-300 hover:border-white/80 hover:shadow-xl hover:shadow-blue-500/10">
+        <div className={`w-12 h-12 rounded-xl ${gradient} bg-gradient-to-br p-0.5 mb-6 transform transition-transform group-hover:scale-110`}>
+          <div className="w-full h-full bg-white rounded-[10px] flex items-center justify-center">
+            <Icon size={24} className="text-blue-600" />
+          </div>
+        </div>
+        <h3 className="text-lg font-semibold text-slate-900 mb-3">{title}</h3>
+        <p className="text-slate-600 text-sm leading-relaxed">{description}</p>
       </div>
-      <h3 className="text-lg font-bold text-slate-900 mb-2">{title}</h3>
-      <p className="text-sm text-slate-600">{description}</p>
     </div>
   );
 
-  const BenefitItem = ({ icon: Icon, title, description }: {
-    icon: React.ElementType; title: string; description: string;
+  // Pricing Card Component
+  const PricingCard = ({ name, price, description, features, highlighted }: {
+    name: string; price: string; description: string; features: string[]; highlighted?: boolean;
   }) => (
-    <div className="flex gap-4">
-      <div className="bg-accent/10 w-10 h-10 rounded-lg flex items-center justify-center shrink-0">
-        <Icon size={20} className="text-accent" />
-      </div>
-      <div>
-        <h4 className="font-bold text-slate-900 mb-1">{title}</h4>
-        <p className="text-sm text-slate-600">{description}</p>
+    <div className={`relative group transition-all duration-300 ${highlighted ? 'lg:scale-105' : ''}`}>
+      {highlighted && (
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl blur-xl opacity-20 group-hover:opacity-30 transition-opacity"></div>
+      )}
+      <div className={`relative bg-white/50 backdrop-blur-xl border rounded-2xl p-8 h-full transition-all duration-300 ${
+        highlighted 
+          ? 'border-blue-500/50 shadow-2xl shadow-blue-500/20' 
+          : 'border-white/60 hover:border-white/80 hover:shadow-xl'
+      }`}>
+        {highlighted && (
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2">
+            <span className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 py-1 rounded-full text-xs font-semibold">
+              Most Popular
+            </span>
+          </div>
+        )}
+        <h3 className="text-xl font-semibold text-slate-900 mb-2">{name}</h3>
+        <p className="text-slate-600 text-sm mb-6">{description}</p>
+        <div className="mb-6">
+          <span className="text-4xl font-bold text-slate-900">${price}</span>
+          <span className="text-slate-600 text-sm">/month</span>
+        </div>
+        <button className={`w-full py-3 rounded-xl font-semibold transition-all duration-300 mb-8 ${
+          highlighted
+            ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:shadow-lg hover:shadow-blue-500/30'
+            : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
+        }`}>
+          Get Started
+        </button>
+        <div className="space-y-4">
+          {features.map((feature, i) => (
+            <div key={i} className="flex items-start gap-3">
+              <CheckCircle size={18} className="text-emerald-500 mt-0.5 shrink-0" />
+              <span className="text-slate-700 text-sm">{feature}</span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-slate-50">
       {/* Sticky Navbar */}
       <nav className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
-        scrolled ? 'bg-white shadow-lg' : 'bg-transparent'
+        scrolled 
+          ? 'bg-white/80 backdrop-blur-xl border-b border-white/20 shadow-lg shadow-slate-900/5' 
+          : 'bg-transparent'
       }`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             {/* Logo */}
-            <Link to="/" className="flex items-center gap-2 text-primary font-display font-bold text-xl">
-              <GraduationCap size={28} />
-              <span>EduNexa</span>
+            <Link to="/" className="flex items-center gap-2 text-blue-600 font-bold text-xl">
+              <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-lg flex items-center justify-center">
+                <GraduationCap size={20} className="text-white" />
+              </div>
+              <span className="font-poppins">EduNexa</span>
             </Link>
 
             {/* Desktop Menu */}
             <div className="hidden md:flex items-center gap-8">
-              <a href="#features" className="text-slate-600 hover:text-primary font-medium transition">Features</a>
-              <a href="#how-it-works" className="text-slate-600 hover:text-primary font-medium transition">How It Works</a>
-              <a href="#about" className="text-slate-600 hover:text-primary font-medium transition">About</a>
+              <a href="#features" className="text-slate-600 hover:text-slate-900 font-medium transition text-sm">Features</a>
+              <a href="#how-it-works" className="text-slate-600 hover:text-slate-900 font-medium transition text-sm">How It Works</a>
+              <a href="#pricing" className="text-slate-600 hover:text-slate-900 font-medium transition text-sm">Pricing</a>
+              <a href="#faq" className="text-slate-600 hover:text-slate-900 font-medium transition text-sm">FAQ</a>
             </div>
 
             {/* Desktop Buttons */}
-            <div className="hidden md:flex items-center gap-4">
+            <div className="hidden md:flex items-center gap-3">
               <Link
                 to="/login"
-                className="text-primary font-bold hover:text-primary-dark transition"
+                className="text-slate-600 hover:text-slate-900 font-medium transition text-sm px-4 py-2"
               >
                 Log In
               </Link>
               <Link
                 to="/register"
-                className="bg-primary text-white px-6 py-2 rounded-lg font-bold hover:bg-primary-dark transition"
+                className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-2 rounded-lg font-semibold hover:shadow-lg hover:shadow-blue-500/30 transition-all text-sm"
               >
                 Get Started
               </Link>
@@ -103,13 +181,14 @@ const Landing = () => {
 
           {/* Mobile Menu */}
           {mobileMenuOpen && (
-            <div className="md:hidden pb-4 space-y-4">
-              <a href="#features" className="block text-slate-600 font-medium">Features</a>
-              <a href="#how-it-works" className="block text-slate-600 font-medium">How It Works</a>
-              <a href="#about" className="block text-slate-600 font-medium">About</a>
-              <div className="flex flex-col gap-2 pt-4 border-t">
-                <Link to="/login" className="text-center text-primary font-bold py-2">Log In</Link>
-                <Link to="/register" className="text-center bg-primary text-white px-6 py-2 rounded-lg font-bold">Get Started</Link>
+            <div className="md:hidden pb-4 space-y-4 border-t border-white/20">
+              <a href="#features" className="block text-slate-600 font-medium py-2">Features</a>
+              <a href="#how-it-works" className="block text-slate-600 font-medium py-2">How It Works</a>
+              <a href="#pricing" className="block text-slate-600 font-medium py-2">Pricing</a>
+              <a href="#faq" className="block text-slate-600 font-medium py-2">FAQ</a>
+              <div className="flex flex-col gap-2 pt-4 border-t border-white/20">
+                <Link to="/login" className="text-center text-slate-600 font-medium py-2">Log In</Link>
+                <Link to="/register" className="text-center bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-2 rounded-lg font-semibold">Get Started</Link>
               </div>
             </div>
           )}
@@ -117,250 +196,339 @@ const Landing = () => {
       </nav>
 
       {/* Hero Section */}
-      <section className="pt-32 pb-20 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-slate-50 via-white to-slate-50">
-        <div className="max-w-4xl mx-auto text-center">
-          <h1 className="text-5xl md:text-6xl font-display font-black text-slate-900 mb-6 leading-tight">
-            EduNexa
-          </h1>
-          <h2 className="text-3xl md:text-4xl font-bold text-slate-700 mb-6">
-            Simplify School Management with Ease
-          </h2>
-          <p className="text-lg text-slate-600 mb-8 max-w-2xl mx-auto leading-relaxed">
-            Transform your school operations with our comprehensive management system. Streamline student records, teacher assignments, exams, and analytics—all in one intuitive platform.
-          </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link
-              to="/register"
-              className="bg-primary text-white px-8 py-4 rounded-lg font-bold text-lg hover:bg-primary-dark transition flex items-center justify-center gap-2 shadow-lg"
-            >
-              Get Started <ArrowRight size={20} />
-            </Link>
-            <Link
-              to="/login"
-              className="border-2 border-primary text-primary px-8 py-4 rounded-lg font-bold text-lg hover:bg-primary/5 transition"
-            >
-              Log In
-            </Link>
+      <section className="pt-32 pb-24 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
+        {/* Background gradient orbs */}
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 w-96 h-96 bg-gradient-to-br from-blue-200 to-indigo-200 rounded-full blur-3xl opacity-20 -z-10"></div>
+        <div className="absolute bottom-0 right-0 w-96 h-96 bg-gradient-to-tl from-emerald-200 to-blue-200 rounded-full blur-3xl opacity-10 -z-10"></div>
+
+        <div className="max-w-6xl mx-auto">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+            {/* Left Content */}
+            <div className="space-y-8">
+              {/* Badge */}
+              <div className="inline-flex items-center gap-2 bg-white/50 backdrop-blur-xl border border-white/60 rounded-full px-4 py-2 w-fit">
+                <Sparkles size={16} className="text-blue-600" />
+                <span className="text-sm font-medium text-slate-700">Introducing EduNexa 2.0</span>
+              </div>
+
+              {/* Heading */}
+              <div className="space-y-4">
+                <h1 className="text-5xl md:text-6xl font-bold text-slate-900 leading-tight font-poppins">
+                  School Management
+                  <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent"> Reimagined</span>
+                </h1>
+                <p className="text-lg text-slate-600 leading-relaxed max-w-xl">
+                  Streamline student records, teacher management, exams, and analytics with enterprise-grade security and intuitive design. Built for modern schools.
+                </p>
+              </div>
+
+              {/* CTA Buttons */}
+              <div className="flex flex-col sm:flex-row gap-4 pt-4">
+                <Link
+                  to="/register"
+                  className="inline-flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-8 py-4 rounded-xl font-semibold hover:shadow-lg hover:shadow-blue-500/30 transition-all active:scale-95"
+                >
+                  Get Started Free <ArrowRight size={20} />
+                </Link>
+                <button className="inline-flex items-center justify-center gap-2 bg-white/50 backdrop-blur-xl border border-white/60 text-slate-900 px-8 py-4 rounded-xl font-semibold hover:bg-white/70 transition-all">
+                  Watch Demo
+                </button>
+              </div>
+
+              {/* Trust Indicators */}
+              <div className="flex items-center gap-6 pt-4">
+                <div className="flex -space-x-2">
+                  {[1, 2, 3, 4].map((i) => (
+                    <div
+                      key={i}
+                      className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-indigo-400 border-2 border-white flex items-center justify-center text-xs font-bold text-white"
+                    >
+                      {i}
+                    </div>
+                  ))}
+                </div>
+                <div className="text-sm text-slate-600">
+                  <span className="font-semibold text-slate-900">500+</span> schools trust EduNexa
+                </div>
+              </div>
+            </div>
+
+            {/* Right Content - Dashboard Illustration */}
+            <div className="hidden lg:block">
+              <DashboardIllustration />
+            </div>
           </div>
         </div>
       </section>
 
       {/* Features Section */}
-      <section id="features" className="py-20 px-4 sm:px-6 lg:px-8 bg-slate-50">
+      <section id="features" className="py-24 px-4 sm:px-6 lg:px-8">
         <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-16">
-            <h2 className="text-4xl font-display font-bold text-slate-900 mb-4">Powerful Features</h2>
-            <p className="text-lg text-slate-600">Everything you need to manage your school effectively</p>
+          {/* Section Header */}
+          <div className="text-center mb-16 space-y-4">
+            <h2 className="text-4xl md:text-5xl font-bold text-slate-900 font-poppins">
+              Powerful Features for Modern Schools
+            </h2>
+            <p className="text-lg text-slate-600 max-w-2xl mx-auto">
+              Everything you need to manage your school efficiently and effectively
+            </p>
           </div>
+
+          {/* Features Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             <FeatureCard
-              icon={BookOpen}
+              icon={Users}
               title="Student Management"
-              description="Easily manage student records, enrollment, and academic progress in one centralized system."
+              description="Centralized student records with enrollment tracking, academic progress monitoring, and comprehensive profile management."
+              gradient="bg-gradient-to-br from-blue-400 to-blue-600"
             />
             <FeatureCard
               icon={BookOpen}
               title="Teacher Management"
-              description="Assign teachers, manage schedules, and track performance with our intuitive interface."
+              description="Streamline teacher assignments, schedule management, performance tracking, and professional development records."
+              gradient="bg-gradient-to-br from-indigo-400 to-indigo-600"
             />
             <FeatureCard
               icon={ClipboardList}
               title="Exams & Results"
-              description="Create exams, record marks, and generate comprehensive result reports automatically."
+              description="Create and manage exams, record marks, generate result reports, and track academic performance trends."
+              gradient="bg-gradient-to-br from-purple-400 to-purple-600"
             />
             <FeatureCard
               icon={BarChart3}
-              title="Analytics"
-              description="Get actionable insights with real-time dashboards and detailed analytics reports."
+              title="Advanced Analytics"
+              description="Real-time dashboards with actionable insights, performance metrics, and data-driven decision-making tools."
+              gradient="bg-gradient-to-br from-emerald-400 to-emerald-600"
             />
             <FeatureCard
               icon={Shield}
-              title="Secure System"
-              description="Enterprise-grade security with role-based access control and data encryption."
+              title="Enterprise Security"
+              description="Bank-level encryption, role-based access control, audit logs, and compliance with international data protection standards."
+              gradient="bg-gradient-to-br from-red-400 to-red-600"
             />
             <FeatureCard
               icon={Smartphone}
-              title="Mobile Friendly"
-              description="Access your school data anytime, anywhere with our responsive mobile interface."
+              title="Mobile First"
+              description="Fully responsive design works seamlessly on phones, tablets, and desktops. Access your data anywhere, anytime."
+              gradient="bg-gradient-to-br from-orange-400 to-orange-600"
             />
           </div>
         </div>
       </section>
 
       {/* How It Works Section */}
-      <section id="how-it-works" className="py-20 px-4 sm:px-6 lg:px-8 bg-white">
+      <section id="how-it-works" className="py-24 px-4 sm:px-6 lg:px-8 bg-white/30 backdrop-blur-xl">
         <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-16">
-            <h2 className="text-4xl font-display font-bold text-slate-900 mb-4">How It Works</h2>
-            <p className="text-lg text-slate-600">Get started in just a few simple steps</p>
+          <div className="text-center mb-16 space-y-4">
+            <h2 className="text-4xl md:text-5xl font-bold text-slate-900 font-poppins">
+              Get Started in Minutes
+            </h2>
+            <p className="text-lg text-slate-600 max-w-2xl mx-auto">
+              A simple, straightforward process to get your school up and running
+            </p>
           </div>
+
+          {/* Steps */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-            <HowItWorksStep
-              number={1}
-              title="Register"
-              description="Create your school account and provide basic information."
-            />
-            <div className="hidden md:flex items-center justify-center">
-              <ArrowRight size={32} className="text-primary" />
-            </div>
-            <HowItWorksStep
-              number={2}
-              title="Get Approval"
-              description="Wait for admin approval of your school registration."
-            />
-            <div className="hidden md:flex items-center justify-center">
-              <ArrowRight size={32} className="text-primary" />
-            </div>
-            <HowItWorksStep
-              number={3}
-              title="Add Data"
-              description="Add teachers, students, and academic information."
-            />
-            <div className="hidden md:flex items-center justify-center">
-              <ArrowRight size={32} className="text-primary" />
-            </div>
-            <HowItWorksStep
-              number={4}
-              title="Start Using"
-              description="Begin managing your school operations seamlessly."
-            />
+            {[
+              { number: '01', title: 'Register', description: 'Create your school account with basic information' },
+              { number: '02', title: 'Get Approved', description: 'Our team verifies and approves your registration' },
+              { number: '03', title: 'Add Data', description: 'Import teachers, students, and academic information' },
+              { number: '04', title: 'Start Using', description: 'Begin managing your school operations seamlessly' },
+            ].map((step, i) => (
+              <div key={i} className="relative group">
+                {/* Connector line */}
+                {i < 3 && (
+                  <div className="hidden md:block absolute top-12 -right-4 w-8 h-0.5 bg-gradient-to-r from-blue-400 to-transparent opacity-50"></div>
+                )}
+                
+                <div className="bg-white/50 backdrop-blur-xl border border-white/60 rounded-2xl p-8 h-full hover:border-white/80 transition-all">
+                  <div className="text-4xl font-bold bg-gradient-to-br from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-4 font-poppins">
+                    {step.number}
+                  </div>
+                  <h3 className="text-xl font-semibold text-slate-900 mb-2">{step.title}</h3>
+                  <p className="text-slate-600 text-sm">{step.description}</p>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* Benefits Section */}
-      <section className="py-20 px-4 sm:px-6 lg:px-8 bg-slate-50">
+      {/* Stats Section */}
+      <section className="py-24 px-4 sm:px-6 lg:px-8">
         <div className="max-w-6xl mx-auto">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-            <div>
-              <h2 className="text-4xl font-display font-bold text-slate-900 mb-8">Why Choose EduNexa?</h2>
-              <div className="space-y-6">
-                <BenefitItem
-                  icon={TrendingUp}
-                  title="Increase Efficiency"
-                  description="Automate repetitive tasks and save hours of administrative work every week."
-                />
-                <BenefitItem
-                  icon={BarChart3}
-                  title="Data-Driven Decisions"
-                  description="Make informed decisions with comprehensive analytics and real-time reports."
-                />
-                <BenefitItem
-                  icon={Shield}
-                  title="Secure & Reliable"
-                  description="Enterprise-grade security ensures your school data is always protected."
-                />
-                <BenefitItem
-                  icon={Award}
-                  title="Trusted by Schools"
-                  description="Join hundreds of schools across Kenya already using EduNexa."
-                />
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+            {[
+              { number: '500+', label: 'Schools Trust Us' },
+              { number: '2M+', label: 'Students Managed' },
+              { number: '99.9%', label: 'System Uptime' },
+              { number: '24/7', label: 'Support Available' },
+            ].map((stat, i) => (
+              <div key={i} className="bg-white/50 backdrop-blur-xl border border-white/60 rounded-2xl p-8 text-center hover:border-white/80 transition-all">
+                <div className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-2 font-poppins">
+                  {stat.number}
+                </div>
+                <p className="text-slate-600 font-medium">{stat.label}</p>
               </div>
-            </div>
-            <div className="bg-gradient-to-br from-primary to-primary-dark p-12 rounded-2xl text-white shadow-xl">
-              <h3 className="text-2xl font-bold mb-6">Why Schools Love EduNexa</h3>
-              <div className="space-y-4">
-                <div>
-                  <p className="text-2xl font-bold">Easy to Use</p>
-                  <p className="text-white/80">Intuitive interface for all users</p>
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">Secure</p>
-                  <p className="text-white/80">Enterprise-grade data protection</p>
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">Reliable</p>
-                  <p className="text-white/80">99.9% uptime guarantee</p>
-                </div>
-              </div>
-            </div>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* About Section */}
-      <section id="about" className="py-20 px-4 sm:px-6 lg:px-8 bg-white">
-        <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-4xl font-display font-bold text-slate-900 mb-6">About EduNexa</h2>
-          <p className="text-lg text-slate-600 leading-relaxed mb-8">
-            EduNexa is a comprehensive school management and analytics platform designed to simplify educational administration. We empower schools with smart analytics, seamless management tools, and data-driven insights—all in one intuitive platform. Our mission is to help educators focus on what matters most: student success.
-          </p>
-          <p className="text-lg text-slate-600 leading-relaxed">
-            Built with schools across Kenya in mind, EduNexa combines powerful features with ease of use, ensuring that both administrators and teachers can manage their responsibilities efficiently and effectively.
-          </p>
+      {/* Pricing Section */}
+      <section id="pricing" className="py-24 px-4 sm:px-6 lg:px-8 bg-white/30 backdrop-blur-xl">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-16 space-y-4">
+            <h2 className="text-4xl md:text-5xl font-bold text-slate-900 font-poppins">
+              Simple, Transparent Pricing
+            </h2>
+            <p className="text-lg text-slate-600 max-w-2xl mx-auto">
+              Choose the plan that fits your school's needs
+            </p>
+          </div>
+
+          {/* Pricing Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <PricingCard
+              name="Starter"
+              price="29"
+              description="Perfect for small schools"
+              features={[
+                'Up to 500 students',
+                'Basic analytics',
+                'Email support',
+                'Mobile app access',
+                '5 GB storage',
+              ]}
+            />
+            <PricingCard
+              name="Professional"
+              price="79"
+              description="For growing schools"
+              features={[
+                'Up to 5,000 students',
+                'Advanced analytics',
+                'Priority support',
+                'Mobile app access',
+                '100 GB storage',
+                'Custom integrations',
+              ]}
+              highlighted={true}
+            />
+            <PricingCard
+              name="Enterprise"
+              price="Custom"
+              description="For large institutions"
+              features={[
+                'Unlimited students',
+                'Custom analytics',
+                'Dedicated support',
+                'Mobile app access',
+                'Unlimited storage',
+                'API access',
+              ]}
+            />
+          </div>
         </div>
       </section>
 
-      {/* Final CTA Section */}
-      <section className="py-20 px-4 sm:px-6 lg:px-8 bg-gradient-to-r from-primary to-primary-dark text-white">
-        <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-4xl font-display font-bold mb-6">Ready to Transform Your School?</h2>
-          <p className="text-lg text-white/90 mb-8">
-            Join hundreds of schools already using EduNexa. Get started today with a 30-day free trial.
+      {/* CTA Section */}
+      <section className="py-24 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
+        {/* Background gradient */}
+        <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-indigo-600 opacity-10 blur-3xl -z-10"></div>
+
+        <div className="max-w-4xl mx-auto text-center space-y-8">
+          <h2 className="text-4xl md:text-5xl font-bold text-slate-900 font-poppins">
+            Ready to Transform Your School?
+          </h2>
+          <p className="text-lg text-slate-600 max-w-2xl mx-auto">
+            Join 500+ schools already using EduNexa. Start your free 30-day trial today.
           </p>
-          <Link
-            to="/register"
-            className="inline-flex items-center gap-2 bg-white text-primary px-8 py-4 rounded-lg font-bold text-lg hover:bg-slate-100 transition shadow-lg"
-          >
-            Get Started Now <ArrowRight size={20} />
-          </Link>
+          <div className="flex flex-col sm:flex-row gap-4 justify-center pt-4">
+            <Link
+              to="/register"
+              className="inline-flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-8 py-4 rounded-xl font-semibold hover:shadow-lg hover:shadow-blue-500/30 transition-all active:scale-95"
+            >
+              Get Started Free <ArrowRight size={20} />
+            </Link>
+            <button className="inline-flex items-center justify-center gap-2 bg-white/50 backdrop-blur-xl border border-white/60 text-slate-900 px-8 py-4 rounded-xl font-semibold hover:bg-white/70 transition-all">
+              Schedule Demo
+            </button>
+          </div>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="bg-slate-900 text-white py-12 px-4 sm:px-6 lg:px-8">
+      <footer className="bg-slate-900 text-white py-16 px-4 sm:px-6 lg:px-8">
         <div className="max-w-6xl mx-auto">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-12 mb-12">
             {/* Brand */}
-            <div>
-              <div className="flex items-center gap-2 mb-4">
-                <GraduationCap size={24} />
-                <span className="font-display font-bold text-lg">EduNexa</span>
+            <div className="md:col-span-1 space-y-4">
+              <div className="flex items-center gap-2 text-white font-bold text-lg">
+                <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-indigo-400 rounded-lg flex items-center justify-center">
+                  <GraduationCap size={20} />
+                </div>
+                <span className="font-poppins">EduNexa</span>
               </div>
               <p className="text-slate-400 text-sm">
-                Simplifying school management with smart analytics and data-driven insights.
+                Modern school management for the digital age.
               </p>
             </div>
 
             {/* Product */}
             <div>
-              <h4 className="font-bold mb-4">Product</h4>
-              <ul className="space-y-2 text-slate-400 text-sm">
+              <h4 className="font-semibold mb-4 text-white">Product</h4>
+              <ul className="space-y-3 text-slate-400 text-sm">
                 <li><a href="#features" className="hover:text-white transition">Features</a></li>
-                <li><a href="#how-it-works" className="hover:text-white transition">How It Works</a></li>
-                <li><a href="/status" className="hover:text-white transition">System Status</a></li>
+                <li><a href="#pricing" className="hover:text-white transition">Pricing</a></li>
+                <li><a href="#" className="hover:text-white transition">Security</a></li>
+                <li><a href="#" className="hover:text-white transition">Roadmap</a></li>
+              </ul>
+            </div>
+            {/* Company */}
+            <div>
+              <h4 className="font-semibold mb-4 text-white">Company</h4>
+              <ul className="space-y-3 text-slate-400 text-sm">
+                <li><a href="#" className="hover:text-white transition">About</a></li>
+                <li><a href="#" className="hover:text-white transition">Blog</a></li>
+                <li><a href="#" className="hover:text-white transition">Careers</a></li>
+                <li><a href="#" className="hover:text-white transition">Contact</a></li>
               </ul>
             </div>
 
-            {/* Company */}
+            {/* Resources */}
             <div>
-              <h4 className="font-bold mb-4">Company</h4>
-              <ul className="space-y-2 text-slate-400 text-sm">
-                <li><a href="#about" className="hover:text-white transition">About Us</a></li>
-                <li><a href="#" className="hover:text-white transition">Contact</a></li>
+              <h4 className="font-semibold mb-4 text-white">Resources</h4>
+              <ul className="space-y-3 text-slate-400 text-sm">
+                <li><a href="#" className="hover:text-white transition">Documentation</a></li>
+                <li><a href="#" className="hover:text-white transition">API Reference</a></li>
                 <li><a href="#" className="hover:text-white transition">Support</a></li>
+                <li><a href="#" className="hover:text-white transition">Status</a></li>
               </ul>
             </div>
 
             {/* Legal */}
             <div>
-              <h4 className="font-bold mb-4">Legal</h4>
-              <ul className="space-y-2 text-slate-400 text-sm">
-                <li><a href="#" className="hover:text-white transition">Privacy Policy</a></li>
-                <li><a href="#" className="hover:text-white transition">Terms of Service</a></li>
+              <h4 className="font-semibold mb-4 text-white">Legal</h4>
+              <ul className="space-y-3 text-slate-400 text-sm">
+                <li><a href="#" className="hover:text-white transition">Privacy</a></li>
+                <li><a href="#" className="hover:text-white transition">Terms</a></li>
+                <li><a href="#" className="hover:text-white transition">Cookies</a></li>
+                <li><a href="#" className="hover:text-white transition">Compliance</a></li>
               </ul>
             </div>
           </div>
 
           {/* Bottom */}
-          <div className="border-t border-slate-800 pt-8 flex flex-col md:flex-row justify-between items-center">
+          <div className="border-t border-slate-800 pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
             <p className="text-slate-400 text-sm">
               &copy; 2024 EduNexa. All rights reserved.
             </p>
-            <div className="flex items-center gap-2 text-slate-400 text-xs mt-4 md:mt-0">
-              <span>v1.5.0</span>
-              <Dot size={8} />
-              <span>EduNexa Platform Services</span>
+            <div className="flex items-center gap-4 text-slate-400 text-sm">
+              <a href="#" className="hover:text-white transition">Twitter</a>
+              <a href="#" className="hover:text-white transition">LinkedIn</a>
+              <a href="#" className="hover:text-white transition">GitHub</a>
             </div>
           </div>
         </div>

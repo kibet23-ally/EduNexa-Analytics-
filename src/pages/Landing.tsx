@@ -248,7 +248,7 @@ const Landing = () => {
                   ))}
                 </div>
                 <div className="text-sm text-slate-600">
-                  <span className="font-semibold text-slate-900">500+</span> schools trust EduNexa
+                  <span className="font-semibold text-slate-900">50+</span> schools trust EduNexa
                 </div>
               </div>
             </div>
@@ -360,8 +360,8 @@ const Landing = () => {
         <div className="max-w-6xl mx-auto">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
             {[
-              { number: '500+', label: 'Schools Trust Us' },
-              { number: '2M+', label: 'Students Managed' },
+              { number: '50+', label: 'Schools Trust Us' },
+              { number: '200k+', label: 'Students Managed' },
               { number: '99.9%', label: 'System Uptime' },
               { number: '24/7', label: 'Support Available' },
             ].map((stat, i) => (

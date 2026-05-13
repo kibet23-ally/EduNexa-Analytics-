@@ -84,8 +84,8 @@ const Landing = () => {
   );
 
   // Pricing Card Component
-  const PricingCard = ({ name, price, description, features, highlighted }: {
-    name: string; price: string; description: string; features: string[]; highlighted?: boolean;
+  const PricingCard = ({ name, price, description, features, highlighted, currency = 'KES', period = '/term' }: {
+    name: string; price: string; description: string; features: string[]; highlighted?: boolean; currency?: string; period?: string;
   }) => (
     <div className={`relative group transition-all duration-300 ${highlighted ? 'lg:scale-105' : ''}`}>
       {highlighted && (
@@ -106,8 +106,8 @@ const Landing = () => {
         <h3 className="text-xl font-semibold text-slate-900 mb-2">{name}</h3>
         <p className="text-slate-600 text-sm mb-6">{description}</p>
         <div className="mb-6">
-          <span className="text-4xl font-bold text-slate-900">${price}</span>
-          <span className="text-slate-600 text-sm">/month</span>
+          <span className="text-4xl font-bold text-slate-900">{currency} {price}</span>
+          <span className="text-slate-600 text-sm">{period}</span>
         </div>
         <button className={`w-full py-3 rounded-xl font-semibold transition-all duration-300 mb-8 ${
           highlighted
@@ -391,42 +391,60 @@ const Landing = () => {
           {/* Pricing Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             <PricingCard
-              name="Starter"
-              price="29"
+              name="Basic Plan"
+              price="2,500"
               description="Perfect for small schools"
+              currency="KES"
+              period="/term"
               features={[
-                'Up to 500 students',
-                'Basic analytics',
-                'Email support',
-                'Mobile app access',
-                '5 GB storage',
+                'Up to 150 Students',
+                'Up to 10 Teachers',
+                'Student Management',
+                'Marks Entry',
+                'Basic Reports & PDF Export',
+                'Attendance Tracking',
+                'Email Support',
+                '7-Day Grace Period',
               ]}
             />
             <PricingCard
-              name="Professional"
-              price="79"
+              name="Standard Plan"
+              price="5,000"
               description="For growing schools"
+              currency="KES"
+              period="/term"
               features={[
-                'Up to 5,000 students',
-                'Advanced analytics',
-                'Priority support',
-                'Mobile app access',
-                '100 GB storage',
-                'Custom integrations',
+                'Up to 400 Students',
+                'Up to 30 Teachers',
+                'All Basic Features',
+                'Exam Management',
+                'Analytics & Charts',
+                'Attendance Reports',
+                'Excel & PDF Exports',
+                'Teacher Assignments',
+                'Priority Email Support',
+                '7-Day Grace Period',
               ]}
               highlighted={true}
             />
             <PricingCard
-              name="Enterprise"
-              price="Custom"
+              name="Premium Plan"
+              price="9,000"
               description="For large institutions"
+              currency="KES"
+              period="/term"
               features={[
-                'Unlimited students',
-                'Custom analytics',
-                'Dedicated support',
-                'Mobile app access',
-                'Unlimited storage',
-                'API access',
+                'Unlimited Students',
+                'Unlimited Teachers',
+                'All Standard Features',
+                'Advanced Analytics',
+                'Custom Report Cards',
+                'Multi-Grade Reporting',
+                'Performance Trends',
+                'Most Improved Student Tracking',
+                'Dedicated Support',
+                'Annual Discount 10%',
+                '7-Day Grace Period',
               ]}
             />
           </div>
@@ -434,7 +452,7 @@ const Landing = () => {
       </section>
 
       {/* CTA Section */}
-      <section className="py-24 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
+       <section className="py-24 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
         {/* Background gradient */}
         <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-indigo-600 opacity-10 blur-3xl -z-10"></div>
 
@@ -464,7 +482,7 @@ const Landing = () => {
         <div className="max-w-6xl mx-auto">
           <div className="grid grid-cols-1 md:grid-cols-5 gap-12 mb-12">
             {/* Brand */}
-            <div className="md:col-span-1 space-y-4">
+             <div className="md:col-span-1 space-y-4">
               <div className="flex items-center gap-2 text-white font-bold text-lg">
                 <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-indigo-400 rounded-lg flex items-center justify-center">
                   <GraduationCap size={20} />
@@ -486,6 +504,7 @@ const Landing = () => {
                 <li><a href="#" className="hover:text-white transition">Roadmap</a></li>
               </ul>
             </div>
+
             {/* Company */}
             <div>
               <h4 className="font-semibold mb-4 text-white">Company</h4>
@@ -498,7 +517,7 @@ const Landing = () => {
             </div>
 
             {/* Resources */}
-            <div>
+             <div>
               <h4 className="font-semibold mb-4 text-white">Resources</h4>
               <ul className="space-y-3 text-slate-400 text-sm">
                 <li><a href="#" className="hover:text-white transition">Documentation</a></li>
@@ -521,7 +540,7 @@ const Landing = () => {
           </div>
 
           {/* Bottom */}
-          <div className="border-t border-slate-800 pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
+           <div className="border-t border-slate-800 pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
             <p className="text-slate-400 text-sm">
               &copy; 2024 EduNexa. All rights reserved.
             </p>

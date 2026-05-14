@@ -34,6 +34,7 @@
     "motion": "^12.23.24",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-hot-toast": "^2.6.0",
     "react-is": "^19.2.5",
     "react-router-dom": "^7.13.2",
     "recharts": "^2.12.0",

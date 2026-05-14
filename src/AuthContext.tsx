@@ -88,26 +88,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       async (event, session) => {
         if (cancelled) return;
 
-        if (event === 'TOKEN_REFRESHED' && session) {
-          setToken(session.access_token);
-          localStorage.setItem('edunexa_token', session.access_token);
+        if (event === 'PASSWORD_RECOVERY') {
+          // This event fires when a user clicks a password reset link
+          // The session is already set, we just need to redirect to the reset page
+          window.location.href = '/reset-password';
+          return;
         }
 
-        if (event === 'SIGNED_IN' && session) {
+        if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session) {
           setToken(session.access_token);
           localStorage.setItem('edunexa_token', session.access_token);
 
-          const { data: profile } = await supabase
-            .from('users')
-            .select('*')
-            .eq('auth_id', session.user.id)
-            .maybeSingle();
+          // Only fetch profile if we don't have one or it's a new sign in
+          if (event === 'SIGNED_IN') {
+            const { data: profile } = await supabase
+              .from('users')
+              .select('*')
+              .eq('id', session.user.id) // Using id instead of auth_id as per Login.tsx
+              .maybeSingle();
 
-          if (profile && !cancelled) {
-            const normalized = normalizeUser(profile as User)!;
-            setUser(normalized);
-            localStorage.setItem('edunexa_user', JSON.stringify(normalized));
+            if (profile && !cancelled) {
+              const normalized = normalizeUser(profile as User)!;
+              setUser(normalized);
+              localStorage.setItem('edunexa_user', JSON.stringify(normalized));
+            }
           }
+          
           if (!cancelled) setSessionReady(true);
         }
 

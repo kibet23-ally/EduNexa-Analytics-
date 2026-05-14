@@ -35,6 +35,7 @@ const SystemStatus          = lazy(() => import('./pages/SystemStatus'));
 const Attendance            = lazy(() => import('./pages/Attendance'));
 const AttendanceReport      = lazy(() => import('./pages/AttendanceReport'));
 const StudentPromotion      = lazy(() => import('./pages/StudentPromotion'));
+const ResetPassword         = lazy(() => import('./pages/ResetPassword'));
 
 const PageFallback = () => (
   <div className="space-y-6 animate-in fade-in duration-500">
@@ -97,6 +98,7 @@ const AppRoutes = () => {
       <Route path="/awaiting-approval" element={<Suspense fallback={<div className="h-screen flex items-center justify-center bg-slate-50">Loading...</div>}><AwaitingApproval /></Suspense>} />
       <Route path="/order" element={<Suspense fallback={<div>Loading...</div>}><OrderForm /></Suspense>} />
       <Route path="/status" element={<Suspense fallback={<div>Loading...</div>}><SystemStatus /></Suspense>} />
+      <Route path="/reset-password" element={<Suspense fallback={<div className="h-screen flex items-center justify-center bg-slate-50">Loading...</div>}><ResetPassword /></Suspense>} />
 
       {/* Shared authenticated routes */}
       <Route path="/dashboard" element={<ProtectedRoute><Layout>{wrap(<Dashboard />, 'Dashboard')}</Layout></ProtectedRoute>} />

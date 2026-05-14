@@ -22,7 +22,7 @@ const SchoolDashboard = () => {
 
   const today = new Date().toISOString().split('T')[0];
   const attendance = useData<any>('attendance-today', 'attendance', {
-    select:  'status',
+    select: 'student_id, status',
     filters: { date: today },
   }, canFetch, 300000);
 
@@ -31,16 +31,42 @@ const SchoolDashboard = () => {
     subjectCount.isLoading || examCount.isLoading;
 
   const attendanceSummary = React.useMemo(() => {
-    if (!attendance.data) return { present: 0, absent: 0, late: 0, excused: 0, total: 0 };
-    const attData = attendance.data;
-    return {
-      present: attData.filter((a: any) => a.status.toLowerCase() === 'present').length,
-      absent:  attData.filter((a: any) => a.status.toLowerCase() === 'absent').length,
-      late:    attData.filter((a: any) => a.status.toLowerCase() === 'late').length,
-      excused: attData.filter((a: any) => a.status.toLowerCase() === 'excused').length,
-      total:   attData.length,
-    };
-  }, [attendance.data]);
+  if (!attendance.data) {
+    return { present: 0, absent: 0, late: 0, excused: 0, total: 0 };
+  }
+
+  const attData = attendance.data;
+
+  const present = new Set(
+    attData
+      .filter((a: any) => a.status.toLowerCase() === 'present')
+      .map((a: any) => a.student_id)
+  ).size;
+
+  const late = new Set(
+    attData
+      .filter((a: any) => a.status.toLowerCase() === 'late')
+      .map((a: any) => a.student_id)
+  ).size;
+
+  const excused = new Set(
+    attData
+      .filter((a: any) => a.status.toLowerCase() === 'excused')
+      .map((a: any) => a.student_id)
+  ).size;
+
+  const totalStudents = Number(studentCount.data ?? 0);
+
+  const absent = totalStudents - present - late - excused;
+
+  return {
+    present,
+    absent: absent < 0 ? 0 : absent,
+    late,
+    excused,
+    total: totalStudents,
+  };
+}, [attendance.data, studentCount.data]);
 
   const performanceData = [
     { name: 'EE1', count: 5,  color: '#1E3A8A' },

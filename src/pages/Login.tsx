@@ -60,7 +60,7 @@ const Login = () => {
     }
   };
 
-  const handleSendOTP = async (e: React.FormEvent) => {
+  const handlePhoneLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
@@ -74,19 +74,20 @@ const Login = () => {
         cleanPhone = '+254' + cleanPhone;
       }
 
-      const { error: otpError } = await supabase.auth.signInWithOtp({
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
         phone: cleanPhone,
+        password,
       });
 
-      if (otpError) throw otpError;
+      if (authError || !data.session || !data.user) {
+        throw new Error(authError?.message || 'Invalid phone number or password');
+      }
 
-      setStep('otp');
-      setResendTimer(60);
-      toast.success('OTP sent to your phone!');
+      await completeLogin(data.session, data.user);
     } catch (err: any) {
-      console.error('OTP send error:', err);
-      setError(err.message || 'Failed to send OTP. Please try again.');
-      toast.error('Failed to send OTP');
+      console.error('Phone login error:', err);
+      setError(err.message || 'Login failed. Please try again.');
+      toast.error(err.message || 'Login failed');
     } finally {
       setLoading(false);
     }
@@ -322,8 +323,8 @@ const Login = () => {
                 </div>
               )}
 
-              {authMethod === 'phone' ? (
-                <form onSubmit={handleSendOTP} className="space-y-6">
+              <form onSubmit={authMethod === 'phone' ? handlePhoneLogin : handleEmailLogin} className="space-y-6">
+                {authMethod === 'phone' ? (
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">
                       Phone Number
@@ -346,19 +347,8 @@ const Login = () => {
                         />
                       </div>
                     </div>
-                    <p className="text-[10px] text-slate-400 ml-1 font-medium italic">We'll send a 6-digit code to this number via SMS.</p>
                   </div>
-
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full bg-primary hover:bg-primary-dark text-white font-bold py-4 rounded-2xl transition-all shadow-xl shadow-primary/20 disabled:opacity-50 active:scale-[0.98]"
-                  >
-                    {loading ? 'Sending Code...' : 'Send Login Code'}
-                  </button>
-                </form>
-              ) : (
-                <form onSubmit={handleEmailLogin} className="space-y-6">
+                ) : (
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">
                       Email Address
@@ -375,41 +365,43 @@ const Login = () => {
                       />
                     </div>
                   </div>
+                )}
 
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between px-1">
-                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                        Password
-                      </label>
-                      <button 
-                        type="button"
-                        onClick={() => setStep('forgot')}
-                        className="text-xs font-bold text-primary hover:text-primary-dark transition"
-                      >
-                        Forgot Password?
-                      </button>
-                    </div>
-                    <div className="relative group">
-                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" size={20} />
-                      <input
-                        type="password"
-                        required
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:ring-4 focus:ring-primary/5 focus:border-primary/20 outline-none transition-all text-slate-700 font-medium"
-                        placeholder="••••••••"
-                      />
-                    </div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between ml-1">
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                      Password
+                    </label>
+                    <button 
+                      type="button"
+                      onClick={() => setStep('forgot')}
+                      className="text-[10px] font-bold text-primary hover:text-primary-dark transition-colors uppercase tracking-widest"
+                    >
+                      Forgot Password?
+                    </button>
                   </div>
+                  <div className="relative group">
+                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" size={20} />
+                    <input
+                      type="password"
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:ring-4 focus:ring-primary/5 focus:border-primary/20 outline-none transition-all text-slate-700 font-medium"
+                      placeholder="••••••••"
+                    />
+                  </div>
+                </div>
 
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full bg-primary hover:bg-primary-dark text-white font-bold py-4 rounded-2xl transition-all shadow-xl shadow-primary/20 disabled:opacity-50 active:scale-[0.98]"
-                  >
-                    {loading ? 'Authenticating...' : 'Sign In to Dashboard'}
-                  </button>
-                </form>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-primary hover:bg-primary-dark text-white font-bold py-4 rounded-2xl transition-all shadow-xl shadow-primary/20 disabled:opacity-50 active:scale-[0.98]"
+                >
+                  {loading ? 'Authenticating...' : 'Login'}
+                </button>
+              </form>
+
               )}
             </>
           )}

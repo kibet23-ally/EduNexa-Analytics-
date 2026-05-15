@@ -401,8 +401,6 @@ const Login = () => {
                   {loading ? 'Authenticating...' : 'Login'}
                 </button>
               </form>
-
-              )}
             </>
           )}
 

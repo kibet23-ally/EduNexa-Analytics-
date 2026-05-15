@@ -16,6 +16,7 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSent, setForgotSent] = useState(false);
+  const [resendTimer, setResendTimer] = useState(0);
   
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -80,6 +81,7 @@ const Login = () => {
       if (otpError) throw otpError;
 
       setStep('otp');
+      setResendTimer(60);
       toast.success('OTP sent to your phone!');
     } catch (err: any) {
       console.error('OTP send error:', err);
@@ -129,18 +131,39 @@ const Login = () => {
     setError('');
 
     try {
-      const { error: resetError } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
-        redirectTo: `${window.location.origin}/reset-password`,
-      });
+      if (authMethod === 'email') {
+        const { error: resetError } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
+          redirectTo: `${window.location.origin}/reset-password`,
+        });
+        if (resetError) throw resetError;
+        setForgotSent(true);
+        toast.success('Reset link sent to your email!');
+      } else {
+        // Phone reset: Supabase doesn't have a direct "resetPasswordForPhone" 
+        // that works like email. Usually, we use OTP to sign in, then they 
+        // can change password in settings. For a full "Forgot Password" 
+        // with phone, we send OTP and then redirect to reset.
+        let cleanPhone = phone.replace(/\s+/g, '');
+        if (cleanPhone.startsWith('0')) {
+          cleanPhone = '+254' + cleanPhone.substring(1);
+        } else if (!cleanPhone.startsWith('+')) {
+          cleanPhone = '+254' + cleanPhone;
+        }
 
-      if (resetError) throw resetError;
+        const { error: otpError } = await supabase.auth.signInWithOtp({
+          phone: cleanPhone,
+        });
 
-      setForgotSent(true);
-      toast.success('Reset link sent to your email!');
+        if (otpError) throw otpError;
+
+        setStep('otp');
+        setResendTimer(60);
+        toast.success('OTP sent! Verify to reset your password.');
+      }
     } catch (err: any) {
       console.error('Reset password error:', err);
-      setError(err.message || 'Failed to send reset link');
-      toast.error('Failed to send reset link');
+      setError(err.message || 'Failed to process reset request');
+      toast.error('Reset request failed');
     } finally {
       setLoading(false);
     }
@@ -150,8 +173,8 @@ const Login = () => {
     // 1. Try to get profile from users table
     const { data: profile } = await supabase
       .from('users')
-      .select('id, role, name, school_id, email')
-      .eq('id', authUser.id)
+      .select('id, role, name, school_id, email, phone')
+      .or(`id.eq.${authUser.id},phone.eq.${authUser.phone || 'none'}`)
       .maybeSingle();
 
     let finalProfile = profile;
@@ -159,11 +182,21 @@ const Login = () => {
     // 2. If not found, check if it's a teacher/admin from the teachers table
     if (!finalProfile) {
       const emailToSearch = authUser.email || '';
-      const { data: teacherData } = await supabase
-        .from('teachers')
-        .select('id, role, name, school_id, email')
-        .ilike('email', emailToSearch)
-        .maybeSingle();
+      const phoneToSearch = authUser.phone || '';
+      
+      let query = supabase.from('teachers').select('id, role, name, school_id, email, phone');
+      if (emailToSearch && phoneToSearch) {
+        query = query.or(`email.ilike.${emailToSearch},phone.eq.${phoneToSearch}`);
+      } else if (emailToSearch) {
+        query = query.ilike('email', emailToSearch);
+      } else if (phoneToSearch) {
+        query = query.eq('phone', phoneToSearch);
+      } else {
+        // No identifiers available
+        query = query.eq('id', '00000000-0000-0000-0000-000000000000');
+      }
+
+      const { data: teacherData } = await query.maybeSingle();
 
       if (teacherData) {
         const role = teacherData.role === 'Admin' ? 'school_admin' 
@@ -174,7 +207,8 @@ const Login = () => {
           .from('users')
           .upsert({
             id: authUser.id,
-            email: emailToSearch,
+            email: emailToSearch || null,
+            phone: phoneToSearch || null,
             name: teacherData.name,
             role,
             school_id: teacherData.school_id,
@@ -185,6 +219,7 @@ const Login = () => {
         finalProfile = newProfile || {
           id: authUser.id,
           email: emailToSearch,
+          phone: phoneToSearch,
           name: teacherData.name,
           role,
           school_id: teacherData.school_id,
@@ -226,6 +261,7 @@ const Login = () => {
     const fullUser = {
       ...authUser,
       ...finalProfile,
+      role: finalProfile.role as any,
     };
 
     login(session.access_token, fullUser);
@@ -419,13 +455,23 @@ const Login = () => {
                   {loading ? 'Verifying...' : 'Verify & Login'}
                 </button>
 
-                <button 
-                  type="button"
-                  onClick={() => setStep('login')}
-                  className="w-full text-slate-500 font-bold text-sm hover:text-slate-700 transition"
-                >
-                  Didn't receive code? Change Number
-                </button>
+                <div className="flex flex-col gap-3">
+                  <button 
+                    type="button"
+                    disabled={resendTimer > 0 || loading}
+                    onClick={handleSendOTP}
+                    className="w-full text-primary font-bold text-sm hover:text-primary-dark transition disabled:opacity-50"
+                  >
+                    {resendTimer > 0 ? `Resend Code in ${resendTimer}s` : "Didn't receive code? Resend"}
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setStep('login')}
+                    className="w-full text-slate-500 font-bold text-sm hover:text-slate-700 transition"
+                  >
+                    Change Phone Number
+                  </button>
+                </div>
               </form>
             </div>
           )}
@@ -437,7 +483,11 @@ const Login = () => {
                   <Lock className="text-primary" size={28} />
                 </div>
                 <h3 className="text-xl font-bold text-slate-900">Forgot Password?</h3>
-                <p className="text-slate-500 text-sm">Enter your email and we'll send you a link to reset your password.</p>
+                <p className="text-slate-500 text-sm">
+                  {authMethod === 'email' 
+                    ? "Enter your email and we'll send you a link to reset your password."
+                    : "Enter your phone number and we'll send you an OTP to reset your password."}
+                </p>
               </div>
 
               {forgotSent ? (
@@ -465,29 +515,56 @@ const Login = () => {
                     </div>
                   )}
 
-                  <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">
-                      Email Address
-                    </label>
-                    <div className="relative group">
-                      <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" size={20} />
-                      <input
-                        type="email"
-                        required
-                        value={forgotEmail}
-                        onChange={(e) => setForgotEmail(e.target.value)}
-                        className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:ring-4 focus:ring-primary/5 focus:border-primary/20 outline-none transition-all text-slate-700 font-medium"
-                        placeholder="admin@school.edu"
-                      />
+                  {authMethod === 'email' ? (
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">
+                        Email Address
+                      </label>
+                      <div className="relative group">
+                        <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" size={20} />
+                        <input
+                          type="email"
+                          required
+                          value={forgotEmail}
+                          onChange={(e) => setForgotEmail(e.target.value)}
+                          className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:ring-4 focus:ring-primary/5 focus:border-primary/20 outline-none transition-all text-slate-700 font-medium"
+                          placeholder="admin@school.edu"
+                        />
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">
+                        Phone Number
+                      </label>
+                      <div className="flex gap-2">
+                        <div className="flex items-center gap-1.5 px-3 bg-slate-50 border border-slate-100 rounded-2xl text-slate-600 font-bold text-sm">
+                          <span className="text-lg">🇰🇪</span>
+                          <span>+254</span>
+                        </div>
+                        <div className="relative flex-1 group">
+                          <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" size={20} />
+                          <input
+                            type="tel"
+                            required
+                            value={phone}
+                            onChange={(e) => setPhone(e.target.value)}
+                            className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:bg-white focus:ring-4 focus:ring-primary/5 focus:border-primary/20 outline-none transition-all text-slate-700 font-medium"
+                            placeholder="712 345 678"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   <button
                     type="submit"
                     disabled={loading}
                     className="w-full bg-primary hover:bg-primary-dark text-white font-bold py-4 rounded-2xl transition-all shadow-xl shadow-primary/20 disabled:opacity-50 active:scale-[0.98]"
                   >
-                    {loading ? 'Sending Link...' : 'Send Reset Link'}
+                    {loading 
+                      ? (authMethod === 'email' ? 'Sending Link...' : 'Sending OTP...') 
+                      : (authMethod === 'email' ? 'Send Reset Link' : 'Send Reset OTP')}
                   </button>
 
                   <button 

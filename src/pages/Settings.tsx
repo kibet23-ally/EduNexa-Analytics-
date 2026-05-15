@@ -27,6 +27,7 @@ const SettingsPage = () => {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
+    phone: '',
     avatar_url: '',
     theme_preference: 'light',
     notifications_enabled: true
@@ -65,7 +66,7 @@ const SettingsPage = () => {
         // Fetch user profile — use maybeSingle to avoid crash if no row found
         const { data: userData } = await supabase
           .from('users')
-          .select('id, name, email, avatar_url, theme_preference, notifications_enabled')
+          .select('id, name, email, phone, avatar_url, theme_preference, notifications_enabled')
           .eq('email', userEmail)
           .maybeSingle();
 
@@ -73,6 +74,7 @@ const SettingsPage = () => {
         setFormData({
           name: userData?.name || user?.name || '',
           email: userData?.email || userEmail,
+          phone: userData?.phone || user?.phone || '',
           avatar_url: userData?.avatar_url || '',
           theme_preference: userData?.theme_preference || theme || 'light',
           notifications_enabled: userData?.notifications_enabled ?? true
@@ -118,10 +120,24 @@ const SettingsPage = () => {
       const userEmail = user?.email;
       if (!userEmail) throw new Error('No user email found');
 
+      // Validate Kenya phone number format (+254)
+      let cleanPhone = formData.phone.replace(/\s+/g, '');
+      if (cleanPhone) {
+        if (cleanPhone.startsWith('0')) {
+          cleanPhone = '+254' + cleanPhone.substring(1);
+        } else if (!cleanPhone.startsWith('+')) {
+          cleanPhone = '+254' + cleanPhone;
+        }
+        if (!/^\+254\d{9}$/.test(cleanPhone)) {
+          throw new Error('Invalid Kenya phone number format. Use +2547XXXXXXXX');
+        }
+      }
+
       const { data, error } = await supabase
         .from('users')
         .update({
           name: formData.name,
+          phone: cleanPhone || null,
           avatar_url: formData.avatar_url,
           theme_preference: formData.theme_preference,
           notifications_enabled: formData.notifications_enabled
@@ -300,6 +316,18 @@ const SettingsPage = () => {
                   <Mail size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input required type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                     className="w-full pl-12 pr-4 py-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-2xl focus:ring-4 focus:ring-primary/10 outline-none transition-all dark:text-white" />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-black uppercase tracking-widest text-slate-400">Phone Number</label>
+                <div className="relative">
+                  <div className="absolute left-4 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                    <span className="text-sm">🇰🇪</span>
+                    <span className="text-xs font-bold text-slate-400">+254</span>
+                  </div>
+                  <input value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                    placeholder="712345678"
+                    className="w-full pl-20 pr-4 py-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-2xl focus:ring-4 focus:ring-primary/10 outline-none transition-all dark:text-white" />
                 </div>
               </div>
               <div className="md:col-span-2 space-y-2">

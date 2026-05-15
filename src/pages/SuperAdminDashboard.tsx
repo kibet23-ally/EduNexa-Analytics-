@@ -16,14 +16,14 @@ const SuperAdminDashboard = () => {
   const schoolsQuery = useData<School>(
     'all-schools-stats', 'schools',
     { select: 'id, subscription_status, created_at, name, logo_url, subscription_end_date' },
-    sessionReady,   // ← was: true
+    sessionReady,
     300000
   );
 
   const studentsCountQuery = useData<number>(
     'total-students-platform', 'students',
     { countOnly: true },
-    sessionReady,   // ← was: true
+    sessionReady,
     300000
   );
 

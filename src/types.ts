@@ -2,7 +2,8 @@ export interface User {
   id: string | number;
   name: string;
   email: string;
-  role: 'SuperAdmin' | 'Admin' | 'Teacher' | 'Principal';
+  phone?: string;
+  role: 'SuperAdmin' | 'Admin' | 'Teacher' | 'Principal' | 'super_admin' | 'school_admin' | 'teacher';
   school_id?: string | number;
   school_name?: string;
   schools?: { name: string };

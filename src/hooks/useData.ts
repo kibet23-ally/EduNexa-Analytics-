@@ -1,45 +1,46 @@
-import React, { useEffect } from 'react';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchWithProxy, writeWithProxy } from '../lib/fetchProxy';
 import { useAuth } from '../useAuth';
 
+type QueryOptions = {
+  select?: string;
+  filters?: Record<string, any>;
+  orderBy?: { column: string; ascending?: boolean };
+  limit?: number;
+  single?: boolean;
+  countOnly?: boolean;
+};
+
 /**
- * PRODUCTION FIX:
- * - consistent query keys
- * - stable session gating
- * - correct cache invalidation
+ * 🔥 FIXED CORE IDEA:
+ * NEVER return {count, data} to UI
+ * UI must ALWAYS receive:
+ *   - number (countOnly)
+ *   - array (normal query)
  */
 export function useData<T>(
   key: string,
   table: string,
-  options: {
-    select?: string;
-    filters?: Record<string, any>;
-    orderBy?: { column: string; ascending?: boolean };
-    limit?: number;
-    single?: boolean;
-    countOnly?: boolean;
-  } = {},
+  options: QueryOptions = {},
   enabled: boolean = true,
   staleTime: number = 60000
 ) {
   const { sessionReady } = useAuth();
   const queryClient = useQueryClient();
 
-  /**
-   * FIX: consistent invalidation
-   */
-  useEffect(() => {
+  // 🔥 FIX: invalidate AFTER session ready
+  React.useEffect(() => {
     if (sessionReady) {
-      queryClient.invalidateQueries({
-        queryKey: [table],
-        exact: false,
-      });
+      queryClient.invalidateQueries({ queryKey: [table] });
     }
-  }, [sessionReady, queryClient, table]);
+  }, [sessionReady, table, queryClient]);
 
   return useQuery({
-    queryKey: [table, key, options], // FIX: no JSON stringify chaos
+    queryKey: [table, key, options],
+    enabled: enabled && sessionReady,
+
     queryFn: async () => {
       const cleanFilters = options.filters
         ? Object.fromEntries(
@@ -58,17 +59,18 @@ export function useData<T>(
         countOnly: options.countOnly,
       });
 
-      if (options.countOnly) {
-  return { count: res.count ?? 0, data: [] };
-}
-      return (res.data ?? []) as T[];
-    },
+      // =========================
+      // 🔥 FIX CRITICAL PART HERE
+      // =========================
 
-    /**
-     * CRITICAL FIX:
-     * Only block on sessionReady — not external "enabled" flags
-     */
-    enabled: sessionReady && enabled,
+      if (options.countOnly) {
+        // ALWAYS return number
+        return Number(res.count ?? 0);
+      }
+
+      // ALWAYS return array (never object)
+      return Array.isArray(res.data) ? res.data : [];
+    },
 
     staleTime,
     gcTime: 300000,
@@ -79,7 +81,7 @@ export function useData<T>(
 }
 
 /**
- * MUTATIONS (fixed invalidation bug)
+ * MUTATION HOOK (unchanged but safe)
  */
 export function useDataMutation(table: string) {
   const queryClient = useQueryClient();
@@ -100,10 +102,7 @@ export function useDataMutation(table: string) {
     },
 
     onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: [table], // FIX: matches queryKey structure
-        exact: false,
-      });
+      queryClient.invalidateQueries({ queryKey: [table] });
     },
   });
 }

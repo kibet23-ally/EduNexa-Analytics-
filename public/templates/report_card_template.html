@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Progress Report - {{school_name}}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@700;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #1e3a8a;
+            --accent-color: #d4af37;
+            --text-main: #1e293b;
+            --text-muted: #64748b;
+            --border-color: #e2e8f0;
+        }
+
+        @media print {
+            @page {
+                size: A4;
+                margin: 0;
+            }
+            body {
+                print-color-adjust: exact;
+                -webkit-print-color-adjust: exact;
+            }
+            .no-print {
+                display: none;
+            }
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc;
+            color: var(--text-main);
+        }
+
+        .report-card {
+            width: 210mm;
+            min-height: 297mm;
+            margin: 20px auto;
+            background: white;
+            box-shadow: 0 0 40px rgba(0, 0, 0, 0.1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        @media print {
+            .report-card {
+                margin: 0;
+                box-shadow: none;
+            }
+        }
+
+        .header-bg {
+            background-color: var(--primary-color);
+            position: relative;
+        }
+
+        .header-bg::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background-color: var(--accent-color);
+        }
+
+        .gold-border {
+            border-color: var(--accent-color);
+        }
+
+        .text-primary {
+            color: var(--primary-color);
+        }
+
+        .text-accent {
+            color: var(--accent-color);
+        }
+
+        .bg-primary {
+            background-color: var(--primary-color);
+        }
+
+        .bg-accent {
+            background-color: var(--accent-color);
+        }
+
+        .font-serif {
+            font-family: 'Playfair Display', serif;
+        }
+
+        table th {
+            background-color: #f1f5f9;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        table td {
+            border-bottom: 1px solid var(--border-color);
+            padding: 12px 8px;
+        }
+
+        .signature-line {
+            border-bottom: 1px solid #94a3b8;
+            width: 100%;
+            margin-top: 40px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="report-card flex flex-col">
+        <!-- Header Section -->
+        <header class="header-bg text-white p-8 flex items-center justify-between">
+            <div class="flex items-center gap-6">
+                <!-- School Logo (SVG Torch/Shield) -->
+                <div class="w-24 h-24 bg-white rounded-xl p-2 shadow-inner flex items-center justify-center border-2 border-accent">
+                    <svg viewBox="0 0 100 100" class="w-16 h-16 text-primary">
+                        <path fill="currentColor" d="M50 5 L15 25 L15 55 C15 75 50 95 50 95 C50 95 85 75 85 55 L85 25 L50 5 Z" />
+                        <path fill="#d4af37" d="M50 30 L40 55 H60 L50 30 Z M50 20 C55 20 55 10 50 5 C45 10 45 20 50 20 Z" />
+                    </svg>
+                </div>
+                <div class="space-y-1">
+                    <h1 class="text-3xl font-black tracking-tight uppercase">{{school_name}}</h1>
+                    <p class="text-accent font-medium italic tracking-widest text-sm uppercase">"{{motto}}"</p>
+                </div>
+            </div>
+            <div class="text-right">
+                <div class="bg-accent/20 border border-accent/30 px-4 py-2 rounded-lg">
+                    <span class="block text-[10px] uppercase tracking-tighter text-accent/80 font-bold">Academic Year</span>
+                    <span class="text-xl font-bold">{{academic_year}}</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Report Title -->
+        <div class="py-6 text-center">
+            <h2 class="text-2xl font-serif font-black text-primary tracking-wide uppercase inline-block relative">
+                Student Progress Report
+                <div class="h-1 w-full bg-accent mt-1 rounded-full opacity-50"></div>
+            </h2>
+        </div>
+
+        <!-- Student Info Grid -->
+        <div class="px-10 py-6 bg-slate-50/50 border-y border-slate-100 grid grid-cols-4 gap-6">
+            <div class="col-span-1">
+                <div class="w-32 h-40 bg-slate-200 rounded-xl border-2 border-white shadow-md overflow-hidden flex items-center justify-center">
+                    <img src="{{student_photo_url}}" alt="Student Photo" class="w-full h-full object-cover" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+                    <div class="hidden flex-col items-center text-slate-400">
+                        <svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                        <span class="text-[10px] uppercase font-bold mt-2">No Photo</span>
+                    </div>
+                </div>
+            </div>
+            <div class="col-span-3 grid grid-cols-2 gap-x-8 gap-y-4 py-2">
+                <div class="space-y-1">
+                    <label class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Student Name</label>
+                    <p class="text-lg font-bold text-slate-800 border-b border-slate-200 pb-1">{{student_name}}</p>
+                </div>
+                <div class="space-y-1">
+                    <label class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Admission No.</label>
+                    <p class="text-lg font-bold text-slate-800 border-b border-slate-200 pb-1">{{admission_no}}</p>
+                </div>
+                <div class="space-y-1">
+                    <label class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Grade / Class</label>
+                    <p class="text-lg font-bold text-slate-800 border-b border-slate-200 pb-1">{{grade_class}}</p>
+                </div>
+                <div class="space-y-1">
+                    <label class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Term / Period</label>
+                    <p class="text-lg font-bold text-slate-800 border-b border-slate-200 pb-1">{{term}}</p>
+                </div>
+                <div class="space-y-1">
+                    <label class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Gender</label>
+                    <p class="text-lg font-bold text-slate-800 border-b border-slate-200 pb-1">{{gender}}</p>
+                </div>
+                <div class="space-y-1">
+                    <label class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Position in Class</label>
+                    <p class="text-lg font-bold text-slate-800 border-b border-slate-200 pb-1">{{position}} / {{class_size}}</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Results Table -->
+        <div class="px-10 py-8 flex-grow">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr>
+                        <th class="py-3 px-4 w-1/2">Learning Area / Subject</th>
+                        <th class="py-3 px-4 text-center">Marks (%)</th>
+                        <th class="py-3 px-4 text-center">Grade</th>
+                        <th class="py-3 px-4 text-center">Points</th>
+                        <th class="py-3 px-4">Teacher's Remark</th>
+                    </tr>
+                </thead>
+                <tbody class="text-sm">
+                    <!-- Dynamic Rows Start -->
+                    {{subject_rows}}
+                    <!-- Dynamic Rows End -->
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Summary Section -->
+        <div class="px-10 py-6 bg-primary text-white mx-10 rounded-2xl shadow-lg flex justify-between items-center mb-8">
+            <div class="text-center px-4">
+                <span class="block text-[10px] uppercase font-bold text-blue-200 tracking-widest">Total Marks</span>
+                <span class="text-3xl font-black">{{total_marks}}</span>
+            </div>
+            <div class="w-px h-12 bg-blue-400/30"></div>
+            <div class="text-center px-4">
+                <span class="block text-[10px] uppercase font-bold text-blue-200 tracking-widest">Percentage</span>
+                <span class="text-3xl font-black text-accent">{{percentage}}%</span>
+            </div>
+            <div class="w-px h-12 bg-blue-400/30"></div>
+            <div class="text-center px-4">
+                <span class="block text-[10px] uppercase font-bold text-blue-200 tracking-widest">Mean Grade</span>
+                <span class="text-3xl font-black">{{mean_grade}}</span>
+            </div>
+            <div class="w-px h-12 bg-blue-400/30"></div>
+            <div class="text-center px-4">
+                <span class="block text-[10px] uppercase font-bold text-blue-200 tracking-widest">Total Points</span>
+                <span class="text-3xl font-black">{{total_points}}</span>
+            </div>
+        </div>
+
+        <!-- Grading Scale -->
+        <div class="px-10 mb-8">
+            <div class="bg-slate-50 border border-slate-100 p-4 rounded-xl">
+                <span class="text-[10px] uppercase font-black text-slate-400 tracking-widest block mb-3 text-center underline">Grading Scale Reference</span>
+                <div class="flex justify-between items-center text-[10px] font-bold">
+                    <div class="flex flex-col items-center gap-1">
+                        <span class="w-8 h-8 rounded bg-emerald-500 text-white flex items-center justify-center text-xs">A</span>
+                        <span>80-100</span>
+                    </div>
+                    <div class="flex flex-col items-center gap-1">
+                        <span class="w-8 h-8 rounded bg-emerald-400 text-white flex items-center justify-center text-xs">A-</span>
+                        <span>75-79</span>
+                    </div>
+                    <div class="flex flex-col items-center gap-1">
+                        <span class="w-8 h-8 rounded bg-blue-500 text-white flex items-center justify-center text-xs">B+</span>
+                        <span>70-74</span>
+                    </div>
+                    <div class="flex flex-col items-center gap-1">
+                        <span class="w-8 h-8 rounded bg-blue-400 text-white flex items-center justify-center text-xs">B</span>
+                        <span>65-69</span>
+                    </div>
+                    <div class="flex flex-col items-center gap-1">
+                        <span class="w-8 h-8 rounded bg-indigo-500 text-white flex items-center justify-center text-xs">B-</span>
+                        <span>60-64</span>
+                    </div>
+                    <div class="flex flex-col items-center gap-1">
+                        <span class="w-8 h-8 rounded bg-indigo-400 text-white flex items-center justify-center text-xs">C+</span>
+                        <span>55-59</span>
+                    </div>
+                    <div class="flex flex-col items-center gap-1">
+                        <span class="w-8 h-8 rounded bg-yellow-500 text-white flex items-center justify-center text-xs">C</span>
+                        <span>50-54</span>
+                    </div>
+                    <div class="flex flex-col items-center gap-1">
+                        <span class="w-8 h-8 rounded bg-orange-500 text-white flex items-center justify-center text-xs">D</span>
+                        <span>40-49</span>
+                    </div>
+                    <div class="flex flex-col items-center gap-1">
+                        <span class="w-8 h-8 rounded bg-red-500 text-white flex items-center justify-center text-xs">E</span>
+                        <span>0-39</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Remarks Section -->
+        <div class="px-10 grid grid-cols-2 gap-12 mb-10">
+            <div class="space-y-4">
+                <div>
+                    <label class="text-[10px] uppercase font-bold text-primary tracking-widest block mb-2">Class Teacher's Remarks</label>
+                    <p class="text-sm italic text-slate-600 border-b border-dashed border-slate-300 pb-2 min-h-[40px]">{{teacher_remarks}}</p>
+                </div>
+                <div class="flex items-end justify-between">
+                    <div class="flex-grow">
+                        <div class="signature-line"></div>
+                        <span class="text-[10px] font-bold text-slate-400 uppercase">Signature</span>
+                    </div>
+                    <div class="ml-4 w-24 h-12 opacity-50 grayscale flex items-center justify-center">
+                        <!-- Digital Signature Placeholder -->
+                        <img src="{{teacher_signature_url}}" alt="" class="max-h-full max-w-full">
+                    </div>
+                </div>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label class="text-[10px] uppercase font-bold text-primary tracking-widest block mb-2">Principal's Remarks</label>
+                    <p class="text-sm italic text-slate-600 border-b border-dashed border-slate-300 pb-2 min-h-[40px]">{{principal_remarks}}</p>
+                </div>
+                <div class="flex items-end justify-between">
+                    <div class="flex-grow">
+                        <div class="signature-line"></div>
+                        <span class="text-[10px] font-bold text-slate-400 uppercase">Signature & Official Stamp</span>
+                    </div>
+                    <div class="ml-4 w-24 h-12 opacity-50 grayscale flex items-center justify-center">
+                        <!-- Digital Signature Placeholder -->
+                        <img src="{{principal_signature_url}}" alt="" class="max-h-full max-w-full">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="mt-auto bg-slate-50 border-t border-slate-200 p-8 text-center space-y-3">
+            <div class="flex justify-center gap-8 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                <span class="flex items-center gap-2"><svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M2 3a1 1 0 011-1h2.153a1 1 0 01.986.836l.74 4.435a1 1 0 01-.54 1.06l-1.548.773a11.037 11.037 0 006.105 6.105l.774-1.548a1 1 0 011.059-.54l4.435.74a1 1 0 01.836.986V17a1 1 0 01-1 1h-2C7.82 18 2 12.18 2 5V3z"></path></svg> {{phone_number}}</span>
+                <span class="flex items-center gap-2"><svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z"></path><path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z"></path></svg> {{email_address}}</span>
+                <span class="flex items-center gap-2"><svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"></path></svg> {{address}}</span>
+            </div>
+            <p class="text-[9px] text-slate-300 font-medium tracking-tighter">This is a computer-generated document. For verification, visit {{website_url}}</p>
+        </footer>
+    </div>
+
+    <!-- Instructions for User (Hidden in Print) -->
+    <div class="no-print max-w-4xl mx-auto my-12 p-8 bg-white rounded-3xl shadow-xl border border-slate-100">
+        <h3 class="text-xl font-black text-primary mb-4">Template Implementation Guide</h3>
+        
+        <div class="space-y-6">
+            <section>
+                <h4 class="font-bold text-slate-800 mb-2">1. Making it Dynamic</h4>
+                <p class="text-sm text-slate-600 mb-4">Replace the `{{placeholder}}` tags with real data from your backend (Node.js, Python, PHP, etc.).</p>
+                <pre class="bg-slate-900 text-emerald-400 p-4 rounded-xl text-xs overflow-x-auto">
+// Example row structure for {{subject_rows}}
+const subjects = [
+  { name: 'Mathematics', marks: 85, grade: 'A', points: 12, remark: 'Excellent' },
+  { name: 'English', marks: 78, grade: 'A-', points: 11, remark: 'Very Good' }
+];
+
+const rowsHtml = subjects.map(s => `
+  <tr>
+    <td class="font-bold text-slate-700">${s.name}</td>
+    <td class="text-center font-bold text-primary">${s.marks}</td>
+    <td class="text-center"><span class="px-2 py-1 bg-slate-100 rounded font-bold">${s.grade}</span></td>
+    <td class="text-center">${s.points}</td>
+    <td class="italic text-slate-500">${s.remark}</td>
+  </tr>
+`).join('');</pre>
+            </section>
+
+            <section>
+                <h4 class="font-bold text-slate-800 mb-2">2. Converting to PDF</h4>
+                <p class="text-sm text-slate-600 mb-2">Use **Puppeteer** (Node.js) for high-quality rendering:</p>
+                <pre class="bg-slate-900 text-emerald-400 p-4 rounded-xl text-xs overflow-x-auto">
+const puppeteer = require('puppeteer');
+
+async function generatePDF() {
+  const browser = await puppeteer.launch();
+  const page = await browser.newPage();
+  await page.setContent(htmlContent); // Your populated HTML
+  await page.pdf({ 
+    path: 'report-card.pdf', 
+    format: 'A4',
+    printBackground: true 
+  });
+  await browser.close();
+}</pre>
+            </section>
+        </div>
+        
+        <button onclick="window.print()" class="mt-8 bg-primary text-white font-bold py-3 px-8 rounded-xl hover:scale-105 transition shadow-lg">
+            Test Print / Save as PDF
+        </button>
+    </div>
+
+</body>
+</html>

@@ -24,16 +24,18 @@ interface Assignment {
   grade_id: number;
 }
 
-/** ================= CBC RUBRIC ================= */
+/** =======================
+ * CBC RUBRIC FUNCTION
+ * ======================= */
 const getRubric = (percent: number) => {
-  if (percent >= 90) return 'EE1';
-  if (percent >= 75) return 'EE2';
-  if (percent >= 58) return 'ME1';
-  if (percent >= 41) return 'ME2';
-  if (percent >= 31) return 'AE1';
-  if (percent >= 21) return 'AE2';
-  if (percent >= 11) return 'BE1';
-  return 'BE2';
+  if (percent >= 90) return { label: 'EE1', desc: 'Exceeding Expectations', color: 'text-emerald-600' };
+  if (percent >= 75) return { label: 'EE2', desc: 'Exceeding Expectations', color: 'text-emerald-500' };
+  if (percent >= 58) return { label: 'ME1', desc: 'Meeting Expectations', color: 'text-blue-600' };
+  if (percent >= 41) return { label: 'ME2', desc: 'Meeting Expectations', color: 'text-blue-500' };
+  if (percent >= 31) return { label: 'AE1', desc: 'Approaching Expectations', color: 'text-amber-600' };
+  if (percent >= 21) return { label: 'AE2', desc: 'Approaching Expectations', color: 'text-amber-500' };
+  if (percent >= 11) return { label: 'BE1', desc: 'Below Expectations', color: 'text-red-500' };
+  return { label: 'BE2', desc: 'Below Expectations', color: 'text-red-700' };
 };
 
 const MarksEntry = () => {
@@ -44,33 +46,22 @@ const MarksEntry = () => {
   const [selectedGrade, setSelectedGrade] = useState('');
   const [selectedSubject, setSelectedSubject] = useState('');
   const [maxScore, setMaxScore] = useState<number | string>(100);
+
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error', msg: string } | null>(null);
 
   const currentMax = Number(maxScore) || 100;
 
   const marksMutation = useDataMutation('marks');
 
-  /** ================= DATA ================= */
-  const examsQuery = useData<Exam>(
-    'exams-list',
-    'exams',
-    { select: 'id, exam_name' },
-    !!user?.school_id
-  );
+  const examsQuery = useData<Exam>('exams-list', 'exams', { select: 'id, exam_name' }, !!user?.school_id);
+  const gradesQuery = useData<Grade>('grades-list', 'grades', {
+    select: 'id, grade_name',
+    orderBy: { column: 'grade_name', ascending: true }
+  }, !!user?.school_id);
 
-  const gradesQuery = useData<Grade>(
-    'grades-list',
-    'grades',
-    { select: 'id, grade_name', orderBy: { column: 'grade_name', ascending: true } },
-    !!user?.school_id
-  );
-
-  const subjectsQuery = useData<Subject>(
-    'subjects-list',
-    'subjects',
-    { select: 'id, subject_name' },
-    !!user?.school_id
-  );
+  const subjectsQuery = useData<Subject>('subjects-list', 'subjects', {
+    select: 'id, subject_name'
+  }, !!user?.school_id);
 
   const assignmentsQuery = useData<Assignment>(
     'teacher-assignments-all',
@@ -79,38 +70,6 @@ const MarksEntry = () => {
     !!user?.school_id && user.role === 'Teacher'
   );
 
-  /** ================= FILTERS ================= */
-  const filteredGrades = useMemo(() => {
-    const data = gradesQuery.data || [];
-    if (user?.role !== 'Teacher' || !assignmentsQuery.data) return data;
-
-    const teacherId = user.id.toString().replace('teacher-', '');
-
-    const allowed = new Set(
-      assignmentsQuery.data
-        .filter(a => a.teacher_id.toString() === teacherId)
-        .map(a => a.grade_id.toString())
-    );
-
-    return data.filter(g => allowed.has(g.id.toString()));
-  }, [gradesQuery.data, assignmentsQuery.data, user]);
-
-  const filteredSubjects = useMemo(() => {
-    const data = subjectsQuery.data || [];
-    if (user?.role !== 'Teacher' || !assignmentsQuery.data) return data;
-
-    const teacherId = user.id.toString().replace('teacher-', '');
-
-    const allowed = new Set(
-      assignmentsQuery.data
-        .filter(a => a.teacher_id.toString() === teacherId)
-        .map(a => a.subject_id.toString())
-    );
-
-    return data.filter(s => allowed.has(s.id.toString()));
-  }, [subjectsQuery.data, assignmentsQuery.data, user]);
-
-  /** ================= STUDENTS ================= */
   const studentsQuery = useData<Student>(
     'students-marks',
     'students',
@@ -123,115 +82,88 @@ const MarksEntry = () => {
 
   const students = useMemo(() => studentsQuery.data || [], [studentsQuery.data]);
 
-  /** ================= EXISTING MARKS ================= */
-  const existingMarksQuery = useData<Mark>(
-    'marks-existing',
-    'marks',
-    {
-      filters: selectedExam && selectedSubject ? {
-        exam_id: parseInt(selectedExam),
-        subject_id: parseInt(selectedSubject)
-      } : undefined
-    },
-    !!selectedExam && !!selectedSubject
-  );
-
   const [marks, setMarks] = useState<Record<number, number>>({});
   const [rawMarks, setRawMarks] = useState<Record<number, string>>({});
 
-  const lastMarksRef = React.useRef<string>('');
-
-  React.useEffect(() => {
-    if (existingMarksQuery.data) {
-      const key = JSON.stringify(existingMarksQuery.data);
-      if (key !== lastMarksRef.current) {
-        const m: Record<number, number> = {};
-        const r: Record<number, string> = {};
-
-        existingMarksQuery.data.forEach((x) => {
-          m[x.student_id] = x.score;
-          const raw = (x.score * currentMax) / 100;
-          r[x.student_id] = raw.toString();
-        });
-
-        setMarks(m);
-        setRawMarks(r);
-        lastMarksRef.current = key;
-      }
-    }
-  }, [existingMarksQuery.data, currentMax]);
-
-  /** ================= HANDLERS ================= */
-  const handleScoreChange = (studentId: number, value: string) => {
+  const handleScoreChange = (studentId: number, rawValue: string) => {
     if (isReadOnly) return;
 
-    setRawMarks(p => ({ ...p, [studentId]: value }));
+    setRawMarks(p => ({ ...p, [studentId]: rawValue }));
 
-    const val = parseFloat(value);
+    const val = parseFloat(rawValue);
     if (!isNaN(val) && val >= 0 && val <= currentMax) {
-      setMarks(p => ({
-        ...p,
-        [studentId]: Math.round((val / currentMax) * 100)
-      }));
+      const percentage = Math.round((val / currentMax) * 100);
+      setMarks(p => ({ ...p, [studentId]: percentage }));
     }
   };
 
   const handleSave = async () => {
     if (isReadOnly) return;
-
-    const payload = Object.entries(marks).map(([studentId, score]) => ({
-      student_id: parseInt(studentId),
-      score,
-      exam_id: parseInt(selectedExam),
-      subject_id: parseInt(selectedSubject),
-      school_id: user?.school_id
-    }));
+    if (!selectedExam || !selectedSubject) return;
 
     try {
+      const payload = Object.entries(marks).map(([studentId, score]) => ({
+        student_id: parseInt(studentId),
+        score,
+        exam_id: parseInt(selectedExam),
+        subject_id: parseInt(selectedSubject),
+        school_id: user?.school_id
+      }));
+
       await marksMutation.mutateAsync({
         operation: 'upsert',
         payload,
         onConflict: 'student_id,exam_id,subject_id'
       });
 
-      setFeedback({ type: 'success', msg: 'Saved successfully!' });
+      setFeedback({ type: 'success', msg: 'Marks saved successfully!' });
     } catch (err: any) {
       setFeedback({ type: 'error', msg: err.message });
     }
   };
 
-  /** ================= UI ================= */
   return (
     <div className="space-y-6">
 
       {/* HEADER */}
       <header className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Marks Entry</h1>
-          <p className="text-slate-500 text-sm">Enter scores for examinations.</p>
+          <h1 className="text-2xl font-bold">Marks Entry</h1>
+          <p className="text-slate-500 text-sm">
+            Enter marks and instantly view CBC rubric performance
+          </p>
         </div>
+
+        {feedback && (
+          <span className={`text-xs font-bold px-3 py-1 rounded-full ${
+            feedback.type === 'success'
+              ? 'bg-emerald-50 text-emerald-600'
+              : 'bg-red-50 text-red-600'
+          }`}>
+            {feedback.msg}
+          </span>
+        )}
       </header>
 
-      {/* DROPDOWNS */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border grid grid-cols-1 md:grid-cols-4 gap-6">
-
+      {/* CONTROLS */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border grid grid-cols-4 gap-4">
         <select value={selectedExam} onChange={e => setSelectedExam(e.target.value)} className="p-2 border rounded">
-          <option value="">Select Exam</option>
+          <option>Select Exam</option>
           {examsQuery.data?.map(e => (
             <option key={e.id} value={e.id}>{e.exam_name}</option>
           ))}
         </select>
 
         <select value={selectedGrade} onChange={e => setSelectedGrade(e.target.value)} className="p-2 border rounded">
-          <option value="">Select Grade</option>
-          {filteredGrades.map(g => (
+          <option>Select Grade</option>
+          {gradesQuery.data?.map(g => (
             <option key={g.id} value={g.id}>{g.grade_name}</option>
           ))}
         </select>
 
         <select value={selectedSubject} onChange={e => setSelectedSubject(e.target.value)} className="p-2 border rounded">
-          <option value="">Select Subject</option>
-          {filteredSubjects.map(s => (
+          <option>Select Subject</option>
+          {subjectsQuery.data?.map(s => (
             <option key={s.id} value={s.id}>{s.subject_name}</option>
           ))}
         </select>
@@ -240,60 +172,61 @@ const MarksEntry = () => {
           type="number"
           value={maxScore}
           onChange={e => setMaxScore(e.target.value)}
-          className="p-2 border rounded"
+          className="p-2 border rounded font-bold text-blue-600"
         />
       </div>
 
+      {/* RUBRIC LEGEND */}
+      <div className="bg-slate-50 p-4 rounded-xl text-xs grid grid-cols-4 gap-2">
+        <span>EE1 (90-100)</span>
+        <span>EE2 (75-89)</span>
+        <span>ME1 (58-74)</span>
+        <span>ME2 (41-57)</span>
+        <span>AE1 (31-40)</span>
+        <span>AE2 (21-30)</span>
+        <span>BE1 (11-20)</span>
+        <span>BE2 (0-10)</span>
+      </div>
+
       {/* TABLE */}
-      {selectedExam && selectedGrade && selectedSubject && (
-        <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+      <div className="bg-white rounded-xl border overflow-hidden">
 
-          <table className="w-full text-left">
-            <thead>
-              <tr className="bg-slate-50 text-xs font-bold text-slate-500">
-                <th className="p-3">Adm No</th>
-                <th className="p-3">Name</th>
-                <th className="p-3">Score</th>
-                <th className="p-3">%</th>
-                <th className="p-3">Rubric</th>
-              </tr>
-            </thead>
+        <div className="p-3 border-b flex justify-between">
+          <h3 className="font-bold text-sm">Student Marks</h3>
 
-            <tbody>
-              {students.map(s => {
-                const percent = marks[s.id] || 0;
-
-                return (
-                  <tr key={s.id} className="border-t">
-                    <td className="p-3">{s.admission_number}</td>
-                    <td className="p-3 font-semibold">{s.name}</td>
-
-                    <td className="p-3">
-                      <input
-                        value={rawMarks[s.id] || ''}
-                        onChange={e => handleScoreChange(s.id, e.target.value)}
-                        className="border p-1 w-20"
-                      />
-                    </td>
-
-                    <td className="p-3 font-bold text-blue-600">
-                      {percent}%
-                    </td>
-
-                    {/* RUBRIC ADDED */}
-                    <td className="p-3 font-bold">
-                      {getRubric(percent)}
-                    </td>
-
-                  </tr>
-                );
-              })}
-            </tbody>
-
-          </table>
-
+          <button
+            onClick={handleSave}
+            className="bg-blue-600 text-white px-4 py-2 rounded text-xs flex items-center gap-2"
+          >
+            <Save size={14} /> Save
+          </button>
         </div>
-      )}
+
+        {students.map(s => {
+          const percent = marks[s.id] || 0;
+          const rubric = getRubric(percent);
+
+          return (
+            <div key={s.id} className="grid grid-cols-4 p-3 border-b items-center hover:bg-slate-50">
+
+              <div className="font-bold text-sm">{s.name}</div>
+
+              <input
+                type="number"
+                value={rawMarks[s.id] || ''}
+                onChange={e => handleScoreChange(s.id, e.target.value)}
+                className="border p-2 rounded w-24"
+              />
+
+              <div className="text-blue-600 font-bold">{percent}%</div>
+
+              <div className={`font-bold ${rubric.color}`}>
+                {rubric.label} <span className="text-xs text-slate-400">{rubric.desc}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
 
     </div>
   );

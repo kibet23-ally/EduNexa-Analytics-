@@ -1,227 +1,311 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { CheckCircle2, XCircle, Clock } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import {
+  CheckCircle2,
+  XCircle,
+  Clock,
+  ChevronLeft,
+  ChevronRight,
+} from 'lucide-react';
+import { cn } from '../lib/utils';
+import { useSubscription } from '../useSubscription';
 import { useAuth } from '../useAuth';
 import { useData, useDataMutation } from '../hooks/useData';
 import { TableSkeleton } from '../components/ui/Skeleton';
 
-type Status = 'present' | 'absent' | 'late' | 'excused';
+type AttendanceStatus = 'present' | 'absent' | 'late' | 'excused';
+
+const PAGE_SIZE = 50;
 
 const Attendance = () => {
-  const { user } = useAuth();
+  const { user, sessionReady } = useAuth();
+  const { isReadOnly } = useSubscription();
 
-  const [grade, setGrade] = useState('');
-  const [subject, setSubject] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(0);
+  const [selectedGrade, setSelectedGrade] = useState('');
+  const [selectedSubject, setSelectedSubject] = useState('');
+  const [selectedDate, setSelectedDate] = useState(
+    new Date().toISOString().split('T')[0]
+  );
+  const [searchTerm, setSearchTerm] = useState('');
 
-  const [attendanceMap, setAttendanceMap] = useState<Record<number, any>>({});
+  const [attendanceData, setAttendanceData] = useState<
+    Record<number, { student_id: number; status: AttendanceStatus; remarks: string }>
+  >({});
 
   const attendanceMutation = useDataMutation('attendance');
 
-  // ===================== DATA =====================
+  const enabled = sessionReady && !!user?.school_id;
 
-  const studentsQuery = useData('students', 'students', {
-    select: 'id, name, admission_number, grade_id',
-    filters: grade ? { grade_id: Number(grade) } : undefined
-  }, !!user?.school_id && !!grade);
+  // =========================
+  // GRADES (FIXED)
+  // =========================
+  const gradesQuery = useData<Grade>(
+    'grades-all',
+    'grades',
+    {
+      select: 'id, grade_name',
+      orderBy: { column: 'grade_name', ascending: true },
+      filters: { school_id: user?.school_id },
+    },
+    enabled
+  );
 
-  const existingAttendanceQuery = useData('existing-attendance', 'attendance', {
-    filters: {
-      grade_id: Number(grade || 0),
-      subject_id: Number(subject || 0),
-      date
-    }
-  }, !!user?.school_id && !!grade && !!subject);
+  // =========================
+  // SUBJECTS (FIXED)
+  // =========================
+  const subjectsQuery = useData<Subject>(
+    'subjects-all',
+    'subjects',
+    {
+      select: 'id, subject_name',
+      filters: { school_id: user?.school_id },
+    },
+    enabled
+  );
+
+  // =========================
+  // TEACHER ASSIGNMENTS (RBAC SAFE)
+  // =========================
+  const assignmentsQuery = useData<any>(
+    'teacher-assignments',
+    'teacher_assignments',
+    {
+      select: 'subject_id, grade_id',
+      filters: { is_active: true, teacher_id: user?.id },
+    },
+    enabled && user?.role === 'Teacher'
+  );
+
+  const assignments = assignmentsQuery.data || [];
+
+  const isTeacher = user?.role === 'Teacher';
+
+  // =========================
+  // FILTERED SUBJECTS (SAFE)
+  // =========================
+  const teacherSubjects = useMemo(() => {
+    const all = subjectsQuery.data || [];
+
+    if (!isTeacher) return all;
+    if (!assignments.length) return all; // 🔥 fallback fix
+
+    const allowed = new Set(assignments.map((a: any) => a.subject_id));
+    return all.filter((s: any) => allowed.has(s.id));
+  }, [subjectsQuery.data, assignments, isTeacher]);
+
+  // =========================
+  // FILTERED GRADES (SAFE)
+  // =========================
+  const teacherGrades = useMemo(() => {
+    const all = gradesQuery.data || [];
+
+    if (!isTeacher) return all;
+    if (!assignments.length) return all;
+
+    const allowed = new Set(assignments.map((a: any) => a.grade_id));
+    return all.filter((g: any) => allowed.has(g.id));
+  }, [gradesQuery.data, assignments, isTeacher]);
+
+  // =========================
+  // STUDENTS
+  // =========================
+  const studentsQuery = useData<Student>(
+    'students-attendance',
+    'students',
+    {
+      select: 'id, name, admission_number, grade_id',
+      filters: selectedGrade ? { grade_id: Number(selectedGrade) } : undefined,
+      range: { from: page * PAGE_SIZE, to: (page + 1) * PAGE_SIZE - 1 },
+    },
+    enabled && !!selectedGrade
+  );
 
   const students = studentsQuery.data || [];
-  const existing = existingAttendanceQuery.data || [];
 
-  // ===================== LOAD EXISTING (EDIT MODE) =====================
+  // =========================
+  // INIT ATTENDANCE STATE
+  // =========================
+  const lastRef = React.useRef('');
 
   useEffect(() => {
-    if (!students.length) return;
+    const ids = students.map((s) => s.id).join(',');
 
-    const map: Record<number, any> = {};
+    if (students.length && ids !== lastRef.current) {
+      const init: any = {};
+      students.forEach((s) => {
+        init[s.id] = {
+          student_id: s.id,
+          status: 'present',
+          remarks: '',
+        };
+      });
 
-    students.forEach(s => {
-      const found = existing.find((a: any) => a.student_id === s.id);
+      setAttendanceData(init);
+      lastRef.current = ids;
+    }
+  }, [students]);
 
-      map[s.id] = {
-        student_id: s.id,
-        status: found?.status || 'present',
-        remarks: found?.remarks || ''
-      };
-    });
+  // =========================
+  // SUBMIT (UPSERT FIXED)
+  // =========================
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
 
-    setAttendanceMap(map);
-  }, [students, existing]);
+    if (isReadOnly) return;
+    if (!selectedGrade || !selectedSubject) {
+      alert('Select Grade and Subject');
+      return;
+    }
 
-  // ===================== FILTER =====================
+    try {
+      const payload = Object.values(attendanceData).map((r: any) => ({
+        ...r,
+        grade_id: Number(selectedGrade),
+        subject_id: Number(selectedSubject),
+        date: selectedDate,
+        school_id: user?.school_id,
+      }));
 
-  const filtered = useMemo(() => {
-    return students.filter(s =>
-      s.name.toLowerCase().includes(search.toLowerCase()) ||
-      s.admission_number.toLowerCase().includes(search.toLowerCase())
-    );
-  }, [students, search]);
+      await attendanceMutation.mutateAsync({
+        operation: 'upsert',
+        payload,
+        onConflict:
+          'student_id,subject_id,grade_id,date,school_id',
+      });
 
-  // ===================== SAVE (UPSERT ONLY) =====================
-
-  const handleSave = async () => {
-    if (!grade || !subject) return alert('Select grade & subject');
-
-    const payload = Object.values(attendanceMap).map(r => ({
-      student_id: r.student_id,
-      status: r.status,
-      remarks: r.remarks,
-      grade_id: Number(grade),
-      subject_id: Number(subject),
-      date,
-      school_id: user?.school_id
-    }));
-
-    await attendanceMutation.mutateAsync({
-      operation: 'upsert',
-      payload,
-      onConflict: 'student_id,subject_id,date'
-    });
-
-    alert('Attendance saved');
+      alert('Attendance saved successfully');
+    } catch (err: any) {
+      alert('Failed: ' + err.message);
+    }
   };
 
-  // ===================== UI =====================
+  // =========================
+  // FILTER SEARCH
+  // =========================
+  const filteredStudents = useMemo(() => {
+    return students.filter(
+      (s: any) =>
+        s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        s.admission_number.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [students, searchTerm]);
 
+  // =========================
+  // UI
+  // =========================
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-6">
-
-      {/* HEADER */}
-      <div className="flex justify-between">
+    <div className="p-8 space-y-8 max-w-7xl mx-auto">
+      <header className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold">Class Attendance</h1>
-          <p className="text-gray-500">Google Classroom Style Marking</p>
+          <h1 className="text-3xl font-bold">Attendance</h1>
+          <p className="text-gray-500">{selectedDate}</p>
         </div>
 
         <button
-          onClick={handleSave}
-          className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold"
+          onClick={handleSubmit}
+          disabled={attendanceMutation.isPending}
+          className="px-6 py-3 bg-blue-600 text-white rounded-xl"
         >
-          Save Attendance
+          {attendanceMutation.isPending ? 'Saving...' : 'Submit'}
         </button>
-      </div>
+      </header>
 
-      {/* CONTROLS */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-white p-6 rounded-2xl border">
-
-        <select value={subject} onChange={e => setSubject(e.target.value)}>
-          <option value="">Select Subject</option>
+      {/* DROPDOWNS */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-white p-6 rounded-2xl">
+        <select
+          value={selectedSubject}
+          onChange={(e) => setSelectedSubject(e.target.value)}
+          className="p-3 bg-gray-100 rounded-xl"
+        >
+          <option>Select Subject</option>
+          {teacherSubjects.map((s: any) => (
+            <option key={s.id} value={s.id}>
+              {s.subject_name}
+            </option>
+          ))}
         </select>
 
-        <select value={grade} onChange={e => setGrade(e.target.value)}>
-          <option value="">Select Grade</option>
+        <select
+          value={selectedGrade}
+          onChange={(e) => setSelectedGrade(e.target.value)}
+          className="p-3 bg-gray-100 rounded-xl"
+        >
+          <option>Select Grade</option>
+          {teacherGrades.map((g: any) => (
+            <option key={g.id} value={g.id}>
+              {g.grade_name}
+            </option>
+          ))}
         </select>
-
-        <input type="date" value={date} onChange={e => setDate(e.target.value)} />
 
         <input
-          placeholder="Search student"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
+          type="date"
+          value={selectedDate}
+          onChange={(e) => setSelectedDate(e.target.value)}
+          className="p-3 bg-gray-100 rounded-xl"
+        />
+
+        <input
+          placeholder="Search student..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="p-3 bg-gray-100 rounded-xl"
         />
       </div>
 
-      {/* TABLE */}
-      <div className="bg-white rounded-2xl border overflow-hidden">
-
+      {/* STUDENTS */}
+      <div className="bg-white rounded-2xl p-4">
         {studentsQuery.isLoading ? (
-          <TableSkeleton rows={6} cols={3} />
+          <TableSkeleton rows={10} cols={3} />
         ) : (
           <table className="w-full">
-
-            <thead className="bg-gray-50 text-left text-xs uppercase">
-              <tr>
-                <th className="p-4">Student</th>
-                <th>Status</th>
-                <th>Remarks</th>
-              </tr>
-            </thead>
-
             <tbody>
-              {filtered.map(student => (
-                <tr key={student.id} className="border-t">
+              {filteredStudents.map((s: any) => (
+                <tr key={s.id} className="border-b">
+                  <td className="p-3 font-bold">{s.name}</td>
 
-                  {/* STUDENT */}
-                  <td className="p-4">
-                    <p className="font-bold">{student.name}</p>
-                    <p className="text-xs text-gray-400">
-                      {student.admission_number}
-                    </p>
-                  </td>
-
-                  {/* STATUS */}
-                  <td className="p-4 flex gap-2">
-
+                  <td className="p-3 flex gap-2">
                     <button
                       onClick={() =>
-                        setAttendanceMap(p => ({
+                        setAttendanceData((p) => ({
                           ...p,
-                          [student.id]: { ...p[student.id], status: 'present' }
+                          [s.id]: { ...p[s.id], status: 'present' },
                         }))
                       }
-                      className={attendanceMap[student.id]?.status === 'present' ? 'text-green-600' : ''}
+                      className="text-green-600"
                     >
-                      <CheckCircle2 />
+                      Present
                     </button>
 
                     <button
                       onClick={() =>
-                        setAttendanceMap(p => ({
+                        setAttendanceData((p) => ({
                           ...p,
-                          [student.id]: { ...p[student.id], status: 'absent' }
+                          [s.id]: { ...p[s.id], status: 'absent' },
                         }))
                       }
-                      className={attendanceMap[student.id]?.status === 'absent' ? 'text-red-600' : ''}
+                      className="text-red-600"
                     >
-                      <XCircle />
+                      Absent
                     </button>
 
                     <button
                       onClick={() =>
-                        setAttendanceMap(p => ({
+                        setAttendanceData((p) => ({
                           ...p,
-                          [student.id]: { ...p[student.id], status: 'late' }
+                          [s.id]: { ...p[s.id], status: 'late' },
                         }))
                       }
-                      className={attendanceMap[student.id]?.status === 'late' ? 'text-amber-600' : ''}
+                      className="text-yellow-600"
                     >
-                      <Clock />
+                      Late
                     </button>
-
                   </td>
-
-                  {/* REMARKS */}
-                  <td className="p-4">
-                    <input
-                      value={attendanceMap[student.id]?.remarks || ''}
-                      onChange={e =>
-                        setAttendanceMap(p => ({
-                          ...p,
-                          [student.id]: {
-                            ...p[student.id],
-                            remarks: e.target.value
-                          }
-                        }))
-                      }
-                      className="border rounded px-2 py-1 w-full"
-                    />
-                  </td>
-
                 </tr>
               ))}
             </tbody>
-
           </table>
         )}
-
       </div>
     </div>
   );

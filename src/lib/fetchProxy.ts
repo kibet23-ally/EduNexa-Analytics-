@@ -1,157 +1,91 @@
-import { createClient } from '@supabase/supabase-js';
-import { supabase } from './supabase';
-
-const supabaseUrl = 'https://zclwokyzsqzitqwmugtt.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpjbHdva3l6c3F6aXRxd211Z3R0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2ODc2NjIsImV4cCI6MjA5MjI2MzY2Mn0.DZUX4qVSNbd-Ai9R8NmYSQ_mdhhtt2-pYCS_T-D76tk';
-
-interface ProxyQuery {
-  select?: string;
-  filters?: Record<string, unknown>;
-  orderBy?: { column: string; ascending: boolean };
-  limit?: number;
-  single?: boolean;
-  countOnly?: boolean;
-}
-
-/**
- * AUTH CLIENT (UNCHANGED - SAFE)
- */
-async function getAuthenticatedClient() {
-  const { data: { session } } = await supabase.auth.getSession();
-  const token = session?.access_token;
-
-  if (!token) return supabase;
-
-  return createClient(supabaseUrl, supabaseAnonKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-    global: {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    },
-  });
-}
-
-/**
- * NO ROLE LOGIC HERE (IMPORTANT FIX)
- * RBAC must be handled in Supabase RLS or filters only
- */
-export async function fetchWithProxy(table: string, query: ProxyQuery = {}) {
+export async function fetchWithProxy(
+  table: string,
+  query: ProxyQuery = {}
+) {
   try {
     const db = await getAuthenticatedClient();
+
+    /**
+     * =========================
+     * COUNT ONLY
+     * =========================
+     */
+    if (query.countOnly) {
+      let countQuery = db
+        .from(table)
+        .select('*', {
+          count: 'exact',
+          head: true,
+        });
+
+      if (query.filters) {
+        for (const [key, value] of Object.entries(query.filters)) {
+          countQuery = countQuery.eq(key, value as any);
+        }
+      }
+
+      const { count, error } = await countQuery;
+
+      if (error) throw error;
+
+      return {
+        data: null,
+        count: count ?? 0,
+      };
+    }
+
+    /**
+     * =========================
+     * NORMAL QUERY
+     * =========================
+     */
     const selectStr = query.select || '*';
 
     let q = db.from(table).select(selectStr);
 
-    // APPLY FILTERS ONLY (NO ROLE LOGIC)
+    // filters
     if (query.filters) {
       for (const [key, value] of Object.entries(query.filters)) {
         q = q.eq(key, value as any);
       }
     }
 
+    // order
     if (query.orderBy) {
       q = q.order(query.orderBy.column, {
         ascending: query.orderBy.ascending,
       });
     }
 
+    // limit
     if (query.limit) {
       q = q.limit(query.limit);
     }
 
-    if (query.countOnly) {
-      const { count, error } = await q.select('*', { count: 'exact', head: true });
-      if (error) throw error;
-      return { data: null, count: count ?? 0 };
-    }
-
+    // single
     if (query.single) {
       const { data, error } = await q.maybeSingle();
+
       if (error) throw error;
-      return { data, count: data ? 1 : 0 };
+
+      return {
+        data,
+        count: data ? 1 : 0,
+      };
     }
 
-    const { data, error, count } = await q;
+    // normal fetch
+    const { data, error } = await q;
 
     if (error) throw error;
 
     return {
       data: data || [],
-      count: count ?? data?.length ?? 0,
+      count: data?.length || 0,
     };
 
   } catch (err) {
     console.error(`fetchWithProxy error (${table}):`, err);
-    throw err;
-  }
-}
-
-/**
- * WRITE PROXY (UNCHANGED SAFE VERSION)
- */
-export async function writeWithProxy(
-  table: string,
-  operation: 'insert' | 'update' | 'delete' | 'upsert',
-  payload?: unknown,
-  filters?: Record<string, unknown>,
-  onConflict?: string
-) {
-  try {
-    const db = await getAuthenticatedClient();
-    let result;
-
-    if (operation === 'insert') {
-      const { data, error } = await db.from(table).insert(payload as any).select();
-      if (error) throw error;
-      result = data;
-    }
-
-    else if (operation === 'update') {
-      let q = db.from(table).update(payload as any);
-
-      if (filters) {
-        for (const [key, value] of Object.entries(filters)) {
-          q = q.eq(key, value as any);
-        }
-      }
-
-      const { data, error } = await q.select();
-      if (error) throw error;
-      result = data;
-    }
-
-    else if (operation === 'delete') {
-      let q = db.from(table).delete();
-
-      if (filters) {
-        for (const [key, value] of Object.entries(filters)) {
-          q = q.eq(key, value as any);
-        }
-      }
-
-      const { data, error } = await q.select();
-      if (error) throw error;
-      result = data;
-    }
-
-    else if (operation === 'upsert') {
-      const { data, error } = await db
-        .from(table)
-        .upsert(payload as any, { onConflict })
-        .select();
-
-      if (error) throw error;
-      result = data;
-    }
-
-    return { data: result };
-
-  } catch (err) {
-    console.error(`writeWithProxy error (${table}):`, err);
     throw err;
   }
 }

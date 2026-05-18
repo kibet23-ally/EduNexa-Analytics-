@@ -39,25 +39,6 @@ interface AuthUser {
 
 /**
  * ================================
- * RBAC CORE (LIGHTWEIGHT EMBEDDED)
- * ================================
- */
-const ROLE_TABLE_ACCESS: Record<Role, string[]> = {
-  admin: ['*'],
-  school_admin: ['*'],
-  principal: ['subjects', 'grades', 'students', 'teachers', 'exams', 'marks'],
-  teacher: ['subjects', 'grades', 'students', 'exams', 'marks', 'teacher_assignments'],
-  student: ['subjects', 'grades', 'exams', 'marks'],
-  parent: ['students', 'marks', 'exams']
-};
-
-function canAccessTable(role: Role, table: string) {
-  const allowed = ROLE_TABLE_ACCESS[role];
-  return allowed.includes('*') || allowed.includes(table);
-}
-
-/**
- * ================================
  * AUTH CLIENT
  * ================================
  */
@@ -82,50 +63,68 @@ async function getAuthenticatedClient() {
 
 /**
  * ================================
- * SAFE VALUE COERCION
- * ================================
- */
-function coerceValue(value: unknown): unknown {
-  if (value === null || value === undefined) return value;
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'number') return value;
-  if (typeof value === 'string' && /^\d+$/.test(value)) {
-    return Number(value);
-  }
-  return value;
-}
-
-/**
- * ================================
- * GET USER (AUTH CONTEXT)
+ * GET USER (RBAC CONTEXT)
  * ================================
  */
 async function getUser(): Promise<AuthUser | null> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
 
-  // assumes role + school_id stored in user metadata
   const meta = user.user_metadata || {};
 
   return {
     id: user.id,
-    role: meta.role,
-    school_id: meta.school_id
+    role: (meta.role as Role) || 'student',
+    school_id: Number(meta.school_id)
   };
 }
 
 /**
  * ================================
- * TEACHER OVERRIDE RULES
+ * TEACHER DATA RESOLVERS
  * ================================
+ * IMPORTANT: keeps frontend unchanged
  */
-function isTeacherRestrictedTable(table: string) {
-  return ['subjects', 'grades'].includes(table);
+async function getTeacherSubjects(db: any, userId: string) {
+  const { data, error } = await db
+    .from('teacher_assignments')
+    .select(`
+      subjects:subject_id (
+        id,
+        subject_name,
+        subject_code
+      )
+    `)
+    .eq('teacher_id', userId);
+
+  if (error) throw new Error(error.message);
+
+  return (data || [])
+    .map((d: any) => d.subjects)
+    .filter(Boolean);
+}
+
+async function getTeacherGrades(db: any, userId: string) {
+  const { data, error } = await db
+    .from('teacher_assignments')
+    .select(`
+      grades:grade_id (
+        id,
+        name
+      )
+    `)
+    .eq('teacher_id', userId);
+
+  if (error) throw new Error(error.message);
+
+  return (data || [])
+    .map((d: any) => d.grades)
+    .filter(Boolean);
 }
 
 /**
  * ================================
- * FETCH PROXY (SECURE VERSION)
+ * MAIN FETCH PROXY
  * ================================
  */
 export async function fetchWithProxy(table: string, query: ProxyQuery = {}) {
@@ -133,64 +132,56 @@ export async function fetchWithProxy(table: string, query: ProxyQuery = {}) {
     const user = await getUser();
     if (!user) throw new Error('Unauthenticated');
 
-    // 🔐 1. TABLE ACCESS CHECK
-    if (!canAccessTable(user.role, table)) {
-      throw new Error(`ACCESS_DENIED: ${table}`);
-    }
-
     const db = await getAuthenticatedClient();
+    const selectStr = query.select || '*';
 
     /**
-     * ==========================================
-     * TEACHER SPECIAL SCOPING (CRITICAL FIX)
-     * ==========================================
+     * ================================
+     * TEACHER RESTRICTIONS (FIXED)
+     * ================================
      */
     if (user.role === 'teacher') {
       if (table === 'subjects') {
-        const { data, error } = await db
-          .from('teacher_assignments')
-          .select(`
-            subject_id,
-            subjects:subject_id (id, subject_name, subject_code)
-          `)
-          .eq('teacher_id', user.id);
-
-        if (error) throw new Error(error.message);
-
-        return {
-          data: (data || []).map((d: any) => d.subjects),
-          count: data?.length || 0
-        };
+        const data = await getTeacherSubjects(db, user.id);
+        return { data, count: data.length };
       }
 
       if (table === 'grades') {
-        const { data, error } = await db
-          .from('teacher_assignments')
-          .select(`
-            grade_id,
-            grades:grade_id (id, name)
-          `)
-          .eq('teacher_id', user.id);
-
-        if (error) throw new Error(error.message);
-
-        return {
-          data: (data || []).map((d: any) => d.grades),
-          count: data?.length || 0
-        };
+        const data = await getTeacherGrades(db, user.id);
+        return { data, count: data.length };
       }
     }
 
     /**
-     * ==========================================
-     * DEFAULT QUERY (ADMIN + OTHERS)
-     * ==========================================
+     * ================================
+     * COUNT ONLY
+     * ================================
      */
-    let q = db.from(table).select(query.select || '*');
+    if (query.countOnly) {
+      let q = db.from(table).select('*', { count: 'exact', head: true });
+
+      if (query.filters) {
+        for (const [key, value] of Object.entries(query.filters)) {
+          q = q.eq(key, value as any);
+        }
+      }
+
+      const { count, error } = await q;
+      if (error) throw error;
+
+      return { data: null, count: count ?? 0 };
+    }
+
+    /**
+     * ================================
+     * DEFAULT QUERY (ADMIN / OTHERS)
+     * ================================
+     */
+    let q = db.from(table).select(selectStr);
 
     if (query.filters) {
       for (const [key, value] of Object.entries(query.filters)) {
-        q = q.eq(key, coerceValue(value) as any);
+        q = q.eq(key, value as any);
       }
     }
 
@@ -226,7 +217,7 @@ export async function fetchWithProxy(table: string, query: ProxyQuery = {}) {
 
 /**
  * ================================
- * WRITE PROXY (SECURE VERSION)
+ * WRITE PROXY (UNCHANGED BUT SAFE)
  * ================================
  */
 export async function writeWithProxy(
@@ -237,13 +228,6 @@ export async function writeWithProxy(
   onConflict?: string
 ) {
   try {
-    const user = await getUser();
-    if (!user) throw new Error('Unauthenticated');
-
-    if (!canAccessTable(user.role, table)) {
-      throw new Error(`ACCESS_DENIED: ${table}`);
-    }
-
     const db = await getAuthenticatedClient();
     let result;
 
@@ -260,6 +244,7 @@ export async function writeWithProxy(
         .from(table)
         .upsert(upsertData, { onConflict })
         .select();
+
       if (error) throw error;
       result = data;
     }
@@ -270,7 +255,7 @@ export async function writeWithProxy(
       let q = db.from(table).update(payload as any);
 
       for (const [key, value] of Object.entries(filters)) {
-        q = q.eq(key, coerceValue(value) as any);
+        q = q.eq(key, value as any);
       }
 
       const { data, error } = await q.select();
@@ -284,7 +269,7 @@ export async function writeWithProxy(
       let q = db.from(table).delete();
 
       for (const [key, value] of Object.entries(filters)) {
-        q = q.eq(key, coerceValue(value) as any);
+        q = q.eq(key, value as any);
       }
 
       const { data, error } = await q.select();

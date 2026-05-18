@@ -2,25 +2,25 @@ import React from 'react'; import { Users, GraduationCap, BookOpen, ClipboardLis
 
 const SchoolDashboard = () => { const { user, sessionReady } = useAuth();
 
-const enabled = sessionReady;
+const enabled = sessionReady && !!user?.school_id;
 
 // ============================= // COUNTS // =============================
 
-const studentsQuery = useData<number>( 'dashboard-students', 'students', { countOnly: true }, enabled );
+const studentsQuery = useData<number>( 'dashboard-students', 'students', { countOnly: true, filters: { school_id: user?.school_id, }, }, enabled );
 
-const teachersQuery = useData<number>( 'dashboard-teachers', 'teachers', { countOnly: true }, enabled );
+const teachersQuery = useData<number>( 'dashboard-teachers', 'teachers', { countOnly: true, filters: { school_id: user?.school_id, }, }, enabled );
 
-const gradesQuery = useData<number>( 'dashboard-grades', 'grades', { countOnly: true }, enabled );
+const gradesQuery = useData<number>( 'dashboard-grades', 'grades', { countOnly: true, filters: { school_id: user?.school_id, }, }, enabled );
 
-const subjectsQuery = useData<number>( 'dashboard-subjects', 'subjects', { countOnly: true }, enabled );
+const subjectsQuery = useData<number>( 'dashboard-subjects', 'subjects', { countOnly: true, filters: { school_id: user?.school_id, }, }, enabled );
 
-const examsQuery = useData<number>( 'dashboard-exams', 'exams', { countOnly: true }, enabled );
+const examsQuery = useData<number>( 'dashboard-exams', 'exams', { countOnly: true, filters: { school_id: user?.school_id, }, }, enabled );
 
 // ============================= // ATTENDANCE // =============================
 
 const today = new Date().toISOString().slice(0, 10);
 
-const attendanceQuery = useData<any>( 'dashboard-attendance', 'attendance', { select: 'student_id, status, date', filters: { date: today, }, }, enabled );
+const attendanceQuery = useData<any>( 'dashboard-attendance', 'attendance', { select: 'student_id, status, date', filters: { school_id: user?.school_id, date: today, }, }, enabled );
 
 // ============================= // LOADING // =============================
 

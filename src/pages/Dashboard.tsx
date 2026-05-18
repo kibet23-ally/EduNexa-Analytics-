@@ -1,157 +1,216 @@
 'use client';
 
 import React from 'react';
-import { Users, UserCheck, DollarSign, Award, Plus, Bell, Clock } from 'lucide-react';
-import { motion } from 'framer-motion';
-import { useData } from '../hooks/useData';
 import { useAuth } from '../useAuth';
+import { useData } from '../hooks/useData';
+import {
+  Users,
+  GraduationCap,
+  BookOpen,
+  ClipboardList,
+  UserCheck,
+  TrendingUp,
+  Award,
+  Calendar,
+  Activity
+} from 'lucide-react';
+import { motion } from 'framer-motion';
 
-const Dashboard = () => {
+const DashboardOverview = () => {
   const { user, sessionReady } = useAuth();
 
   const canFetch = sessionReady && !!user?.school_id;
   const schoolId = user?.school_id;
 
-  // ✅ FIX: countOnly now returns NUMBER directly
-  const totalStudents = useData(
-    'total-students',
-    'students',
+  // =========================
+  // REAL DATA QUERIES
+  // =========================
+  const students = useData('students-count', 'students',
     { countOnly: true, filters: { school_id: schoolId } },
     canFetch
   );
 
-  const totalTeachers = useData(
-    'total-teachers',
-    'teachers',
+  const teachers = useData('teachers-count', 'teachers',
     { countOnly: true, filters: { school_id: schoolId } },
     canFetch
   );
 
-  const attendanceData = useData(
-    'today-attendance',
-    'attendance',
-    { filters: { school_id: schoolId } },
+  const subjects = useData('subjects-count', 'subjects',
+    { countOnly: true, filters: { school_id: schoolId } },
     canFetch
   );
 
-  const feesData = useData(
-    'fees-summary',
-    'fees',
-    { filters: { school_id: schoolId } },
+  const grades = useData('grades-count', 'grades',
+    { countOnly: true, filters: { school_id: schoolId } },
     canFetch
   );
 
-  const currentDate = new Date().toLocaleDateString('en-GB', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-  });
+  const attendance = useData('attendance-today', 'attendance',
+    {
+      filters: {
+        school_id: schoolId,
+        date: new Date().toISOString().slice(0, 10)
+      }
+    },
+    canFetch
+  );
 
   // =========================
-  // SAFE DATA (NO MOCK FALLBACKS)
+  // SAFE DATA HANDLING
   // =========================
-  const students = typeof totalStudents.data === 'number'
-    ? totalStudents.data
-    : 0;
+  const totalStudents = typeof students.data === 'number' ? students.data : 0;
+  const totalTeachers = typeof teachers.data === 'number' ? teachers.data : 0;
+  const totalSubjects = typeof subjects.data === 'number' ? subjects.data : 0;
+  const totalGrades = typeof grades.data === 'number' ? grades.data : 0;
 
-  const feesCollected =
-    feesData.data?.[0]?.total_amount ?? 0;
+  // =========================
+  // ATTENDANCE CALCULATION
+  // =========================
+  const attendanceSummary = React.useMemo(() => {
+    const data = attendance.data || [];
 
-  const stats = {
-    students,
-    attendance: 94,
-    feesCollected,
-    avgScore: 83,
-  };
+    const present = new Set(
+      data.filter((a: any) => a.status?.toLowerCase() === 'present')
+        .map((a: any) => a.student_id)
+    ).size;
 
-  const recentActivities = [
-    { time: 'Just now', action: 'Dashboard loaded successfully', user: 'System' },
-  ];
+    const late = new Set(
+      data.filter((a: any) => a.status?.toLowerCase() === 'late')
+        .map((a: any) => a.student_id)
+    ).size;
+
+    const excused = new Set(
+      data.filter((a: any) => a.status?.toLowerCase() === 'excused')
+        .map((a: any) => a.student_id)
+    ).size;
+
+    const absent = Math.max(0, totalStudents - present - late - excused);
+
+    return { present, late, excused, absent };
+  }, [attendance.data, totalStudents]);
 
   if (!sessionReady) {
     return (
-      <div className="p-8 text-gray-600">
+      <div className="p-6 text-gray-500">
         Loading dashboard...
       </div>
     );
   }
 
+  // =========================
+  // KPI CARDS DATA
+  // =========================
+  const kpis = [
+    { label: 'Students', value: totalStudents, icon: Users, color: 'blue' },
+    { label: 'Teachers', value: totalTeachers, icon: GraduationCap, color: 'emerald' },
+    { label: 'Subjects', value: totalSubjects, icon: BookOpen, color: 'violet' },
+    { label: 'Grades', value: totalGrades, icon: ClipboardList, color: 'amber' },
+  ];
+
+  const colorMap: any = {
+    blue: 'bg-blue-50 text-blue-600',
+    emerald: 'bg-emerald-50 text-emerald-600',
+    violet: 'bg-violet-50 text-violet-600',
+    amber: 'bg-amber-50 text-amber-600',
+  };
+
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="space-y-8">
 
       {/* HEADER */}
-      <header className="border-b bg-white sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 py-5 flex justify-between">
-          <div>
-            <h1 className="text-3xl font-bold">Dashboard</h1>
-            <p className="text-gray-600 text-sm">School Analytics Overview</p>
-          </div>
+      <div>
+        <h1 className="text-3xl font-bold text-gray-900">
+          Welcome, {user?.name}
+        </h1>
+        <p className="text-gray-500">
+          School analytics overview for {user?.school_name || 'your institution'}
+        </p>
+      </div>
 
-          <div className="flex items-center gap-4">
-            <Bell className="w-5 h-5 text-gray-600" />
-            <button className="bg-blue-600 text-white px-5 py-2 rounded-xl">
-              Quick Action
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <div className="max-w-7xl mx-auto px-6 py-8">
-
-        {/* KPI CARDS */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
-
-          <Card icon={Users} label="Total Students" value={stats.students} />
-          <Card icon={UserCheck} label="Attendance" value={`${stats.attendance}%`} />
-          <Card icon={DollarSign} label="Fees" value={`KES ${stats.feesCollected}`} />
-          <Card icon={Award} label="Avg Score" value={stats.avgScore} />
-
-        </div>
-
-        {/* CONTENT */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-
-          <div className="lg:col-span-7 bg-white p-6 rounded-2xl border">
-            <h2 className="font-semibold mb-4">Attendance Analytics</h2>
-            <div className="h-60 flex items-center justify-center text-gray-400">
-              <Clock className="w-10 h-10 mr-2" />
-              Charts coming soon
+      {/* KPI CARDS */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        {kpis.map((kpi, i) => (
+          <motion.div
+            key={i}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-white border rounded-2xl p-6 shadow-sm hover:shadow-md transition"
+          >
+            <div className={`p-3 w-fit rounded-xl ${colorMap[kpi.color]}`}>
+              <kpi.icon className="w-6 h-6" />
             </div>
+
+            <p className="text-sm text-gray-500 mt-4">{kpi.label}</p>
+            <p className="text-3xl font-bold">{kpi.value}</p>
+          </motion.div>
+        ))}
+      </div>
+
+      {/* ATTENDANCE SECTION */}
+      <div className="bg-white border rounded-2xl p-6">
+        <div className="flex items-center gap-2 mb-6">
+          <UserCheck className="text-emerald-500" />
+          <h2 className="text-lg font-semibold">Today's Attendance</h2>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Stat label="Present" value={attendanceSummary.present} color="emerald" />
+          <Stat label="Absent" value={attendanceSummary.absent} color="red" />
+          <Stat label="Late" value={attendanceSummary.late} color="amber" />
+          <Stat label="Excused" value={attendanceSummary.excused} color="blue" />
+        </div>
+      </div>
+
+      {/* ACTIVITY + INSIGHTS */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        <div className="bg-white border rounded-2xl p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Activity className="text-blue-500" />
+            <h2 className="font-semibold">System Overview</h2>
           </div>
 
-          <div className="lg:col-span-5 bg-white p-6 rounded-2xl border">
-            <h2 className="font-semibold mb-4">Recent Activity</h2>
+          <p className="text-gray-500 text-sm">
+            Real-time school analytics including students, teachers, subjects, and attendance tracking.
+            All data is filtered by school ID and secured using RBAC policies.
+          </p>
+        </div>
 
-            {recentActivities.map((a, i) => (
-              <div key={i} className="mb-4">
-                <p className="text-sm">{a.action}</p>
-                <p className="text-xs text-gray-500">{a.user}</p>
-              </div>
-            ))}
-
+        <div className="bg-white border rounded-2xl p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <TrendingUp className="text-violet-500" />
+            <h2 className="font-semibold">Performance Insight</h2>
           </div>
 
+          <p className="text-gray-500 text-sm">
+            Track academic performance trends, attendance consistency, and subject engagement
+            across all grades in your institution.
+          </p>
         </div>
 
       </div>
+
     </div>
   );
 };
 
-// ✅ FIXED CARD COMPONENT (NO DYNAMIC TAILWIND BUG)
-const Card = ({ icon: Icon, label, value }: any) => {
+// =========================
+// SMALL STAT COMPONENT
+// =========================
+const Stat = ({ label, value, color }: any) => {
+  const colors: any = {
+    emerald: 'text-emerald-600 bg-emerald-50',
+    red: 'text-red-600 bg-red-50',
+    amber: 'text-amber-600 bg-amber-50',
+    blue: 'text-blue-600 bg-blue-50',
+  };
+
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="bg-white p-6 rounded-2xl border shadow-sm"
-    >
-      <Icon className="w-6 h-6 text-blue-600 mb-3" />
-      <p className="text-gray-500 text-sm">{label}</p>
+    <div className={`p-4 rounded-xl ${colors[color]}`}>
+      <p className="text-xs font-medium">{label}</p>
       <p className="text-2xl font-bold">{value}</p>
-    </motion.div>
+    </div>
   );
 };
 
-export default Dashboard;
+export default DashboardOverview;

@@ -19,27 +19,23 @@ const examsQuery = useData<number>( 'dashboard-exams', 'exams', { countOnly: tru
 // ============================= // ATTENDANCE // =============================
 
 const attendanceSummary = React.useMemo(() => {
-  if (!attendance.data) {
-    return { present: 0, absent: 0, late: 0, excused: 0, total: 0 };
-  }
-
-  const attData = attendance.data;
+  const attData = attendanceQuery.data || [];
 
   const present = new Set(
     attData
-      .filter((a: any) => a.status.toLowerCase() === 'present')
+      .filter((a: any) => (a.status || '').toLowerCase() === 'present')
       .map((a: any) => a.student_id)
   ).size;
 
   const late = new Set(
     attData
-      .filter((a: any) => a.status.toLowerCase() === 'late')
+      .filter((a: any) => (a.status || '').toLowerCase() === 'late')
       .map((a: any) => a.student_id)
   ).size;
 
   const excused = new Set(
     attData
-      .filter((a: any) => a.status.toLowerCase() === 'excused')
+      .filter((a: any) => (a.status || '').toLowerCase() === 'excused')
       .map((a: any) => a.student_id)
   ).size;
 
@@ -49,12 +45,12 @@ const attendanceSummary = React.useMemo(() => {
 
   return {
     present,
-    absent: absent < 0 ? 0 : absent,
+    absent: Math.max(0, absent),
     late,
     excused,
     total: totalStudents,
   };
-}, [attendance.data, studentCount.data]);
+}, [attendanceQuery.data, studentCount.data]);
 
 // ============================= // LOADING // =============================
 

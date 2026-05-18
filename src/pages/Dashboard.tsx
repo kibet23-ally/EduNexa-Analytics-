@@ -1,71 +1,96 @@
 'use client';
 
 import React from 'react';
-import { 
-  Users, UserCheck, DollarSign, Award, 
-  Plus, Bell, Clock 
-} from 'lucide-react';
+import { Users, UserCheck, DollarSign, Award, Plus, Bell, Clock } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useData } from '../hooks/useData';
+import { useAuth } from '../useAuth';
 
 const Dashboard = () => {
-  // Fetch real data using your useData hook
-  const { data: totalStudents, loading: studentsLoading } = useData(
-    'total-students', 
-    'students', 
-    { countOnly: true }
+  const { user, sessionReady } = useAuth();
+
+  const canFetch = sessionReady && !!user?.school_id;
+  const schoolId = user?.school_id;
+
+  // ✅ FIX: countOnly now returns NUMBER directly
+  const totalStudents = useData(
+    'total-students',
+    'students',
+    { countOnly: true, filters: { school_id: schoolId } },
+    canFetch
   );
 
-  const { data: totalTeachers } = useData(
-    'total-teachers', 
-    'teachers', 
-    { countOnly: true }
+  const totalTeachers = useData(
+    'total-teachers',
+    'teachers',
+    { countOnly: true, filters: { school_id: schoolId } },
+    canFetch
   );
 
-  const { data: attendanceData } = useData('today-attendance', 'attendance');
-  const { data: feesData } = useData('fees-summary', 'fees');
+  const attendanceData = useData(
+    'today-attendance',
+    'attendance',
+    { filters: { school_id: schoolId } },
+    canFetch
+  );
 
-  const currentDate = new Date().toLocaleDateString('en-GB', { 
-    weekday: 'long', 
-    day: 'numeric', 
-    month: 'long', 
-    year: 'numeric' 
+  const feesData = useData(
+    'fees-summary',
+    'fees',
+    { filters: { school_id: schoolId } },
+    canFetch
+  );
+
+  const currentDate = new Date().toLocaleDateString('en-GB', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
   });
 
-  // Calculate stats with fallbacks
+  // =========================
+  // SAFE DATA (NO MOCK FALLBACKS)
+  // =========================
+  const students = typeof totalStudents.data === 'number'
+    ? totalStudents.data
+    : 0;
+
+  const feesCollected =
+    feesData.data?.[0]?.total_amount ?? 0;
+
   const stats = {
-    students: totalStudents || 1248,
-    attendance: 94, // You can compute this from attendanceData later
-    feesCollected: feesData?.[0]?.total_amount || 8740000,
+    students,
+    attendance: 94,
+    feesCollected,
     avgScore: 83,
   };
 
   const recentActivities = [
-    { time: "Just now", action: "Dashboard data refreshed", user: "System" },
+    { time: 'Just now', action: 'Dashboard loaded successfully', user: 'System' },
   ];
+
+  if (!sessionReady) {
+    return (
+      <div className="p-8 text-gray-600">
+        Loading dashboard...
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
-      {/* Header */}
-      <header className="border-b border-gray-200 bg-white sticky top-0 z-50 shadow-sm">
-        <div className="max-w-7xl mx-auto px-6 py-5 flex items-center justify-between">
+
+      {/* HEADER */}
+      <header className="border-b bg-white sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-6 py-5 flex justify-between">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight text-gray-900">Dashboard</h1>
-            <p className="text-gray-600 text-sm mt-1">Marumbasi Comprehensive School</p>
+            <h1 className="text-3xl font-bold">Dashboard</h1>
+            <p className="text-gray-600 text-sm">School Analytics Overview</p>
           </div>
 
           <div className="flex items-center gap-4">
-            <div className="hidden md:block text-right">
-              <p className="text-sm font-medium">Welcome back, Annette</p>
-              <p className="text-xs text-gray-500">{currentDate}</p>
-            </div>
-
-            <button className="p-3 hover:bg-gray-100 rounded-2xl transition-colors relative">
-              <Bell className="w-5 h-5 text-gray-600" />
-            </button>
-
-            <button className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-2xl font-medium transition-all active:scale-95">
-              <Plus className="w-4 h-4" />
+            <Bell className="w-5 h-5 text-gray-600" />
+            <button className="bg-blue-600 text-white px-5 py-2 rounded-xl">
               Quick Action
             </button>
           </div>
@@ -73,96 +98,59 @@ const Dashboard = () => {
       </header>
 
       <div className="max-w-7xl mx-auto px-6 py-8">
-        {/* KPI Cards */}
+
+        {/* KPI CARDS */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
-          {[
-            { 
-              icon: Users, 
-              label: "Total Students", 
-              value: stats.students.toLocaleString(), 
-              color: "blue" 
-            },
-            { 
-              icon: UserCheck, 
-              label: "Avg Attendance", 
-              value: `${stats.attendance}%`, 
-              color: "emerald" 
-            },
-            { 
-              icon: DollarSign, 
-              label: "Fees Collected", 
-              value: `₦${(stats.feesCollected / 1000000).toFixed(1)}M`, 
-              color: "amber" 
-            },
-            { 
-              icon: Award, 
-              label: "Avg Score", 
-              value: stats.avgScore, 
-              color: "violet" 
-            },
-          ].map((item, index) => (
-            <motion.div
-              key={index}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.1 }}
-              className="bg-white border border-gray-200 rounded-3xl p-6 hover:shadow-lg hover:border-gray-300 transition-all"
-            >
-              <div className="flex justify-between items-start">
-                <div className={`p-4 bg-${item.color}-100 rounded-2xl`}>
-                  <item.icon className={`w-8 h-8 text-${item.color}-600`} />
-                </div>
-                <span className="text-emerald-600 text-xs font-medium">Live</span>
-              </div>
-              <div className="mt-8">
-                <div className="text-4xl font-bold font-mono tracking-tighter text-gray-900">
-                  {item.value}
-                </div>
-                <div className="text-gray-600 mt-1">{item.label}</div>
-              </div>
-            </motion.div>
-          ))}
+
+          <Card icon={Users} label="Total Students" value={stats.students} />
+          <Card icon={UserCheck} label="Attendance" value={`${stats.attendance}%`} />
+          <Card icon={DollarSign} label="Fees" value={`KES ${stats.feesCollected}`} />
+          <Card icon={Award} label="Avg Score" value={stats.avgScore} />
+
         </div>
 
+        {/* CONTENT */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Attendance Analytics */}
-          <div className="lg:col-span-7 bg-white border border-gray-200 rounded-3xl p-8 shadow-sm">
-            <div className="flex justify-between mb-6">
-              <h2 className="text-xl font-semibold text-gray-900">Attendance Analytics</h2>
-              <span className="text-blue-600 text-sm">Today • {currentDate}</span>
-            </div>
-            <div className="h-80 flex items-center justify-center border border-dashed border-gray-300 rounded-2xl bg-gray-50">
-              <div className="text-center text-gray-500">
-                <Clock className="w-12 h-12 mx-auto mb-4 opacity-60" />
-                <p>Advanced analytics charts coming soon</p>
-              </div>
+
+          <div className="lg:col-span-7 bg-white p-6 rounded-2xl border">
+            <h2 className="font-semibold mb-4">Attendance Analytics</h2>
+            <div className="h-60 flex items-center justify-center text-gray-400">
+              <Clock className="w-10 h-10 mr-2" />
+              Charts coming soon
             </div>
           </div>
 
-          {/* Recent Activity */}
-          <div className="lg:col-span-5 bg-white border border-gray-200 rounded-3xl p-8 shadow-sm">
-            <h2 className="text-xl font-semibold mb-6 text-gray-900">Recent Activity</h2>
-            <div className="space-y-6">
-              {recentActivities.map((activity: any, i: number) => (
-                <motion.div 
-                  key={i}
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.1 }}
-                  className="flex gap-4"
-                >
-                  <div className="w-2 h-2 mt-2 bg-blue-600 rounded-full" />
-                  <div>
-                    <p className="text-sm text-gray-800">{activity.action}</p>
-                    <p className="text-xs text-gray-500">{activity.user} • {activity.time}</p>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
+          <div className="lg:col-span-5 bg-white p-6 rounded-2xl border">
+            <h2 className="font-semibold mb-4">Recent Activity</h2>
+
+            {recentActivities.map((a, i) => (
+              <div key={i} className="mb-4">
+                <p className="text-sm">{a.action}</p>
+                <p className="text-xs text-gray-500">{a.user}</p>
+              </div>
+            ))}
+
           </div>
+
         </div>
+
       </div>
     </div>
+  );
+};
+
+// ✅ FIXED CARD COMPONENT (NO DYNAMIC TAILWIND BUG)
+const Card = ({ icon: Icon, label, value }: any) => {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="bg-white p-6 rounded-2xl border shadow-sm"
+    >
+      <Icon className="w-6 h-6 text-blue-600 mb-3" />
+      <p className="text-gray-500 text-sm">{label}</p>
+      <p className="text-2xl font-bold">{value}</p>
+    </motion.div>
   );
 };
 

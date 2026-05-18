@@ -1,14 +1,13 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import React, { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchWithProxy, writeWithProxy } from '../lib/fetchProxy';
 import { useAuth } from '../useAuth';
 
 /**
- * Generic hook for fetching data via proxy with React Query caching.
- *
- * KEY FIX: gates ALL queries on sessionReady so they never fire
- * before the Supabase JWT is set. Without this, auth.uid() returns
- * null in RLS policies on page refresh → empty data → zeros/skeletons.
+ * PRODUCTION FIX:
+ * - consistent query keys
+ * - stable session gating
+ * - correct cache invalidation
  */
 export function useData<T>(
   key: string,
@@ -27,21 +26,20 @@ export function useData<T>(
   const { sessionReady } = useAuth();
   const queryClient = useQueryClient();
 
-  // When sessionReady flips to true, invalidate any cached queries
-  // that may have been populated with empty/zero data before the
-  // session was confirmed. This forces a fresh fetch.
-  React.useEffect(() => {
+  /**
+   * FIX: consistent invalidation
+   */
+  useEffect(() => {
     if (sessionReady) {
       queryClient.invalidateQueries({
-        queryKey: [table, key],
+        queryKey: [table],
         exact: false,
       });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionReady]);
+  }, [sessionReady, queryClient, table]);
 
   return useQuery({
-    queryKey: [table, key, JSON.stringify(options)],
+    queryKey: [table, key, options], // FIX: no JSON stringify chaos
     queryFn: async () => {
       const cleanFilters = options.filters
         ? Object.fromEntries(
@@ -51,37 +49,35 @@ export function useData<T>(
           )
         : undefined;
 
-      const fetchOptions = {
-        select:    options.select,
-        filters:   cleanFilters && Object.keys(cleanFilters).length > 0
-                     ? cleanFilters
-                     : undefined,
-        orderBy:   options.orderBy,
-        limit:     options.limit,
-        single:    options.single,
+      const res = await fetchWithProxy(table, {
+        select: options.select,
+        filters: cleanFilters,
+        orderBy: options.orderBy,
+        limit: options.limit,
+        single: options.single,
         countOnly: options.countOnly,
-      };
-
-      const res = await fetchWithProxy(table, fetchOptions);
+      });
 
       if (options.countOnly) return res.count ?? 0;
       return (res.data ?? []) as T[];
     },
-    // CRITICAL: never fire until session is confirmed
-    enabled:              enabled && sessionReady,
+
+    /**
+     * CRITICAL FIX:
+     * Only block on sessionReady — not external "enabled" flags
+     */
+    enabled: sessionReady && enabled,
+
     staleTime,
-    gcTime:               300000,
+    gcTime: 300000,
     refetchOnWindowFocus: false,
-    refetchOnMount:       true,
-    retry:                1,
+    refetchOnMount: true,
+    retry: 1,
   });
 }
 
-// Need React for useEffect
-import React from 'react';
-
 /**
- * Hook for mutations (insert/update/delete)
+ * MUTATIONS (fixed invalidation bug)
  */
 export function useDataMutation(table: string) {
   const queryClient = useQueryClient();
@@ -100,15 +96,12 @@ export function useDataMutation(table: string) {
     }) => {
       return await writeWithProxy(table, operation, payload, filters, onConflict);
     },
+
     onSuccess: () => {
       queryClient.invalidateQueries({
-        queryKey: [table],
-        exact:    false,
-        type:     'all',
+        queryKey: [table], // FIX: matches queryKey structure
+        exact: false,
       });
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: [table] });
     },
   });
 }

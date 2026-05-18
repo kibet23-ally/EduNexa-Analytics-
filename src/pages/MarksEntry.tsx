@@ -24,9 +24,7 @@ interface Assignment {
   grade_id: number;
 }
 
-/** ================================
- * CBC RUBRIC FUNCTION (ADDED)
- * ================================ */
+/** ================= CBC RUBRIC ================= */
 const getRubric = (percent: number) => {
   if (percent >= 90) return 'EE1';
   if (percent >= 75) return 'EE2';
@@ -41,6 +39,7 @@ const getRubric = (percent: number) => {
 const MarksEntry = () => {
   const { user } = useAuth();
   const { isReadOnly } = useSubscription();
+
   const [selectedExam, setSelectedExam] = useState('');
   const [selectedGrade, setSelectedGrade] = useState('');
   const [selectedSubject, setSelectedSubject] = useState('');
@@ -51,43 +50,91 @@ const MarksEntry = () => {
 
   const marksMutation = useDataMutation('marks');
 
-  const examsQuery = useData<Exam>('exams-list', 'exams', { select: 'id, exam_name' }, !!user?.school_id);
-  const gradesQuery = useData<Grade>('grades-list', 'grades', {
-    select: 'id, grade_name',
-    orderBy: { column: 'grade_name', ascending: true }
-  }, !!user?.school_id);
-  const subjectsQuery = useData<Subject>('subjects-list', 'subjects', { select: 'id, subject_name' }, !!user?.school_id);
-  const assignmentsQuery = useData<Assignment>('teacher-assignments-all', 'teacher_assignments', { select: 'id, teacher_id, subject_id, grade_id' }, !!user?.school_id && user.role === 'Teacher');
+  /** ================= DATA ================= */
+  const examsQuery = useData<Exam>(
+    'exams-list',
+    'exams',
+    { select: 'id, exam_name' },
+    !!user?.school_id
+  );
 
+  const gradesQuery = useData<Grade>(
+    'grades-list',
+    'grades',
+    { select: 'id, grade_name', orderBy: { column: 'grade_name', ascending: true } },
+    !!user?.school_id
+  );
+
+  const subjectsQuery = useData<Subject>(
+    'subjects-list',
+    'subjects',
+    { select: 'id, subject_name' },
+    !!user?.school_id
+  );
+
+  const assignmentsQuery = useData<Assignment>(
+    'teacher-assignments-all',
+    'teacher_assignments',
+    { select: 'id, teacher_id, subject_id, grade_id' },
+    !!user?.school_id && user.role === 'Teacher'
+  );
+
+  /** ================= FILTERS ================= */
   const filteredGrades = useMemo(() => {
     const data = gradesQuery.data || [];
     if (user?.role !== 'Teacher' || !assignmentsQuery.data) return data;
+
     const teacherId = user.id.toString().replace('teacher-', '');
-    const assignedGradeIds = new Set(assignmentsQuery.data.filter(as => as.teacher_id.toString() === teacherId).map(as => as.grade_id.toString()));
-    return data.filter(g => assignedGradeIds.has(g.id.toString()));
+
+    const allowed = new Set(
+      assignmentsQuery.data
+        .filter(a => a.teacher_id.toString() === teacherId)
+        .map(a => a.grade_id.toString())
+    );
+
+    return data.filter(g => allowed.has(g.id.toString()));
   }, [gradesQuery.data, assignmentsQuery.data, user]);
 
   const filteredSubjects = useMemo(() => {
     const data = subjectsQuery.data || [];
     if (user?.role !== 'Teacher' || !assignmentsQuery.data) return data;
+
     const teacherId = user.id.toString().replace('teacher-', '');
-    const assignedSubjectIds = new Set(assignmentsQuery.data.filter(as => as.teacher_id.toString() === teacherId).map(as => as.subject_id.toString()));
-    return data.filter(s => assignedSubjectIds.has(s.id.toString()));
+
+    const allowed = new Set(
+      assignmentsQuery.data
+        .filter(a => a.teacher_id.toString() === teacherId)
+        .map(a => a.subject_id.toString())
+    );
+
+    return data.filter(s => allowed.has(s.id.toString()));
   }, [subjectsQuery.data, assignmentsQuery.data, user]);
 
-  const studentsQuery = useData<Student>('students-marks', 'students', {
-    select: 'id, name, admission_number, grade_id',
-    filters: selectedGrade ? { grade_id: parseInt(selectedGrade) } : undefined
-  }, !!selectedGrade);
+  /** ================= STUDENTS ================= */
+  const studentsQuery = useData<Student>(
+    'students-marks',
+    'students',
+    {
+      select: 'id, name, admission_number, grade_id',
+      filters: selectedGrade ? { grade_id: parseInt(selectedGrade) } : undefined
+    },
+    !!selectedGrade
+  );
 
   const students = useMemo(() => studentsQuery.data || [], [studentsQuery.data]);
 
-  const existingMarksQuery = useData<Mark>('marks-existing', 'marks', {
-    filters: selectedExam && selectedSubject ? {
-      exam_id: parseInt(selectedExam),
-      subject_id: parseInt(selectedSubject)
-    } : undefined
-  }, !!selectedExam && !!selectedSubject);
+  /** ================= EXISTING MARKS ================= */
+  const existingMarksQuery = useData<Mark>(
+    'marks-existing',
+    'marks',
+    {
+      filters: selectedExam && selectedSubject ? {
+        exam_id: parseInt(selectedExam),
+        subject_id: parseInt(selectedSubject)
+      } : undefined
+    },
+    !!selectedExam && !!selectedSubject
+  );
 
   const [marks, setMarks] = useState<Record<number, number>>({});
   const [rawMarks, setRawMarks] = useState<Record<number, string>>({});
@@ -96,119 +143,68 @@ const MarksEntry = () => {
 
   React.useEffect(() => {
     if (existingMarksQuery.data) {
-      const marksKey = JSON.stringify(existingMarksQuery.data);
-      if (marksKey !== lastMarksRef.current) {
-        const marksMap: Record<number, number> = {};
-        const rawMap: Record<number, string> = {};
+      const key = JSON.stringify(existingMarksQuery.data);
+      if (key !== lastMarksRef.current) {
+        const m: Record<number, number> = {};
+        const r: Record<number, string> = {};
 
-        existingMarksQuery.data.forEach((m) => {
-          marksMap[m.student_id] = m.score;
-
-          const raw = (m.score * Number(maxScore)) / 100;
-          rawMap[m.student_id] = raw % 1 === 0 ? raw.toString() : raw.toFixed(1);
+        existingMarksQuery.data.forEach((x) => {
+          m[x.student_id] = x.score;
+          const raw = (x.score * currentMax) / 100;
+          r[x.student_id] = raw.toString();
         });
 
-        setMarks(marksMap);
-        setRawMarks(rawMap);
-        lastMarksRef.current = marksKey;
+        setMarks(m);
+        setRawMarks(r);
+        lastMarksRef.current = key;
       }
     }
-  }, [existingMarksQuery.data, maxScore]);
+  }, [existingMarksQuery.data, currentMax]);
 
-  const handleScoreChange = (studentId: number, rawValue: string) => {
+  /** ================= HANDLERS ================= */
+  const handleScoreChange = (studentId: number, value: string) => {
     if (isReadOnly) return;
 
-    setRawMarks(p => ({ ...p, [studentId]: rawValue }));
+    setRawMarks(p => ({ ...p, [studentId]: value }));
 
-    const val = parseFloat(rawValue);
+    const val = parseFloat(value);
     if (!isNaN(val) && val >= 0 && val <= currentMax) {
-      const percentage = Math.round((val / currentMax) * 100);
-      setMarks(p => ({ ...p, [studentId]: percentage }));
+      setMarks(p => ({
+        ...p,
+        [studentId]: Math.round((val / currentMax) * 100)
+      }));
     }
   };
 
   const handleSave = async () => {
     if (isReadOnly) return;
-    if (!selectedExam || !selectedSubject) return;
-    setFeedback(null);
+
+    const payload = Object.entries(marks).map(([studentId, score]) => ({
+      student_id: parseInt(studentId),
+      score,
+      exam_id: parseInt(selectedExam),
+      subject_id: parseInt(selectedSubject),
+      school_id: user?.school_id
+    }));
 
     try {
-      const payloadMark = Object.entries(marks).map(([studentId, score]) => ({
-        student_id: parseInt(studentId),
-        score,
-        exam_id: parseInt(selectedExam),
-        subject_id: parseInt(selectedSubject),
-        school_id: user?.school_id
-      }));
-
       await marksMutation.mutateAsync({
         operation: 'upsert',
-        payload: payloadMark,
+        payload,
         onConflict: 'student_id,exam_id,subject_id'
       });
 
-      setFeedback({ type: 'success', msg: 'Marks saved!' });
-    } catch (err: unknown) {
-      const error = err as Error;
-      setFeedback({ type: 'error', msg: error.message });
+      setFeedback({ type: 'success', msg: 'Saved successfully!' });
+    } catch (err: any) {
+      setFeedback({ type: 'error', msg: err.message });
     }
   };
 
-  const downloadTemplate = () => {
-    const data = students.map(s => ({
-      AdmissionNo: s.admission_number,
-      Name: s.name,
-      Score: ''
-    }));
-
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Template");
-
-    XLSX.writeFile(wb, "Marks_Template.xlsx");
-  };
-
-  const handleBulkImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (isReadOnly) return;
-
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const bstr = evt.target?.result;
-      const wb = XLSX.read(bstr, { type: 'binary' });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const data = XLSX.utils.sheet_to_json(ws) as ExcelRow[];
-
-      const newMarks = { ...marks };
-      const newRaw = { ...rawMarks };
-
-      data.forEach(row => {
-        const adm = (row.AdmissionNo || row.admission_number || row['Adm No'])?.toString();
-        const scoreStr = (row.Score || row.score || row.Mark || row.mark)?.toString();
-        const score = parseFloat(scoreStr || '');
-
-        const student = students.find(s => s.admission_number === adm);
-
-        if (student && !isNaN(score)) {
-          newMarks[student.id] = Math.round((score / currentMax) * 100);
-          newRaw[student.id] = score.toString();
-        }
-      });
-
-      setMarks(newMarks);
-      setRawMarks(newRaw);
-
-      setFeedback({ type: 'success', msg: 'Imported! Click Save.' });
-    };
-
-    reader.readAsBinaryString(file);
-  };
-
+  /** ================= UI ================= */
   return (
     <div className="space-y-6">
 
+      {/* HEADER */}
       <header className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Marks Entry</h1>
@@ -216,22 +212,50 @@ const MarksEntry = () => {
         </div>
       </header>
 
-      {/* SAME UI KEPT */}
+      {/* DROPDOWNS */}
       <div className="bg-white p-6 rounded-xl shadow-sm border grid grid-cols-1 md:grid-cols-4 gap-6">
-        ...
+
+        <select value={selectedExam} onChange={e => setSelectedExam(e.target.value)} className="p-2 border rounded">
+          <option value="">Select Exam</option>
+          {examsQuery.data?.map(e => (
+            <option key={e.id} value={e.id}>{e.exam_name}</option>
+          ))}
+        </select>
+
+        <select value={selectedGrade} onChange={e => setSelectedGrade(e.target.value)} className="p-2 border rounded">
+          <option value="">Select Grade</option>
+          {filteredGrades.map(g => (
+            <option key={g.id} value={g.id}>{g.grade_name}</option>
+          ))}
+        </select>
+
+        <select value={selectedSubject} onChange={e => setSelectedSubject(e.target.value)} className="p-2 border rounded">
+          <option value="">Select Subject</option>
+          {filteredSubjects.map(s => (
+            <option key={s.id} value={s.id}>{s.subject_name}</option>
+          ))}
+        </select>
+
+        <input
+          type="number"
+          value={maxScore}
+          onChange={e => setMaxScore(e.target.value)}
+          className="p-2 border rounded"
+        />
       </div>
 
+      {/* TABLE */}
       {selectedExam && selectedGrade && selectedSubject && (
         <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
 
           <table className="w-full text-left">
             <thead>
-              <tr className="bg-slate-50 text-[10px] uppercase font-black text-slate-400">
-                <th className="px-6 py-3">Adm No</th>
-                <th className="px-6 py-3">Name</th>
-                <th className="px-6 py-3">Score / {currentMax}</th>
-                <th className="px-6 py-3">Percentage</th>
-                <th className="px-6 py-3">Rubric</th> {/* ADDED */}
+              <tr className="bg-slate-50 text-xs font-bold text-slate-500">
+                <th className="p-3">Adm No</th>
+                <th className="p-3">Name</th>
+                <th className="p-3">Score</th>
+                <th className="p-3">%</th>
+                <th className="p-3">Rubric</th>
               </tr>
             </thead>
 
@@ -240,25 +264,24 @@ const MarksEntry = () => {
                 const percent = marks[s.id] || 0;
 
                 return (
-                  <tr key={s.id}>
-                    <td className="px-6 py-4 font-mono text-xs">{s.admission_number}</td>
-                    <td className="px-6 py-4 font-bold">{s.name}</td>
+                  <tr key={s.id} className="border-t">
+                    <td className="p-3">{s.admission_number}</td>
+                    <td className="p-3 font-semibold">{s.name}</td>
 
-                    <td className="px-6 py-4">
+                    <td className="p-3">
                       <input
-                        type="number"
                         value={rawMarks[s.id] || ''}
                         onChange={e => handleScoreChange(s.id, e.target.value)}
-                        className="w-24 px-3 py-1 border rounded"
+                        className="border p-1 w-20"
                       />
                     </td>
 
-                    <td className="px-6 py-4 font-bold text-blue-600">
+                    <td className="p-3 font-bold text-blue-600">
                       {percent}%
                     </td>
 
-                    {/* ADDED RUBRIC DISPLAY */}
-                    <td className="px-6 py-4 font-black text-slate-700">
+                    {/* RUBRIC ADDED */}
+                    <td className="p-3 font-bold">
                       {getRubric(percent)}
                     </td>
 
@@ -266,10 +289,12 @@ const MarksEntry = () => {
                 );
               })}
             </tbody>
+
           </table>
 
         </div>
       )}
+
     </div>
   );
 };

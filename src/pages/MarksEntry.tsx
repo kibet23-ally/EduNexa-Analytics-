@@ -24,9 +24,9 @@ interface Assignment {
   grade_id: number;
 }
 
-/** =======================
- * CBC RUBRIC FUNCTION
- * ======================= */
+/** =========================
+ * CBC RUBRICS
+ * ========================= */
 const getRubric = (percent: number) => {
   if (percent >= 90) return { label: 'EE1', desc: 'Exceeding Expectations', color: 'text-emerald-600' };
   if (percent >= 75) return { label: 'EE2', desc: 'Exceeding Expectations', color: 'text-emerald-500' };
@@ -47,54 +47,67 @@ const MarksEntry = () => {
   const [selectedSubject, setSelectedSubject] = useState('');
   const [maxScore, setMaxScore] = useState<number | string>(100);
 
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error', msg: string } | null>(null);
+  const [feedback, setFeedback] =
+    useState<{ type: 'success' | 'error'; msg: string } | null>(null);
 
   const currentMax = Number(maxScore) || 100;
 
   const marksMutation = useDataMutation('marks');
 
-  const examsQuery = useData<Exam>('exams-list', 'exams', { select: 'id, exam_name' }, !!user?.school_id);
+  const examsQuery = useData<Exam>('exams-list', 'exams', {
+    select: 'id, exam_name',
+  }, !!user?.school_id);
+
   const gradesQuery = useData<Grade>('grades-list', 'grades', {
     select: 'id, grade_name',
-    orderBy: { column: 'grade_name', ascending: true }
+    orderBy: { column: 'grade_name', ascending: true },
   }, !!user?.school_id);
 
   const subjectsQuery = useData<Subject>('subjects-list', 'subjects', {
-    select: 'id, subject_name'
+    select: 'id, subject_name',
   }, !!user?.school_id);
 
-  const assignmentsQuery = useData<Assignment>(
-    'teacher-assignments-all',
-    'teacher_assignments',
-    { select: 'id, teacher_id, subject_id, grade_id' },
-    !!user?.school_id && user.role === 'Teacher'
-  );
-
-  const studentsQuery = useData<Student>(
-    'students-marks',
-    'students',
-    {
-      select: 'id, name, admission_number, grade_id',
-      filters: selectedGrade ? { grade_id: parseInt(selectedGrade) } : undefined
-    },
-    !!selectedGrade
-  );
+  const studentsQuery = useData<Student>('students-marks', 'students', {
+    select: 'id, name, admission_number, grade_id',
+    filters: selectedGrade ? { grade_id: parseInt(selectedGrade) } : undefined,
+  }, !!selectedGrade);
 
   const students = useMemo(() => studentsQuery.data || [], [studentsQuery.data]);
 
   const [marks, setMarks] = useState<Record<number, number>>({});
   const [rawMarks, setRawMarks] = useState<Record<number, string>>({});
 
+  /** =========================
+   * FIXED SCORE HANDLER
+   * ========================= */
   const handleScoreChange = (studentId: number, rawValue: string) => {
     if (isReadOnly) return;
 
-    setRawMarks(p => ({ ...p, [studentId]: rawValue }));
+    setRawMarks(prev => ({ ...prev, [studentId]: rawValue }));
 
-    const val = parseFloat(rawValue);
-    if (!isNaN(val) && val >= 0 && val <= currentMax) {
-      const percentage = Math.round((val / currentMax) * 100);
-      setMarks(p => ({ ...p, [studentId]: percentage }));
+    // ✅ EMPTY INPUT → FORCE ZERO
+    if (rawValue.trim() === '') {
+      setMarks(prev => ({ ...prev, [studentId]: 0 }));
+      return;
     }
+
+    const val = Number(rawValue);
+
+    // ✅ INVALID NUMBER → RESET
+    if (isNaN(val)) {
+      setMarks(prev => ({ ...prev, [studentId]: 0 }));
+      return;
+    }
+
+    // Clamp safely
+    const safeVal = Math.max(0, Math.min(val, currentMax));
+
+    const percentage = Math.round((safeVal / currentMax) * 100);
+
+    setMarks(prev => ({
+      ...prev,
+      [studentId]: percentage,
+    }));
   };
 
   const handleSave = async () => {
@@ -107,13 +120,13 @@ const MarksEntry = () => {
         score,
         exam_id: parseInt(selectedExam),
         subject_id: parseInt(selectedSubject),
-        school_id: user?.school_id
+        school_id: user?.school_id,
       }));
 
       await marksMutation.mutateAsync({
         operation: 'upsert',
         payload,
-        onConflict: 'student_id,exam_id,subject_id'
+        onConflict: 'student_id,exam_id,subject_id',
       });
 
       setFeedback({ type: 'success', msg: 'Marks saved successfully!' });
@@ -125,12 +138,11 @@ const MarksEntry = () => {
   return (
     <div className="space-y-6">
 
-      {/* HEADER */}
       <header className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold">Marks Entry</h1>
           <p className="text-slate-500 text-sm">
-            Enter marks and instantly view CBC rubric performance
+            CBC grading system enabled (EE1 → BE2)
           </p>
         </div>
 
@@ -146,22 +158,22 @@ const MarksEntry = () => {
       </header>
 
       {/* CONTROLS */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border grid grid-cols-4 gap-4">
-        <select value={selectedExam} onChange={e => setSelectedExam(e.target.value)} className="p-2 border rounded">
+      <div className="bg-white p-6 rounded-xl border grid grid-cols-4 gap-4">
+        <select onChange={e => setSelectedExam(e.target.value)} className="p-2 border rounded">
           <option>Select Exam</option>
           {examsQuery.data?.map(e => (
             <option key={e.id} value={e.id}>{e.exam_name}</option>
           ))}
         </select>
 
-        <select value={selectedGrade} onChange={e => setSelectedGrade(e.target.value)} className="p-2 border rounded">
+        <select onChange={e => setSelectedGrade(e.target.value)} className="p-2 border rounded">
           <option>Select Grade</option>
           {gradesQuery.data?.map(g => (
             <option key={g.id} value={g.id}>{g.grade_name}</option>
           ))}
         </select>
 
-        <select value={selectedSubject} onChange={e => setSelectedSubject(e.target.value)} className="p-2 border rounded">
+        <select onChange={e => setSelectedSubject(e.target.value)} className="p-2 border rounded">
           <option>Select Subject</option>
           {subjectsQuery.data?.map(s => (
             <option key={s.id} value={s.id}>{s.subject_name}</option>
@@ -174,18 +186,6 @@ const MarksEntry = () => {
           onChange={e => setMaxScore(e.target.value)}
           className="p-2 border rounded font-bold text-blue-600"
         />
-      </div>
-
-      {/* RUBRIC LEGEND */}
-      <div className="bg-slate-50 p-4 rounded-xl text-xs grid grid-cols-4 gap-2">
-        <span>EE1 (90-100)</span>
-        <span>EE2 (75-89)</span>
-        <span>ME1 (58-74)</span>
-        <span>ME2 (41-57)</span>
-        <span>AE1 (31-40)</span>
-        <span>AE2 (21-30)</span>
-        <span>BE1 (11-20)</span>
-        <span>BE2 (0-10)</span>
       </div>
 
       {/* TABLE */}
@@ -203,17 +203,19 @@ const MarksEntry = () => {
         </div>
 
         {students.map(s => {
-          const percent = marks[s.id] || 0;
+          const percent = marks[s.id] ?? 0;
           const rubric = getRubric(percent);
 
           return (
-            <div key={s.id} className="grid grid-cols-4 p-3 border-b items-center hover:bg-slate-50">
-
-              <div className="font-bold text-sm">{s.name}</div>
+            <div
+              key={s.id}
+              className="grid grid-cols-4 p-3 border-b items-center hover:bg-slate-50"
+            >
+              <div className="font-bold">{s.name}</div>
 
               <input
                 type="number"
-                value={rawMarks[s.id] || ''}
+                value={rawMarks[s.id] ?? ''}
                 onChange={e => handleScoreChange(s.id, e.target.value)}
                 className="border p-2 rounded w-24"
               />
@@ -221,13 +223,12 @@ const MarksEntry = () => {
               <div className="text-blue-600 font-bold">{percent}%</div>
 
               <div className={`font-bold ${rubric.color}`}>
-                {rubric.label} <span className="text-xs text-slate-400">{rubric.desc}</span>
+                {rubric.label}
               </div>
             </div>
           );
         })}
       </div>
-
     </div>
   );
 };

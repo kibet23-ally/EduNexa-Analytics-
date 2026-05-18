@@ -58,7 +58,9 @@ export function useData<T>(
         countOnly: options.countOnly,
       });
 
-      if (options.countOnly) return res.count ?? 0;
+      if (options.countOnly) {
+  return { count: res.count ?? 0, data: [] };
+}
       return (res.data ?? []) as T[];
     },
 

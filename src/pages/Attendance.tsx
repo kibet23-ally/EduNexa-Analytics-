@@ -1,197 +1,131 @@
-import React, { useState, useMemo } from 'react';
-import {
-  CheckCircle2,
-  XCircle,
-  Clock,
-  ChevronLeft,
-  ChevronRight
-} from 'lucide-react';
-
-import { cn } from '../lib/utils';
-import { useSubscription } from '../useSubscription';
+import React, { useState, useEffect, useMemo } from 'react';
+import { CheckCircle2, XCircle, Clock } from 'lucide-react';
 import { useAuth } from '../useAuth';
 import { useData, useDataMutation } from '../hooks/useData';
 import { TableSkeleton } from '../components/ui/Skeleton';
 
-type AttendanceStatus = 'present' | 'absent' | 'late' | 'excused';
-
-const PAGE_SIZE = 50;
+type Status = 'present' | 'absent' | 'late' | 'excused';
 
 const Attendance = () => {
   const { user } = useAuth();
-  const { isReadOnly } = useSubscription();
 
-  const [page, setPage] = useState(0);
-  const [selectedGrade, setSelectedGrade] = useState('');
-  const [selectedSubject, setSelectedSubject] = useState('');
-  const [selectedDate, setSelectedDate] = useState(
-    new Date().toISOString().split('T')[0]
-  );
-  const [searchTerm, setSearchTerm] = useState('');
+  const [grade, setGrade] = useState('');
+  const [subject, setSubject] = useState('');
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [search, setSearch] = useState('');
 
-  const [attendanceData, setAttendanceData] = useState<
-    Record<number, { student_id: number; status: AttendanceStatus; remarks: string }>
-  >({});
+  const [attendanceMap, setAttendanceMap] = useState<Record<number, any>>({});
 
   const attendanceMutation = useDataMutation('attendance');
 
   // ===================== DATA =====================
 
-  const gradesQuery = useData('grades-all', 'grades', {
-    select: 'id, grade_name',
-    orderBy: { column: 'grade_name', ascending: true }
-  }, !!user?.school_id);
-
-  const subjectsQuery = useData('subjects-all', 'subjects', {
-    select: 'id, subject_name'
-  }, !!user?.school_id);
-
-  const assignmentsQuery = useData('teacher-assignments', 'teacher_assignments', {
-    select: '*, grades(grade_name), subjects(subject_name)',
-    filters: { is_active: true }
-  }, !!user?.school_id && user?.role === 'Teacher');
-
-  const studentsQuery = useData('students-attendance', 'students', {
+  const studentsQuery = useData('students', 'students', {
     select: 'id, name, admission_number, grade_id',
-    filters: selectedGrade ? { grade_id: Number(selectedGrade) } : undefined,
-    limit: PAGE_SIZE
-  }, !!user?.school_id && !!selectedGrade);
+    filters: grade ? { grade_id: Number(grade) } : undefined
+  }, !!user?.school_id && !!grade);
+
+  const existingAttendanceQuery = useData('existing-attendance', 'attendance', {
+    filters: {
+      grade_id: Number(grade || 0),
+      subject_id: Number(subject || 0),
+      date
+    }
+  }, !!user?.school_id && !!grade && !!subject);
 
   const students = studentsQuery.data || [];
+  const existing = existingAttendanceQuery.data || [];
 
-  const assignments = assignmentsQuery.data || [];
-  const isTeacher = user?.role === 'Teacher';
+  // ===================== LOAD EXISTING (EDIT MODE) =====================
 
-  // ===================== INIT ATTENDANCE STATE =====================
+  useEffect(() => {
+    if (!students.length) return;
 
-  const lastRef = React.useRef('');
+    const map: Record<number, any> = {};
 
-  React.useEffect(() => {
-    const ids = students.map(s => s.id).join(',');
+    students.forEach(s => {
+      const found = existing.find((a: any) => a.student_id === s.id);
 
-    if (students.length > 0 && ids !== lastRef.current) {
-      const initial: Record<number, any> = {};
+      map[s.id] = {
+        student_id: s.id,
+        status: found?.status || 'present',
+        remarks: found?.remarks || ''
+      };
+    });
 
-      students.forEach(s => {
-        initial[s.id] = {
-          student_id: s.id,
-          status: 'present',
-          remarks: ''
-        };
-      });
-
-      setAttendanceData(initial);
-      lastRef.current = ids;
-    }
-  }, [students]);
+    setAttendanceMap(map);
+  }, [students, existing]);
 
   // ===================== FILTER =====================
 
-  const filteredStudents = useMemo(() => {
+  const filtered = useMemo(() => {
     return students.filter(s =>
-      s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      s.admission_number.toLowerCase().includes(searchTerm.toLowerCase())
+      s.name.toLowerCase().includes(search.toLowerCase()) ||
+      s.admission_number.toLowerCase().includes(search.toLowerCase())
     );
-  }, [students, searchTerm]);
+  }, [students, search]);
 
-  // ===================== SUBJECTS / GRADES =====================
+  // ===================== SAVE (UPSERT ONLY) =====================
 
-  const teacherSubjects = useMemo(() => {
-    if (!isTeacher) return subjectsQuery.data || [];
-    const ids = new Set(assignments.map(a => a.subject_id));
-    return (subjectsQuery.data || []).filter(s => ids.has(s.id));
-  }, [subjectsQuery.data, assignments]);
+  const handleSave = async () => {
+    if (!grade || !subject) return alert('Select grade & subject');
 
-  const teacherGrades = useMemo(() => {
-    if (!isTeacher) return gradesQuery.data || [];
-    const ids = new Set(assignments.map(a => a.grade_id));
-    return (gradesQuery.data || []).filter(g => ids.has(g.id));
-  }, [gradesQuery.data, assignments]);
+    const payload = Object.values(attendanceMap).map(r => ({
+      student_id: r.student_id,
+      status: r.status,
+      remarks: r.remarks,
+      grade_id: Number(grade),
+      subject_id: Number(subject),
+      date,
+      school_id: user?.school_id
+    }));
 
-  // ===================== SUBMIT (FIXED) =====================
+    await attendanceMutation.mutateAsync({
+      operation: 'upsert',
+      payload,
+      onConflict: 'student_id,subject_id,date'
+    });
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (isReadOnly) return;
-    if (!selectedGrade || !selectedSubject) {
-      alert('Select Grade and Subject');
-      return;
-    }
-
-    try {
-      const payload = Object.values(attendanceData).map(record => ({
-        student_id: record.student_id,
-        status: record.status,
-        remarks: record.remarks,
-        grade_id: Number(selectedGrade),
-        subject_id: Number(selectedSubject),
-        date: selectedDate,
-        school_id: user?.school_id
-      }));
-
-      await attendanceMutation.mutateAsync({
-        operation: 'upsert',
-        payload,
-        onConflict: 'student_id,subject_id,date'
-      });
-
-      alert('Attendance saved successfully!');
-    } catch (err: any) {
-      alert('Failed: ' + err.message);
-    }
+    alert('Attendance saved');
   };
 
   // ===================== UI =====================
 
   return (
-    <div className="p-8 space-y-8 max-w-7xl mx-auto">
+    <div className="p-8 max-w-7xl mx-auto space-y-6">
 
       {/* HEADER */}
-      <header className="flex justify-between items-center">
+      <div className="flex justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Attendance</h1>
-          <p className="text-slate-500">
-            Mark attendance for {selectedDate}
-          </p>
+          <h1 className="text-3xl font-bold">Class Attendance</h1>
+          <p className="text-gray-500">Google Classroom Style Marking</p>
         </div>
 
         <button
-          onClick={handleSubmit}
-          disabled={attendanceMutation.isPending}
-          className="px-6 py-3 bg-blue-600 text-white rounded-xl font-bold"
+          onClick={handleSave}
+          className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold"
         >
-          {attendanceMutation.isPending ? 'Saving...' : 'Submit'}
+          Save Attendance
         </button>
-      </header>
+      </div>
 
-      {/* FILTERS */}
+      {/* CONTROLS */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-white p-6 rounded-2xl border">
 
-        <select value={selectedSubject} onChange={e => setSelectedSubject(e.target.value)}>
+        <select value={subject} onChange={e => setSubject(e.target.value)}>
           <option value="">Select Subject</option>
-          {teacherSubjects.map(s => (
-            <option key={s.id} value={s.id}>{s.subject_name}</option>
-          ))}
         </select>
 
-        <select value={selectedGrade} onChange={e => setSelectedGrade(e.target.value)}>
+        <select value={grade} onChange={e => setGrade(e.target.value)}>
           <option value="">Select Grade</option>
-          {teacherGrades.map(g => (
-            <option key={g.id} value={g.id}>{g.grade_name}</option>
-          ))}
         </select>
 
-        <input
-          type="date"
-          value={selectedDate}
-          onChange={e => setSelectedDate(e.target.value)}
-        />
+        <input type="date" value={date} onChange={e => setDate(e.target.value)} />
 
         <input
           placeholder="Search student"
-          value={searchTerm}
-          onChange={e => setSearchTerm(e.target.value)}
+          value={search}
+          onChange={e => setSearch(e.target.value)}
         />
       </div>
 
@@ -199,14 +133,12 @@ const Attendance = () => {
       <div className="bg-white rounded-2xl border overflow-hidden">
 
         {studentsQuery.isLoading ? (
-          <div className="p-10">
-            <TableSkeleton rows={6} cols={3} />
-          </div>
+          <TableSkeleton rows={6} cols={3} />
         ) : (
           <table className="w-full">
 
-            <thead>
-              <tr className="bg-slate-50 text-left text-xs uppercase">
+            <thead className="bg-gray-50 text-left text-xs uppercase">
+              <tr>
                 <th className="p-4">Student</th>
                 <th>Status</th>
                 <th>Remarks</th>
@@ -214,44 +146,64 @@ const Attendance = () => {
             </thead>
 
             <tbody>
-              {filteredStudents.map(student => (
+              {filtered.map(student => (
                 <tr key={student.id} className="border-t">
 
+                  {/* STUDENT */}
                   <td className="p-4">
                     <p className="font-bold">{student.name}</p>
-                    <p className="text-xs text-slate-400">
+                    <p className="text-xs text-gray-400">
                       {student.admission_number}
                     </p>
                   </td>
 
+                  {/* STATUS */}
                   <td className="p-4 flex gap-2">
-                    <button onClick={() =>
-                      setAttendanceData(p => ({
-                        ...p,
-                        [student.id]: { ...p[student.id], status: 'present' }
-                      }))
-                    }>✔</button>
 
-                    <button onClick={() =>
-                      setAttendanceData(p => ({
-                        ...p,
-                        [student.id]: { ...p[student.id], status: 'absent' }
-                      }))
-                    }>✖</button>
+                    <button
+                      onClick={() =>
+                        setAttendanceMap(p => ({
+                          ...p,
+                          [student.id]: { ...p[student.id], status: 'present' }
+                        }))
+                      }
+                      className={attendanceMap[student.id]?.status === 'present' ? 'text-green-600' : ''}
+                    >
+                      <CheckCircle2 />
+                    </button>
 
-                    <button onClick={() =>
-                      setAttendanceData(p => ({
-                        ...p,
-                        [student.id]: { ...p[student.id], status: 'late' }
-                      }))
-                    }>⏰</button>
+                    <button
+                      onClick={() =>
+                        setAttendanceMap(p => ({
+                          ...p,
+                          [student.id]: { ...p[student.id], status: 'absent' }
+                        }))
+                      }
+                      className={attendanceMap[student.id]?.status === 'absent' ? 'text-red-600' : ''}
+                    >
+                      <XCircle />
+                    </button>
+
+                    <button
+                      onClick={() =>
+                        setAttendanceMap(p => ({
+                          ...p,
+                          [student.id]: { ...p[student.id], status: 'late' }
+                        }))
+                      }
+                      className={attendanceMap[student.id]?.status === 'late' ? 'text-amber-600' : ''}
+                    >
+                      <Clock />
+                    </button>
+
                   </td>
 
+                  {/* REMARKS */}
                   <td className="p-4">
                     <input
-                      value={attendanceData[student.id]?.remarks || ''}
+                      value={attendanceMap[student.id]?.remarks || ''}
                       onChange={e =>
-                        setAttendanceData(p => ({
+                        setAttendanceMap(p => ({
                           ...p,
                           [student.id]: {
                             ...p[student.id],
@@ -259,7 +211,7 @@ const Attendance = () => {
                           }
                         }))
                       }
-                      className="border px-2 py-1 rounded"
+                      className="border rounded px-2 py-1 w-full"
                     />
                   </td>
 
@@ -269,6 +221,7 @@ const Attendance = () => {
 
           </table>
         )}
+
       </div>
     </div>
   );

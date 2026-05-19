@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { supabase } from './lib/supabase'; // ✅ FIXED PATH (IMPORTANT)
+import { supabase } from '../lib/supabase'; // ✅ FIXED PATH
 
 interface User {
   id: string;
@@ -28,118 +28,101 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [sessionReady, setSessionReady] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  /**
-   * Normalize user object (VERY IMPORTANT)
-   */
-  const normalizeUser = (profile: any): User => {
-    return {
-      id: profile?.id || '',
-      name: profile?.name || '',
-      email: profile?.email || '',
-      role: (profile?.role || '').toLowerCase(),
-      school_id: profile?.school_id ? Number(profile.school_id) : null,
-    };
-  };
+  const normalizeUser = (profile: any): User => ({
+    id: profile?.id || '',
+    name: profile?.name || '',
+    email: profile?.email || '',
+    role: (profile?.role || '').toLowerCase(),
+    school_id: profile?.school_id ? Number(profile.school_id) : null,
+  });
 
-  /**
-   * Fetch user profile from DB
-   */
-  const fetchProfile = async (authUser: any) => {
-    if (!authUser?.id) return null;
-
-    const { data, error } = await supabase
-      .from('users') // change to 'profiles' if that's your table
-      .select('*')
-      .eq('id', authUser.id)
-      .single();
-
-    if (error || !data) {
-      console.error('Profile fetch error:', error?.message);
-      return null;
-    }
-
-    return normalizeUser(data);
-  };
-
-  /**
-   * INIT AUTH
-   */
   useEffect(() => {
     let mounted = true;
 
     const init = async () => {
-      setLoading(true);
+      try {
+        setLoading(true);
 
-      const { data: { session } } = await supabase.auth.getSession();
+        const { data: { session } } = await supabase.auth.getSession();
 
-      if (!session?.user) {
+        if (!session?.user) {
+          if (mounted) {
+            setUser(null);
+            setSessionReady(true);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const { data } = await supabase
+          .from('users') // ⚠️ CHANGE THIS IF YOUR TABLE IS DIFFERENT
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+
+        if (mounted) {
+          setUser(data ? normalizeUser(data) : null);
+          setSessionReady(true);
+          setLoading(false);
+        }
+
+      } catch (err) {
+        console.error('Auth crash:', err);
+
         if (mounted) {
           setUser(null);
           setSessionReady(true);
           setLoading(false);
         }
-        return;
-      }
-
-      const profile = await fetchProfile(session.user);
-
-      if (mounted) {
-        setUser(profile);
-        setSessionReady(true);
-        setLoading(false);
       }
     };
 
     init();
 
-    /**
-     * LISTENER (IMPORTANT FOR LIVE SESSION UPDATES)
-     */
     const { data: listener } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
-        if (!session?.user) {
+        try {
+          if (!session?.user) {
+            setUser(null);
+            setSessionReady(true);
+            return;
+          }
+
+          const { data } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
+
+          setUser(data ? normalizeUser(data) : null);
+          setSessionReady(true);
+
+        } catch (err) {
+          console.error('Auth listener error:', err);
           setUser(null);
           setSessionReady(true);
-          return;
         }
-
-        const profile = await fetchProfile(session.user);
-        setUser(profile);
-        setSessionReady(true);
       }
     );
 
     return () => {
       mounted = false;
-      listener.subscription.unsubscribe();
+      listener?.subscription?.unsubscribe?.(); // ✅ SAFE
     };
   }, []);
 
-  /**
-   * LOGOUT (FULL RESET FIX)
-   */
   const logout = async () => {
-    setLoading(true);
-
-    await supabase.auth.signOut();
-
-    setUser(null);
-    setSessionReady(false);
-    setLoading(false);
-
-    // optional cleanup for cached data systems
-    // queryClient?.clear?.();
+    try {
+      await supabase.auth.signOut();
+      setUser(null);
+      setSessionReady(false);
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
   };
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        sessionReady,
-        loading,
-        logout,
-      }}
-    >
+    <AuthContext.Provider value={{ user, sessionReady, loading, logout }}>
       {children}
     </AuthContext.Provider>
   );

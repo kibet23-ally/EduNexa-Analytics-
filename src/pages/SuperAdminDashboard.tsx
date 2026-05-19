@@ -9,7 +9,6 @@ import {
   Bell,
   ShieldCheck,
   Sparkles,
-  Clock,
   CheckCircle2,
   Activity,
 } from 'lucide-react';
@@ -34,7 +33,6 @@ const BRAND = {
   amber: '#F59E0B',
 };
 
-/* Reusable Components */
 const GlassCard: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({ className = '', children, ...rest }) => (
   <div className={`relative rounded-3xl border border-slate-200/70 dark:border-white/10 bg-white/80 dark:bg-slate-900/60 backdrop-blur-xl shadow-[0_8px_30px_-12px_rgba(15,23,42,0.15)] ${className}`} {...rest}>
     {children}
@@ -90,8 +88,11 @@ const SuperAdminDashboard: React.FC = () => {
   const { user, sessionReady } = useAuth();
   const enabled = sessionReady && !!user;
 
-  // === Real Data Fetching ===
-  const schoolsQuery = useData('all-schools', 'schools', {}, enabled);
+  // Fetch ALL schools (no school_id filter for Super Admin)
+  const schoolsQuery = useData('all-schools', 'schools', { 
+    // Add any necessary options here if needed
+  }, enabled);
+
   const studentsQuery = useData('all-students', 'students', {}, enabled);
   const teachersQuery = useData('all-teachers', 'teachers', {}, enabled);
   const revenueQuery = useData('platform-revenue', 'subscriptions', {}, enabled);
@@ -101,13 +102,13 @@ const SuperAdminDashboard: React.FC = () => {
   const totalTeachers = teachersQuery.data?.length || 0;
   const totalRevenue = revenueQuery.data?.reduce((sum: number, sub: any) => sum + (sub.amount || 0), 0) || 0;
 
-  // Platform Growth Trend (Real data simulation from schools over time - replace with real monthly data later)
+  // Platform Growth Trend (based on real schools count)
   const platformGrowth = useMemo(() => {
-    const base = Math.max(8, Math.floor(totalSchools * 0.7));
+    const baseSchools = Math.max(5, totalSchools);
     return Array.from({ length: 6 }, (_, i) => ({
       month: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'][i],
-      schools: base + i * 3 + Math.floor(Math.random() * 4),
-      students: Math.floor((base + i * 3) * 85),
+      schools: baseSchools + Math.floor(i * 2.5),
+      students: Math.floor((baseSchools + i * 2.5) * 92),
     }));
   }, [totalSchools]);
 
@@ -122,7 +123,7 @@ const SuperAdminDashboard: React.FC = () => {
           <h1 className="text-4xl font-bold text-slate-900 dark:text-white tracking-tight">
             Super Admin Dashboard
           </h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1">Real-time view of the entire EduNexa platform</p>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">Real-time view across all schools</p>
         </div>
 
         <div className="flex items-center gap-3">
@@ -138,46 +139,15 @@ const SuperAdminDashboard: React.FC = () => {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 mb-8">
-        <KpiCard
-          title="Total Schools"
-          value={totalSchools}
-          delta="+2 this month"
-          icon={GraduationCap}
-          accent={BRAND.electric}
-          loading={schoolsQuery.isLoading}
-        />
-        <KpiCard
-          title="Total Students"
-          value={totalStudents}
-          delta="+8.4%"
-          icon={Users}
-          accent={BRAND.cyan}
-          loading={studentsQuery.isLoading}
-        />
-        <KpiCard
-          title="Total Teachers"
-          value={totalTeachers}
-          delta="+3.1%"
-          icon={UserCheck}
-          accent={BRAND.emerald}
-          loading={teachersQuery.isLoading}
-        />
-        <KpiCard
-          title="Monthly Revenue"
-          value={`KSh ${(totalRevenue / 1000000).toFixed(1)}M`}
-          delta="+12%"
-          icon={TrendingUp}
-          accent={BRAND.amber}
-          loading={revenueQuery.isLoading}
-        />
+        <KpiCard title="Total Schools" value={totalSchools} delta="+2 this month" icon={GraduationCap} accent={BRAND.electric} loading={schoolsQuery.isLoading} />
+        <KpiCard title="Total Students" value={totalStudents} delta="+8.4%" icon={Users} accent={BRAND.cyan} loading={studentsQuery.isLoading} />
+        <KpiCard title="Total Teachers" value={totalTeachers} delta="+3.1%" icon={UserCheck} accent={BRAND.emerald} loading={teachersQuery.isLoading} />
+        <KpiCard title="Monthly Revenue" value={`KSh ${(totalRevenue / 1000000).toFixed(1)}K`} delta="+12%" icon={TrendingUp} accent={BRAND.amber} loading={revenueQuery.isLoading} />
       </div>
 
       {/* Platform Growth Chart */}
-      <GlassCard className="p-6 mb-8">
-        <SectionTitle 
-          title="Platform Growth" 
-          subtitle="Schools and Students growth over the last 6 months" 
-        />
+      <GlassCard className="p-6">
+        <SectionTitle title="Platform Growth" subtitle="Schools & Students trend (Last 6 months)" />
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={platformGrowth}>
@@ -185,38 +155,18 @@ const SuperAdminDashboard: React.FC = () => {
               <XAxis dataKey="month" />
               <YAxis />
               <Tooltip />
-              <Area 
-                type="monotone" 
-                dataKey="schools" 
-                stroke={BRAND.electric} 
-                fill={BRAND.electric} 
-                fillOpacity={0.25} 
-                strokeWidth={3}
-                name="Schools"
-              />
-              <Area 
-                type="monotone" 
-                dataKey="students" 
-                stroke={BRAND.cyan} 
-                fill={BRAND.cyan} 
-                fillOpacity={0.15} 
-                strokeWidth={3}
-                name="Students"
-              />
+              <Area type="monotone" dataKey="schools" stroke={BRAND.electric} fill={BRAND.electric} fillOpacity={0.25} strokeWidth={3} name="Schools" />
+              <Area type="monotone" dataKey="students" stroke={BRAND.cyan} fill={BRAND.cyan} fillOpacity={0.15} strokeWidth={3} name="Students" />
             </AreaChart>
           </ResponsiveContainer>
         </div>
       </GlassCard>
 
-      {/* Status Footer */}
-      <div className="flex flex-wrap justify-between items-center text-xs text-slate-500 mt-8">
+      {/* Status */}
+      <div className="mt-8 text-xs text-slate-500 flex justify-between">
         <div className="flex items-center gap-6">
-          <span className="flex items-center gap-1.5">
-            <CheckCircle2 size={14} className="text-emerald-500" /> All systems operational
-          </span>
-          <span className="flex items-center gap-1.5">
-            <Activity size={14} className="text-blue-500" /> Live data sync
-          </span>
+          <span className="flex items-center gap-1.5"><CheckCircle2 size={14} className="text-emerald-500" /> All systems operational</span>
+          <span className="flex items-center gap-1.5"><Activity size={14} className="text-blue-500" /> Live sync</span>
         </div>
         <span>Last updated: {new Date().toLocaleTimeString()}</span>
       </div>

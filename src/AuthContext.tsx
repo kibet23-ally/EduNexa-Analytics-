@@ -44,9 +44,8 @@ export const AuthProvider: React.FC<{
       )
     );
 
-  // FIXED
   const [sessionReady, setSessionReady] =
-    useState(true);
+    useState(false);
 
   const [theme, setThemeState] =
     useState<'light' | 'dark'>(() => {
@@ -102,7 +101,10 @@ export const AuthProvider: React.FC<{
 
         if (!mounted) return;
 
+        // =============================
         // NO SESSION
+        // =============================
+
         if (!session?.user) {
           setUser(null);
           setToken(null);
@@ -115,10 +117,15 @@ export const AuthProvider: React.FC<{
             'edunexa_token'
           );
 
+          setSessionReady(true);
+
           return;
         }
 
-        // SESSION FOUND
+        // =============================
+        // SESSION EXISTS
+        // =============================
+
         setToken(session.access_token);
 
         localStorage.setItem(
@@ -127,18 +134,26 @@ export const AuthProvider: React.FC<{
         );
 
         // IMPORTANT FIX
-        // USE auth_id
-        const { data: profile } =
+        // USING id INSTEAD OF auth_id
+        const { data: profile, error } =
           await supabase
             .from('users')
             .select('*')
-            .eq(
-              'auth_id',
-              session.user.id
-            )
+            .eq('id', session.user.id)
             .maybeSingle();
 
         if (!mounted) return;
+
+        if (error) {
+          console.error(
+            'Profile fetch error:',
+            error
+          );
+
+          setSessionReady(true);
+
+          return;
+        }
 
         if (profile) {
           const normalized =
@@ -153,9 +168,11 @@ export const AuthProvider: React.FC<{
             JSON.stringify(normalized)
           );
         }
+
+        setSessionReady(true);
       } catch (err) {
         console.error(
-          'Restore session error:',
+          'Restore session failed:',
           err
         );
 
@@ -169,6 +186,8 @@ export const AuthProvider: React.FC<{
         localStorage.removeItem(
           'edunexa_token'
         );
+
+        setSessionReady(true);
       }
     };
 
@@ -189,7 +208,7 @@ export const AuthProvider: React.FC<{
           event
         );
 
-        // PASSWORD RECOVERY
+        // PASSWORD RESET
         if (
           event ===
           'PASSWORD_RECOVERY'
@@ -200,7 +219,10 @@ export const AuthProvider: React.FC<{
           return;
         }
 
-        // SIGNED IN / REFRESHED
+        // =============================
+        // SIGNED IN
+        // =============================
+
         if (
           (event === 'SIGNED_IN' ||
             event ===
@@ -221,7 +243,7 @@ export const AuthProvider: React.FC<{
               .from('users')
               .select('*')
               .eq(
-                'auth_id',
+                'id',
                 session.user.id
               )
               .maybeSingle();
@@ -244,9 +266,14 @@ export const AuthProvider: React.FC<{
               )
             );
           }
+
+          setSessionReady(true);
         }
 
-        // SIGN OUT
+        // =============================
+        // SIGNED OUT
+        // =============================
+
         if (
           event === 'SIGNED_OUT'
         ) {
@@ -260,6 +287,8 @@ export const AuthProvider: React.FC<{
           localStorage.removeItem(
             'edunexa_token'
           );
+
+          setSessionReady(true);
         }
       }
     );
@@ -312,7 +341,7 @@ export const AuthProvider: React.FC<{
   // LOGIN
   // =============================
 
-  const login = async (
+  const login = (
     newToken: string,
     newUser: User
   ) => {
@@ -320,7 +349,10 @@ export const AuthProvider: React.FC<{
       normalizeUser(newUser)!;
 
     setToken(newToken);
+
     setUser(normalized);
+
+    setSessionReady(true);
 
     localStorage.setItem(
       'edunexa_token',
@@ -331,9 +363,6 @@ export const AuthProvider: React.FC<{
       'edunexa_user',
       JSON.stringify(normalized)
     );
-
-    // IMPORTANT FIX
-    await supabase.auth.refreshSession();
   };
 
   // =============================
@@ -350,12 +379,16 @@ export const AuthProvider: React.FC<{
     setUser(null);
     setToken(null);
 
-    localStorage.clear();
-    sessionStorage.clear();
-
-    window.location.replace(
-      '/login'
+    localStorage.removeItem(
+      'edunexa_user'
     );
+
+    localStorage.removeItem(
+      'edunexa_token'
+    );
+
+    window.location.href =
+      '/login';
   };
 
   return (

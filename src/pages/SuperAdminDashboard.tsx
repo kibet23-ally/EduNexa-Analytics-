@@ -11,6 +11,8 @@ import {
   Sparkles,
   CheckCircle2,
   Activity,
+  BookOpen,
+  ClipboardList,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAuth } from '../useAuth';
@@ -25,16 +27,21 @@ import {
   Tooltip,
 } from 'recharts';
 
-/* Brand Colors */
+/* ================= BRAND ================= */
 const BRAND = {
   electric: '#2563EB',
   cyan: '#22D3EE',
   emerald: '#10B981',
   amber: '#F59E0B',
+  violet: '#8B5CF6',
 };
 
+/* ================= UI COMPONENTS (same as school dashboard) ================= */
 const GlassCard: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({ className = '', children, ...rest }) => (
-  <div className={`relative rounded-3xl border border-slate-200/70 dark:border-white/10 bg-white/80 dark:bg-slate-900/60 backdrop-blur-xl shadow-[0_8px_30px_-12px_rgba(15,23,42,0.15)] ${className}`} {...rest}>
+  <div
+    className={`relative rounded-3xl border border-slate-200/70 dark:border-white/10 bg-white/80 dark:bg-slate-900/60 backdrop-blur-xl shadow-[0_8px_30px_-12px_rgba(15,23,42,0.15)] ${className}`}
+    {...rest}
+  >
     {children}
   </div>
 );
@@ -46,129 +53,177 @@ const SectionTitle: React.FC<{ title: string; subtitle?: string }> = ({ title, s
   </div>
 );
 
-/* KPI Card */
+/* ================= KPI CARD ================= */
 interface KpiProps {
   title: string;
   value: number | string;
-  delta?: string;
   icon: React.ElementType;
   accent: string;
   loading?: boolean;
 }
 
-const KpiCard: React.FC<KpiProps> = ({ title, value, delta, icon: Icon, accent, loading }) => (
-  <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-    <GlassCard className="p-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{title}</p>
-          <div className="mt-3">
-            {loading ? (
-              <div className="h-10 w-28 bg-slate-200 dark:bg-slate-700 rounded animate-pulse" />
-            ) : (
-              <h2 className="text-4xl font-bold text-slate-900 dark:text-white tabular-nums">
-                {typeof value === 'number' ? value.toLocaleString() : value}
-              </h2>
-            )}
-          </div>
-        </div>
-        <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white" style={{ background: accent }}>
-          <Icon size={24} />
-        </div>
+const KpiCard: React.FC<KpiProps> = ({ title, value, icon: Icon, accent, loading }) => (
+  <GlassCard className="p-6">
+    <div className="flex items-start justify-between">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{title}</p>
+
+        {loading ? (
+          <div className="h-10 w-28 bg-slate-200 dark:bg-slate-700 rounded animate-pulse mt-3" />
+        ) : (
+          <h2 className="text-4xl font-bold text-slate-900 dark:text-white tabular-nums mt-3">
+            {typeof value === 'number' ? value.toLocaleString() : value}
+          </h2>
+        )}
       </div>
-      {delta && <p className="text-emerald-600 text-sm mt-2 font-medium">{delta}</p>}
-    </GlassCard>
-  </motion.div>
+
+      <div
+        className="w-12 h-12 rounded-2xl flex items-center justify-center text-white"
+        style={{ background: accent }}
+      >
+        <Icon size={22} />
+      </div>
+    </div>
+  </GlassCard>
 );
 
-/* ================================================
-   SUPER ADMIN DASHBOARD - REAL DATA
-   ================================================ */
+/* ================= DASHBOARD ================= */
 const SuperAdminDashboard: React.FC = () => {
   const { user, sessionReady } = useAuth();
   const enabled = sessionReady && !!user;
 
-  // Fetch ALL schools (no school_id filter for Super Admin)
-  const schoolsQuery = useData('all-schools', 'schools', { 
-    // Add any necessary options here if needed
-  }, enabled);
+  /* IMPORTANT FIX:
+     Keep same useData structure but REMOVE school filters completely */
+  const schoolsQuery = useData('super-schools', 'schools', {}, enabled);
+  const studentsQuery = useData('super-students', 'students', {}, enabled);
+  const teachersQuery = useData('super-teachers', 'teachers', {}, enabled);
+  const subjectsQuery = useData('super-subjects', 'subjects', {}, enabled);
+  const examsQuery = useData('super-exams', 'exams', {}, enabled);
+  const subscriptionsQuery = useData('super-subscriptions', 'subscriptions', {}, enabled);
 
-  const studentsQuery = useData('all-students', 'students', {}, enabled);
-  const teachersQuery = useData('all-teachers', 'teachers', {}, enabled);
-  const revenueQuery = useData('platform-revenue', 'subscriptions', {}, enabled);
+  /* ================= SAFE DATA ================= */
+  const schools = schoolsQuery.data || [];
+  const students = studentsQuery.data || [];
+  const teachers = teachersQuery.data || [];
+  const subjects = subjectsQuery.data || [];
+  const exams = examsQuery.data || [];
+  const subs = subscriptionsQuery.data || [];
 
-  const totalSchools = schoolsQuery.data?.length || 0;
-  const totalStudents = studentsQuery.data?.length || 0;
-  const totalTeachers = teachersQuery.data?.length || 0;
-  const totalRevenue = revenueQuery.data?.reduce((sum: number, sub: any) => sum + (sub.amount || 0), 0) || 0;
+  const totalRevenue = subs.reduce((sum: number, s: any) => sum + (Number(s.amount) || 0), 0);
 
-  // Platform Growth Trend (based on real schools count)
-  const platformGrowth = useMemo(() => {
-    const baseSchools = Math.max(5, totalSchools);
+  /* ================= PLATFORM TREND ================= */
+  const platformTrend = useMemo(() => {
+    const base = Math.max(5, schools.length);
+
     return Array.from({ length: 6 }, (_, i) => ({
       month: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'][i],
-      schools: baseSchools + Math.floor(i * 2.5),
-      students: Math.floor((baseSchools + i * 2.5) * 92),
+      schools: base + i * 2,
+      students: (base + i * 2) * 85,
+      teachers: (base + i * 2) * 6,
     }));
-  }, [totalSchools]);
+  }, [schools.length]);
+
+  if (!sessionReady) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        Loading...
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/40 to-cyan-50/30 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900 p-4 md:p-6 lg:p-8">
-      {/* Header */}
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-8">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/40 to-cyan-50/30 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900 p-6">
+
+      {/* HEADER */}
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="flex justify-between items-center mb-8"
+      >
         <div>
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-300 text-xs font-semibold mb-3">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-500/10 text-blue-600 text-xs font-semibold mb-2">
             <Sparkles size={12} /> Platform Overview
           </div>
-          <h1 className="text-4xl font-bold text-slate-900 dark:text-white tracking-tight">
+          <h1 className="text-3xl font-bold text-slate-900 dark:text-white">
             Super Admin Dashboard
           </h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1">Real-time view across all schools</p>
+          <p className="text-slate-500">All schools, all data in one place</p>
         </div>
 
         <div className="flex items-center gap-3">
-          <button className="relative w-12 h-12 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 flex items-center justify-center">
+          <button className="w-12 h-12 rounded-2xl bg-white dark:bg-slate-900 border flex items-center justify-center">
             <Bell size={18} />
           </button>
-          <div className="h-12 px-5 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white font-semibold flex items-center gap-2">
-            <ShieldCheck size={18} />
+
+          <div className="h-12 px-4 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white flex items-center gap-2">
+            <ShieldCheck size={16} />
             Super Admin
           </div>
         </div>
       </motion.div>
 
-      {/* KPI Cards */}
+      {/* KPI ROW */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 mb-8">
-        <KpiCard title="Total Schools" value={totalSchools} delta="+2 this month" icon={GraduationCap} accent={BRAND.electric} loading={schoolsQuery.isLoading} />
-        <KpiCard title="Total Students" value={totalStudents} delta="+8.4%" icon={Users} accent={BRAND.cyan} loading={studentsQuery.isLoading} />
-        <KpiCard title="Total Teachers" value={totalTeachers} delta="+3.1%" icon={UserCheck} accent={BRAND.emerald} loading={teachersQuery.isLoading} />
-        <KpiCard title="Monthly Revenue" value={`KSh ${(totalRevenue / 1000000).toFixed(1)}K`} delta="+12%" icon={TrendingUp} accent={BRAND.amber} loading={revenueQuery.isLoading} />
+        <KpiCard
+          title="Schools"
+          value={schools.length}
+          icon={GraduationCap}
+          accent={BRAND.electric}
+          loading={schoolsQuery.isLoading}
+        />
+        <KpiCard
+          title="Students"
+          value={students.length}
+          icon={Users}
+          accent={BRAND.cyan}
+          loading={studentsQuery.isLoading}
+        />
+        <KpiCard
+          title="Teachers"
+          value={teachers.length}
+          icon={UserCheck}
+          accent={BRAND.emerald}
+          loading={teachersQuery.isLoading}
+        />
+        <KpiCard
+          title="Revenue"
+          value={`KSh ${(totalRevenue / 1000).toFixed(1)}K`}
+          icon={TrendingUp}
+          accent={BRAND.amber}
+          loading={subscriptionsQuery.isLoading}
+        />
       </div>
 
-      {/* Platform Growth Chart */}
+      {/* CHART */}
       <GlassCard className="p-6">
-        <SectionTitle title="Platform Growth" subtitle="Schools & Students trend (Last 6 months)" />
+        <SectionTitle title="Platform Growth" subtitle="Schools, students & teachers trend" />
+
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={platformGrowth}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+            <AreaChart data={platformTrend}>
+              <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="month" />
               <YAxis />
               <Tooltip />
-              <Area type="monotone" dataKey="schools" stroke={BRAND.electric} fill={BRAND.electric} fillOpacity={0.25} strokeWidth={3} name="Schools" />
-              <Area type="monotone" dataKey="students" stroke={BRAND.cyan} fill={BRAND.cyan} fillOpacity={0.15} strokeWidth={3} name="Students" />
+
+              <Area type="monotone" dataKey="schools" stroke={BRAND.electric} fill={BRAND.electric} fillOpacity={0.2} />
+              <Area type="monotone" dataKey="students" stroke={BRAND.cyan} fill={BRAND.cyan} fillOpacity={0.2} />
+              <Area type="monotone" dataKey="teachers" stroke={BRAND.emerald} fill={BRAND.emerald} fillOpacity={0.2} />
             </AreaChart>
           </ResponsiveContainer>
         </div>
       </GlassCard>
 
-      {/* Status */}
-      <div className="mt-8 text-xs text-slate-500 flex justify-between">
-        <div className="flex items-center gap-6">
-          <span className="flex items-center gap-1.5"><CheckCircle2 size={14} className="text-emerald-500" /> All systems operational</span>
-          <span className="flex items-center gap-1.5"><Activity size={14} className="text-blue-500" /> Live sync</span>
-        </div>
-        <span>Last updated: {new Date().toLocaleTimeString()}</span>
+      {/* FOOTER */}
+      <div className="mt-8 flex justify-between text-xs text-slate-500">
+        <span className="flex items-center gap-2">
+          <CheckCircle2 size={14} className="text-emerald-500" />
+          System operational
+        </span>
+        <span className="flex items-center gap-2">
+          <Activity size={14} className="text-blue-500" />
+          Live sync
+        </span>
       </div>
     </div>
   );

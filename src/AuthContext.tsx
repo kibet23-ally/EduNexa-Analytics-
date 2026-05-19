@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase';
+import { supabase } from './lib/supabase'; // ✅ FIXED PATH (IMPORTANT)
 
 interface User {
   id: string;
@@ -29,27 +29,26 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [loading, setLoading] = useState(true);
 
   /**
-   * NORMALIZE USER (VERY IMPORTANT)
-   * fixes role + school_id inconsistencies
+   * Normalize user object (VERY IMPORTANT)
    */
   const normalizeUser = (profile: any): User => {
     return {
-      id: profile?.id,
+      id: profile?.id || '',
       name: profile?.name || '',
       email: profile?.email || '',
-      role: (profile?.role || '').toLowerCase(), // 🔥 normalize role
-      school_id: profile?.school_id ? Number(profile.school_id) : null, // 🔥 normalize school_id
+      role: (profile?.role || '').toLowerCase(),
+      school_id: profile?.school_id ? Number(profile.school_id) : null,
     };
   };
 
   /**
-   * FETCH PROFILE FROM DB
+   * Fetch user profile from DB
    */
   const fetchProfile = async (authUser: any) => {
     if (!authUser?.id) return null;
 
     const { data, error } = await supabase
-      .from('users') // or 'profiles' depending on your schema
+      .from('users') // change to 'profiles' if that's your table
       .select('*')
       .eq('id', authUser.id)
       .single();
@@ -63,12 +62,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   /**
-   * INIT SESSION
+   * INIT AUTH
    */
   useEffect(() => {
     let mounted = true;
 
-    const initAuth = async () => {
+    const init = async () => {
       setLoading(true);
 
       const { data: { session } } = await supabase.auth.getSession();
@@ -91,10 +90,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       }
     };
 
-    initAuth();
+    init();
 
     /**
-     * LISTEN TO AUTH CHANGES
+     * LISTENER (IMPORTANT FOR LIVE SESSION UPDATES)
      */
     const { data: listener } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
@@ -117,20 +116,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   /**
-   * LOGOUT (FIXED)
+   * LOGOUT (FULL RESET FIX)
    */
   const logout = async () => {
     setLoading(true);
 
     await supabase.auth.signOut();
 
-    // 🔥 HARD RESET EVERYTHING
     setUser(null);
     setSessionReady(false);
     setLoading(false);
 
-    // optional: clear cached queries if using react-query
-    // queryClient.clear?.();
+    // optional cleanup for cached data systems
+    // queryClient?.clear?.();
   };
 
   return (

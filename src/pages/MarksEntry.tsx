@@ -1,15 +1,29 @@
 import React, { useState, useMemo } from 'react';
 import { useAuth } from '../useAuth';
 import { useSubscription } from '../useSubscription';
-import { Exam, Grade, Subject, Student } from '../types';
+import { Exam, Grade, Subject, Student, Mark } from '../types';
 import { useData, useDataMutation } from '../hooks/useData';
-import { Save } from 'lucide-react';
+import { Save, Download, Upload } from 'lucide-react';
+import { TableSkeleton } from '../components/ui/Skeleton';
+import * as XLSX from 'xlsx';
+
+interface ExcelRow {
+  AdmissionNo?: string | number;
+  admission_number?: string | number;
+  'Adm No'?: string | number;
+  Score?: string | number;
+  score?: string | number;
+  Mark?: string | number;
+  mark?: string | number;
+}
 
 interface Assignment {
   id: number;
-  teacher_id: number;
+  teacher_id: string;
   subject_id: number;
   grade_id: number;
+  school_id: number;
+  is_active: boolean;
 }
 
 /** =========================
@@ -21,6 +35,7 @@ const getRubric = (percent: number) => {
       label: 'EE1',
       desc: 'Exceeding Expectations',
       color: 'text-emerald-600',
+      bg: 'bg-emerald-50',
     };
 
   if (percent >= 75)
@@ -28,6 +43,7 @@ const getRubric = (percent: number) => {
       label: 'EE2',
       desc: 'Exceeding Expectations',
       color: 'text-emerald-500',
+      bg: 'bg-emerald-50',
     };
 
   if (percent >= 58)
@@ -35,6 +51,7 @@ const getRubric = (percent: number) => {
       label: 'ME1',
       desc: 'Meeting Expectations',
       color: 'text-blue-600',
+      bg: 'bg-blue-50',
     };
 
   if (percent >= 41)
@@ -42,6 +59,7 @@ const getRubric = (percent: number) => {
       label: 'ME2',
       desc: 'Meeting Expectations',
       color: 'text-blue-500',
+      bg: 'bg-blue-50',
     };
 
   if (percent >= 31)
@@ -49,6 +67,7 @@ const getRubric = (percent: number) => {
       label: 'AE1',
       desc: 'Approaching Expectations',
       color: 'text-amber-600',
+      bg: 'bg-amber-50',
     };
 
   if (percent >= 21)
@@ -56,6 +75,7 @@ const getRubric = (percent: number) => {
       label: 'AE2',
       desc: 'Approaching Expectations',
       color: 'text-amber-500',
+      bg: 'bg-amber-50',
     };
 
   if (percent >= 11)
@@ -63,12 +83,14 @@ const getRubric = (percent: number) => {
       label: 'BE1',
       desc: 'Below Expectations',
       color: 'text-red-500',
+      bg: 'bg-red-50',
     };
 
   return {
     label: 'BE2',
     desc: 'Below Expectations',
     color: 'text-red-700',
+    bg: 'bg-red-50',
   };
 };
 
@@ -88,15 +110,36 @@ const MarksEntry = () => {
 
   const currentMax = Number(maxScore) || 100;
 
-  const [marks, setMarks] = useState<Record<number, number>>({});
-  const [rawMarks, setRawMarks] = useState<Record<number, string>>({});
-
+  /** =========================
+   * MUTATION
+   * ========================= */
   const marksMutation = useDataMutation('marks');
 
   /** =========================
-   * FETCH DATA
+   * TEACHER ASSIGNMENTS FIX
    * ========================= */
+  const assignmentsQuery = useData<Assignment>(
+    'teacher-assignments',
+    'teacher_assignments',
+    {
+      select: 'id, teacher_id, subject_id, grade_id, school_id, is_active',
+      filters: {
+        teacher_id: user?.id,
+        school_id: user?.school_id,
+        is_active: true,
+      },
+    },
+    !!user?.school_id && !!user?.id
+  );
 
+  const assignments = useMemo(
+    () => assignmentsQuery.data || [],
+    [assignmentsQuery.data]
+  );
+
+  /** =========================
+   * EXAMS
+   * ========================= */
   const examsQuery = useData<Exam>(
     'exams-list',
     'exams',
@@ -109,6 +152,9 @@ const MarksEntry = () => {
     !!user?.school_id
   );
 
+  /** =========================
+   * GRADES
+   * ========================= */
   const gradesQuery = useData<Grade>(
     'grades-list',
     'grades',
@@ -125,6 +171,9 @@ const MarksEntry = () => {
     !!user?.school_id
   );
 
+  /** =========================
+   * SUBJECTS
+   * ========================= */
   const subjectsQuery = useData<Subject>(
     'subjects-list',
     'subjects',
@@ -137,54 +186,43 @@ const MarksEntry = () => {
     !!user?.school_id
   );
 
-  const assignmentsQuery = useData<Assignment>(
-    'teacher-assignments',
-    'teacher_assignments',
-    {
-      select: 'id, teacher_id, subject_id, grade_id',
-      filters: {
-        teacher_id: Number(user?.id),
-      },
-    },
-    !!user?.school_id && user?.role === 'Teacher'
-  );
-
   /** =========================
-   * RBAC FILTERS
+   * FILTER TEACHER GRADES
    * ========================= */
-
   const filteredGrades = useMemo(() => {
-    const all = gradesQuery.data || [];
+    const allGrades = gradesQuery.data || [];
 
-    if (user?.role !== 'Teacher') return all;
-
-    const assignments = assignmentsQuery.data || [];
+    if (user?.role !== 'Teacher') return allGrades;
 
     const allowedGradeIds = new Set(
       assignments.map(a => a.grade_id)
     );
 
-    return all.filter(g => allowedGradeIds.has(g.id));
-  }, [gradesQuery.data, assignmentsQuery.data, user]);
+    return allGrades.filter(g =>
+      allowedGradeIds.has(g.id)
+    );
+  }, [gradesQuery.data, assignments, user]);
 
+  /** =========================
+   * FILTER TEACHER SUBJECTS
+   * ========================= */
   const filteredSubjects = useMemo(() => {
-    const all = subjectsQuery.data || [];
+    const allSubjects = subjectsQuery.data || [];
 
-    if (user?.role !== 'Teacher') return all;
-
-    const assignments = assignmentsQuery.data || [];
+    if (user?.role !== 'Teacher') return allSubjects;
 
     const allowedSubjectIds = new Set(
       assignments.map(a => a.subject_id)
     );
 
-    return all.filter(s => allowedSubjectIds.has(s.id));
-  }, [subjectsQuery.data, assignmentsQuery.data, user]);
+    return allSubjects.filter(s =>
+      allowedSubjectIds.has(s.id)
+    );
+  }, [subjectsQuery.data, assignments, user]);
 
   /** =========================
    * STUDENTS
    * ========================= */
-
   const studentsQuery = useData<Student>(
     'students-marks',
     'students',
@@ -195,11 +233,9 @@ const MarksEntry = () => {
             grade_id: parseInt(selectedGrade),
             school_id: user?.school_id,
           }
-        : {
-            school_id: user?.school_id,
-          },
+        : undefined,
     },
-    !!selectedGrade && !!user?.school_id
+    !!selectedGrade
   );
 
   const students = useMemo(
@@ -208,9 +244,56 @@ const MarksEntry = () => {
   );
 
   /** =========================
-   * SCORE HANDLER
+   * EXISTING MARKS
    * ========================= */
+  const existingMarksQuery = useData<Mark>(
+    'marks-existing',
+    'marks',
+    {
+      filters:
+        selectedExam && selectedSubject
+          ? {
+              exam_id: parseInt(selectedExam),
+              subject_id: parseInt(selectedSubject),
+            }
+          : undefined,
+    },
+    !!selectedExam && !!selectedSubject
+  );
 
+  /** =========================
+   * STATE
+   * ========================= */
+  const [marks, setMarks] = useState<Record<number, number>>({});
+  const [rawMarks, setRawMarks] = useState<Record<number, string>>({});
+
+  /** =========================
+   * LOAD EXISTING MARKS
+   * ========================= */
+  React.useEffect(() => {
+    if (!existingMarksQuery.data) return;
+
+    const marksMap: Record<number, number> = {};
+    const rawMap: Record<number, string> = {};
+
+    existingMarksQuery.data.forEach((m) => {
+      marksMap[m.student_id] = m.score;
+
+      const raw = (m.score * currentMax) / 100;
+
+      rawMap[m.student_id] =
+        raw % 1 === 0
+          ? raw.toString()
+          : raw.toFixed(1);
+    });
+
+    setMarks(marksMap);
+    setRawMarks(rawMap);
+  }, [existingMarksQuery.data, currentMax]);
+
+  /** =========================
+   * SCORE CHANGE
+   * ========================= */
   const handleScoreChange = (
     studentId: number,
     rawValue: string
@@ -256,23 +339,12 @@ const MarksEntry = () => {
   };
 
   /** =========================
-   * SAVE MARKS
+   * SAVE
    * ========================= */
-
   const handleSave = async () => {
     if (isReadOnly) return;
 
-    if (
-      !selectedExam ||
-      !selectedSubject ||
-      !selectedGrade
-    ) {
-      setFeedback({
-        type: 'error',
-        msg: 'Select exam, grade and subject',
-      });
-      return;
-    }
+    if (!selectedExam || !selectedSubject) return;
 
     try {
       const payload = Object.entries(marks).map(
@@ -288,8 +360,7 @@ const MarksEntry = () => {
       await marksMutation.mutateAsync({
         operation: 'upsert',
         payload,
-        onConflict:
-          'student_id,exam_id,subject_id',
+        onConflict: 'student_id,exam_id,subject_id',
       });
 
       setFeedback({
@@ -304,10 +375,32 @@ const MarksEntry = () => {
     }
   };
 
+  /** =========================
+   * TEMPLATE DOWNLOAD
+   * ========================= */
+  const downloadTemplate = () => {
+    const data = students.map(s => ({
+      AdmissionNo: s.admission_number,
+      Name: s.name,
+      Score: '',
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(data);
+
+    const wb = XLSX.utils.book_new();
+
+    XLSX.utils.book_append_sheet(
+      wb,
+      ws,
+      'Template'
+    );
+
+    XLSX.writeFile(wb, 'Marks_Template.xlsx');
+  };
+
   return (
     <div className="space-y-6">
 
-      {/* HEADER */}
       <header className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">
@@ -318,58 +411,39 @@ const MarksEntry = () => {
             CBC grading system enabled
           </p>
         </div>
-
-        {feedback && (
-          <span
-            className={`text-xs font-bold px-3 py-1 rounded-full ${
-              feedback.type === 'success'
-                ? 'bg-emerald-50 text-emerald-600'
-                : 'bg-red-50 text-red-600'
-            }`}
-          >
-            {feedback.msg}
-          </span>
-        )}
       </header>
 
-      {/* FILTERS */}
+      {/* CONTROLS */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 grid grid-cols-1 md:grid-cols-4 gap-6">
 
         <div className="space-y-1">
-          <label className="text-xs font-bold uppercase text-slate-400">
+          <label className="text-xs font-bold text-slate-400 uppercase">
             Exam
           </label>
 
           <select
             value={selectedExam}
-            onChange={e =>
-              setSelectedExam(e.target.value)
-            }
+            onChange={e => setSelectedExam(e.target.value)}
             className="w-full px-4 py-2 bg-slate-50 border rounded-lg text-sm"
           >
             <option value="">Select Exam</option>
 
-            {examsQuery.data?.map(exam => (
-              <option
-                key={exam.id}
-                value={exam.id}
-              >
-                {exam.exam_name}
+            {examsQuery.data?.map(e => (
+              <option key={e.id} value={e.id}>
+                {e.exam_name}
               </option>
             ))}
           </select>
         </div>
 
         <div className="space-y-1">
-          <label className="text-xs font-bold uppercase text-slate-400">
+          <label className="text-xs font-bold text-slate-400 uppercase">
             Grade
           </label>
 
           <select
             value={selectedGrade}
-            onChange={e =>
-              setSelectedGrade(e.target.value)
-            }
+            onChange={e => setSelectedGrade(e.target.value)}
             className="w-full px-4 py-2 bg-slate-50 border rounded-lg text-sm"
           >
             <option value="">Select Grade</option>
@@ -383,15 +457,13 @@ const MarksEntry = () => {
         </div>
 
         <div className="space-y-1">
-          <label className="text-xs font-bold uppercase text-slate-400">
+          <label className="text-xs font-bold text-slate-400 uppercase">
             Subject
           </label>
 
           <select
             value={selectedSubject}
-            onChange={e =>
-              setSelectedSubject(e.target.value)
-            }
+            onChange={e => setSelectedSubject(e.target.value)}
             className="w-full px-4 py-2 bg-slate-50 border rounded-lg text-sm"
           >
             <option value="">Select Subject</option>
@@ -405,16 +477,14 @@ const MarksEntry = () => {
         </div>
 
         <div className="space-y-1">
-          <label className="text-xs font-bold uppercase text-slate-400">
+          <label className="text-xs font-bold text-slate-400 uppercase">
             Max Score
           </label>
 
           <input
             type="number"
             value={maxScore}
-            onChange={e =>
-              setMaxScore(e.target.value)
-            }
+            onChange={e => setMaxScore(e.target.value)}
             className="w-full px-4 py-2 bg-slate-50 border rounded-lg text-sm font-bold text-blue-600"
           />
         </div>
@@ -428,87 +498,103 @@ const MarksEntry = () => {
             Student Marks
           </h3>
 
-          <button
-            onClick={handleSave}
-            disabled={
-              marksMutation.isPending || isReadOnly
-            }
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold disabled:opacity-50"
-          >
-            <Save size={14} />
-            Save Changes
-          </button>
+          <div className="flex gap-2 items-center">
+
+            {feedback && (
+              <span className={`text-xs font-bold ${
+                feedback.type === 'success'
+                  ? 'text-emerald-600'
+                  : 'text-red-600'
+              }`}>
+                {feedback.msg}
+              </span>
+            )}
+
+            <button
+              onClick={downloadTemplate}
+              className="p-2 hover:bg-white rounded border"
+            >
+              <Download size={16} />
+            </button>
+
+            <button
+              onClick={handleSave}
+              disabled={marksMutation.isPending}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold"
+            >
+              <Save size={14} />
+              Save Changes
+            </button>
+
+          </div>
         </div>
 
-        <table className="w-full text-left">
-          <thead>
-            <tr className="bg-slate-50/50 text-[10px] uppercase font-black text-slate-400">
-              <th className="px-6 py-3">Adm No</th>
-              <th className="px-6 py-3">Student</th>
-              <th className="px-6 py-3">
-                Score / {currentMax}
-              </th>
-              <th className="px-6 py-3">
-                Percentage
-              </th>
-              <th className="px-6 py-3">
-                CBC Rubric
-              </th>
-            </tr>
-          </thead>
+        {studentsQuery.isLoading ? (
+          <div className="p-8">
+            <TableSkeleton rows={10} cols={5} />
+          </div>
+        ) : (
+          <table className="w-full text-left">
+            <thead>
+              <tr className="bg-slate-50/50 text-[10px] uppercase font-black text-slate-400">
+                <th className="px-6 py-3">Adm No</th>
+                <th className="px-6 py-3">Name</th>
+                <th className="px-6 py-3">Score</th>
+                <th className="px-6 py-3">%</th>
+                <th className="px-6 py-3">Rubric</th>
+              </tr>
+            </thead>
 
-          <tbody className="divide-y text-sm">
-            {students.map(student => {
-              const percent =
-                marks[student.id] ?? 0;
+            <tbody className="divide-y text-sm">
 
-              const rubric = getRubric(percent);
+              {students.map(s => {
+                const percent = marks[s.id] ?? 0;
 
-              return (
-                <tr
-                  key={student.id}
-                  className="hover:bg-slate-50/30 transition-colors"
-                >
-                  <td className="px-6 py-4 font-mono text-xs">
-                    {student.admission_number}
-                  </td>
+                const rubric = getRubric(percent);
 
-                  <td className="px-6 py-4 font-bold text-slate-700">
-                    {student.name}
-                  </td>
-
-                  <td className="px-6 py-4">
-                    <input
-                      type="number"
-                      value={
-                        rawMarks[student.id] ?? ''
-                      }
-                      disabled={isReadOnly}
-                      onChange={e =>
-                        handleScoreChange(
-                          student.id,
-                          e.target.value
-                        )
-                      }
-                      className="w-24 px-3 py-1.5 bg-slate-50 border rounded-lg text-center font-bold text-slate-600 outline-none focus:ring-1 ring-blue-500"
-                    />
-                  </td>
-
-                  <td className="px-6 py-4 font-black text-blue-600">
-                    {percent}%
-                  </td>
-
-                  <td
-                    className={`px-6 py-4 font-black ${rubric.color}`}
+                return (
+                  <tr
+                    key={s.id}
+                    className="hover:bg-slate-50/30 transition-colors"
                   >
-                    {rubric.label}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                    <td className="px-6 py-4 font-mono text-xs">
+                      {s.admission_number}
+                    </td>
 
+                    <td className="px-6 py-4 font-bold text-slate-700">
+                      {s.name}
+                    </td>
+
+                    <td className="px-6 py-4">
+                      <input
+                        type="number"
+                        value={rawMarks[s.id] ?? ''}
+                        onChange={e =>
+                          handleScoreChange(
+                            s.id,
+                            e.target.value
+                          )
+                        }
+                        className="w-24 px-3 py-1.5 bg-slate-50 border rounded-lg text-center font-bold text-slate-600 outline-none focus:ring-1 ring-blue-500"
+                      />
+                    </td>
+
+                    <td className="px-6 py-4 font-black text-blue-600">
+                      {percent}%
+                    </td>
+
+                    <td className="px-6 py-4">
+                      <div className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold ${rubric.bg} ${rubric.color}`}>
+                        {rubric.label}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );

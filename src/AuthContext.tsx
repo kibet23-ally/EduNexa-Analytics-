@@ -5,174 +5,409 @@ import { supabase } from './lib/supabase';
 
 function normalizeUser(raw: User | null): User | null {
   if (!raw) return null;
+
   return {
     ...raw,
-    school_id: raw.school_id != null ? Number(raw.school_id) : raw.school_id,
+    school_id:
+      raw.school_id != null
+        ? Number(raw.school_id)
+        : raw.school_id,
   };
 }
 
 function loadUserFromStorage(): User | null {
   try {
     const saved = localStorage.getItem('edunexa_user');
-    return saved ? normalizeUser(JSON.parse(saved)) : null;
+
+    return saved
+      ? normalizeUser(JSON.parse(saved))
+      : null;
   } catch {
     localStorage.removeItem('edunexa_user');
     return null;
   }
 }
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user,         setUser]         = useState<User | null>(loadUserFromStorage);
-  const [token,        setToken]        = useState<string | null>(() => localStorage.getItem('edunexa_token'));
-  // sessionReady = true once Supabase has confirmed the session
-  // Queries must not fire until this is true
-  const [sessionReady, setSessionReady] = useState(false);
-  const [theme,        setThemeState]   = useState<'light' | 'dark'>(() => {
-    const saved = localStorage.getItem('edunexa_theme');
+export const AuthProvider: React.FC<{
+  children: React.ReactNode;
+}> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(
+    loadUserFromStorage
+  );
+
+  const [token, setToken] = useState<string | null>(
+    () => localStorage.getItem('edunexa_token')
+  );
+
+  // IMPORTANT:
+  // sessionReady should ONLY mean:
+  // "Supabase auth check finished"
+  const [sessionReady, setSessionReady] =
+    useState(false);
+
+  const [theme, setThemeState] = useState<
+    'light' | 'dark'
+  >(() => {
+    const saved =
+      localStorage.getItem('edunexa_theme');
+
     return saved === 'dark' ? 'dark' : 'light';
   });
 
+  // =========================================
+  // THEME
+  // =========================================
+
   const setTheme = (newTheme: 'light' | 'dark') => {
     setThemeState(newTheme);
-    localStorage.setItem('edunexa_theme', newTheme);
-    document.documentElement.classList.toggle('dark', newTheme === 'dark');
+
+    localStorage.setItem(
+      'edunexa_theme',
+      newTheme
+    );
+
+    document.documentElement.classList.toggle(
+      'dark',
+      newTheme === 'dark'
+    );
   };
 
   useEffect(() => {
-    document.documentElement.classList.toggle('dark', theme === 'dark');
+    document.documentElement.classList.toggle(
+      'dark',
+      theme === 'dark'
+    );
   }, [theme]);
+
+  // =========================================
+  // AUTH
+  // =========================================
 
   useEffect(() => {
     let cancelled = false;
 
+    const clearAuthStorage = () => {
+      localStorage.removeItem('edunexa_token');
+      localStorage.removeItem('edunexa_user');
+      localStorage.removeItem(
+        'sb-zclwokyzsqzitqwmugtt-auth-token'
+      );
+    };
+
     const restoreSession = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession();
+
         if (cancelled) return;
+
+        // =========================================
+        // INVALID SESSION
+        // =========================================
+
+        if (error) {
+          console.error(
+            'Supabase session error:',
+            error
+          );
+
+          await supabase.auth.signOut();
+
+          clearAuthStorage();
+
+          setUser(null);
+          setToken(null);
+
+          return;
+        }
+
+        // =========================================
+        // ACTIVE SESSION
+        // =========================================
 
         if (session?.user) {
           setToken(session.access_token);
-          localStorage.setItem('edunexa_token', session.access_token);
 
-          const { data: profile } = await supabase
-            .from('users')
-            .select('*')
-            .eq('auth_id', session.user.id)
-            .maybeSingle();
+          localStorage.setItem(
+            'edunexa_token',
+            session.access_token
+          );
+
+          const { data: profile, error: profileError } =
+            await supabase
+              .from('users')
+              .select('*')
+              .eq('auth_id', session.user.id)
+              .maybeSingle();
 
           if (cancelled) return;
 
-          if (profile) {
-            const normalized = normalizeUser(profile as User)!;
-            setUser(normalized);
-            localStorage.setItem('edunexa_user', JSON.stringify(normalized));
+          if (profileError) {
+            console.error(
+              'Profile fetch error:',
+              profileError
+            );
           }
-        } else {
-          // No session — clear storage
+
+          if (profile) {
+            const normalized = normalizeUser(
+              profile as User
+            )!;
+
+            setUser(normalized);
+
+            localStorage.setItem(
+              'edunexa_user',
+              JSON.stringify(normalized)
+            );
+          } else {
+            // No matching profile
+            setUser(null);
+          }
+        }
+
+        // =========================================
+        // NO SESSION
+        // =========================================
+
+        else {
           setToken(null);
           setUser(null);
-          localStorage.removeItem('edunexa_token');
-          localStorage.removeItem('edunexa_user');
+
+          clearAuthStorage();
         }
       } catch (err) {
-        console.error('AuthContext restore:', err);
+        console.error(
+          'Auth restore fatal error:',
+          err
+        );
+
+        await supabase.auth.signOut();
+
+        clearAuthStorage();
+
+        setToken(null);
+        setUser(null);
       } finally {
-        // Always mark session as ready so queries can fire
-        if (!cancelled) setSessionReady(true);
+        // =========================================
+        // CRITICAL FIX
+        // NEVER leave sessionReady false forever
+        // =========================================
+
+        if (!cancelled) {
+          setSessionReady(true);
+        }
       }
     };
 
     restoreSession();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+    // =========================================
+    // AUTH STATE LISTENER
+    // =========================================
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (cancelled) return;
 
+        console.log(
+          'Auth state changed:',
+          event
+        );
+
+        // =========================================
+        // PASSWORD RESET
+        // =========================================
+
         if (event === 'PASSWORD_RECOVERY') {
-          // This event fires when a user clicks a password reset link
-          // The session is already set, we just need to redirect to the reset page
-          window.location.href = '/reset-password';
+          window.location.href =
+            '/reset-password';
+
           return;
         }
 
-        if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session) {
-          setToken(session.access_token);
-          localStorage.setItem('edunexa_token', session.access_token);
+        // =========================================
+        // SIGNED IN / TOKEN REFRESH
+        // =========================================
 
-          // Only fetch profile if we don't have one or it's a new sign in
-          if (event === 'SIGNED_IN') {
-            const { data: profile } = await supabase
+        if (
+          (event === 'SIGNED_IN' ||
+            event === 'TOKEN_REFRESHED') &&
+          session
+        ) {
+          setToken(session.access_token);
+
+          localStorage.setItem(
+            'edunexa_token',
+            session.access_token
+          );
+
+          const { data: profile, error } =
+            await supabase
               .from('users')
               .select('*')
-              .eq('id', session.user.id) // Using id instead of auth_id as per Login.tsx
+              .eq('auth_id', session.user.id)
               .maybeSingle();
 
-            if (profile && !cancelled) {
-              const normalized = normalizeUser(profile as User)!;
-              setUser(normalized);
-              localStorage.setItem('edunexa_user', JSON.stringify(normalized));
-            }
+          if (error) {
+            console.error(
+              'Profile fetch error:',
+              error
+            );
           }
-          
-          if (!cancelled) setSessionReady(true);
+
+          if (profile && !cancelled) {
+            const normalized = normalizeUser(
+              profile as User
+            )!;
+
+            setUser(normalized);
+
+            localStorage.setItem(
+              'edunexa_user',
+              JSON.stringify(normalized)
+            );
+          }
+
+          // IMPORTANT
+          setSessionReady(true);
         }
 
+        // =========================================
+        // SIGNED OUT
+        // =========================================
+
         if (event === 'SIGNED_OUT') {
-  setToken(null);
-  setUser(null);
+          setToken(null);
+          setUser(null);
 
-  // IMPORTANT FIX
-  setSessionReady(true);
+          clearAuthStorage();
 
-  localStorage.removeItem('edunexa_token');
-  localStorage.removeItem('edunexa_user');
-  localStorage.removeItem('sb-zclwokyzsqzitqwmugtt-auth-token');
+          document.documentElement.classList.remove(
+            'dark'
+          );
 
-  document.documentElement.classList.remove('dark');
+          setThemeState('light');
 
-  setThemeState('light');
-  localStorage.setItem('edunexa_theme', 'light');
+          localStorage.setItem(
+            'edunexa_theme',
+            'light'
+          );
 
-  window.location.replace('/login');
-}
+          // =========================================
+          // CRITICAL FIX
+          // DO NOT SET FALSE
+          // =========================================
+
+          setSessionReady(true);
+
+          window.location.replace('/login');
+        }
       }
     );
 
+    // =========================================
+    // STORAGE SYNC
+    // =========================================
+
     const handleStorage = () => {
-      setToken(localStorage.getItem('edunexa_token'));
+      setToken(
+        localStorage.getItem('edunexa_token')
+      );
+
       setUser(loadUserFromStorage());
-      const t = localStorage.getItem('edunexa_theme') as 'light' | 'dark';
-      if (t) setThemeState(t);
+
+      const t = localStorage.getItem(
+        'edunexa_theme'
+      ) as 'light' | 'dark';
+
+      if (t) {
+        setThemeState(t);
+      }
     };
 
-    window.addEventListener('storage', handleStorage);
+    window.addEventListener(
+      'storage',
+      handleStorage
+    );
+
     return () => {
       cancelled = true;
+
       subscription.unsubscribe();
-      window.removeEventListener('storage', handleStorage);
+
+      window.removeEventListener(
+        'storage',
+        handleStorage
+      );
     };
   }, []);
 
-  const login = (newToken: string, newUser: User) => {
-    const normalized = normalizeUser(newUser)!;
+  // =========================================
+  // LOGIN
+  // =========================================
+
+  const login = (
+    newToken: string,
+    newUser: User
+  ) => {
+    const normalized =
+      normalizeUser(newUser)!;
+
     setToken(newToken);
     setUser(normalized);
+
+    localStorage.setItem(
+      'edunexa_token',
+      newToken
+    );
+
+    localStorage.setItem(
+      'edunexa_user',
+      JSON.stringify(normalized)
+    );
+
     setSessionReady(true);
-    localStorage.setItem('edunexa_token', newToken);
-    localStorage.setItem('edunexa_user', JSON.stringify(normalized));
   };
 
-  const logout = () => {
+  // =========================================
+  // LOGOUT
+  // =========================================
+
+  const logout = async () => {
     setToken(null);
     setUser(null);
-    setSessionReady(false);
+
     localStorage.removeItem('edunexa_token');
     localStorage.removeItem('edunexa_user');
-    localStorage.removeItem('sb-zclwokyzsqzitqwmugtt-auth-token');
-    document.documentElement.classList.remove('dark');
+    localStorage.removeItem(
+      'sb-zclwokyzsqzitqwmugtt-auth-token'
+    );
+
+    document.documentElement.classList.remove(
+      'dark'
+    );
+
     setThemeState('light');
-    localStorage.setItem('edunexa_theme', 'light');
-    supabase.auth.signOut().catch(() => {});
+
+    localStorage.setItem(
+      'edunexa_theme',
+      'light'
+    );
+
+    // IMPORTANT FIX
+    setSessionReady(true);
+
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.error(err);
+    }
+
     window.location.replace('/login');
   };
 

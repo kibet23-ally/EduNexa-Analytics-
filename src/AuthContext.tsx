@@ -118,15 +118,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         if (event === 'SIGNED_OUT') {
-          setToken(null);
-          setUser(null);
-          setSessionReady(false);
-          localStorage.removeItem('edunexa_token');
-          localStorage.removeItem('edunexa_user');
-          document.documentElement.classList.remove('dark');
-          setThemeState('light');
-          localStorage.setItem('edunexa_theme', 'light');
-        }
+  setToken(null);
+  setUser(null);
+
+  // IMPORTANT FIX
+  setSessionReady(true);
+
+  localStorage.removeItem('edunexa_token');
+  localStorage.removeItem('edunexa_user');
+  localStorage.removeItem('sb-zclwokyzsqzitqwmugtt-auth-token');
+
+  document.documentElement.classList.remove('dark');
+
+  setThemeState('light');
+  localStorage.setItem('edunexa_theme', 'light');
+
+  window.location.replace('/login');
+}
       }
     );
 

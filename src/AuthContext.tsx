@@ -24,7 +24,10 @@ function loadUserFromStorage(): User | null {
       ? normalizeUser(JSON.parse(saved))
       : null;
   } catch {
-    localStorage.removeItem('edunexa_user');
+    localStorage.removeItem(
+      'edunexa_user'
+    );
+
     return null;
   }
 }
@@ -44,8 +47,9 @@ export const AuthProvider: React.FC<{
       )
     );
 
+  // IMPORTANT FIX
   const [sessionReady, setSessionReady] =
-    useState(false);
+    useState(true);
 
   const [theme, setThemeState] =
     useState<'light' | 'dark'>(() => {
@@ -87,7 +91,7 @@ export const AuthProvider: React.FC<{
   }, [theme]);
 
   // =============================
-  // RESTORE SESSION
+  // SESSION RESTORE
   // =============================
 
   useEffect(() => {
@@ -102,20 +106,30 @@ export const AuthProvider: React.FC<{
         if (!mounted) return;
 
         // =============================
-        // NO SESSION
+        // NO ACTIVE SESSION
         // =============================
 
         if (!session?.user) {
-          setUser(null);
-          setToken(null);
+          // IMPORTANT FIX
+          // Restore cached user
+          const savedUser =
+            loadUserFromStorage();
 
-          localStorage.removeItem(
-            'edunexa_user'
-          );
+          const savedToken =
+            localStorage.getItem(
+              'edunexa_token'
+            );
 
-          localStorage.removeItem(
-            'edunexa_token'
-          );
+          if (
+            savedUser &&
+            savedToken
+          ) {
+            setUser(savedUser);
+            setToken(savedToken);
+          } else {
+            setUser(null);
+            setToken(null);
+          }
 
           setSessionReady(true);
 
@@ -133,14 +147,16 @@ export const AuthProvider: React.FC<{
           session.access_token
         );
 
-        // IMPORTANT FIX
-        // USING id INSTEAD OF auth_id
-        const { data: profile, error } =
-          await supabase
-            .from('users')
-            .select('*')
-            .eq('id', session.user.id)
-            .maybeSingle();
+        // IMPORTANT
+        // USING id
+        const {
+          data: profile,
+          error,
+        } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', session.user.id)
+          .maybeSingle();
 
         if (!mounted) return;
 
@@ -165,7 +181,9 @@ export const AuthProvider: React.FC<{
 
           localStorage.setItem(
             'edunexa_user',
-            JSON.stringify(normalized)
+            JSON.stringify(
+              normalized
+            )
           );
         }
 
@@ -176,16 +194,23 @@ export const AuthProvider: React.FC<{
           err
         );
 
-        setUser(null);
-        setToken(null);
+        // IMPORTANT FIX
+        // Do NOT clear immediately
+        const savedUser =
+          loadUserFromStorage();
 
-        localStorage.removeItem(
-          'edunexa_user'
-        );
+        const savedToken =
+          localStorage.getItem(
+            'edunexa_token'
+          );
 
-        localStorage.removeItem(
-          'edunexa_token'
-        );
+        if (
+          savedUser &&
+          savedToken
+        ) {
+          setUser(savedUser);
+          setToken(savedToken);
+        }
 
         setSessionReady(true);
       }
@@ -194,7 +219,7 @@ export const AuthProvider: React.FC<{
     restoreSession();
 
     // =============================
-    // AUTH LISTENER
+    // AUTH STATE LISTENER
     // =============================
 
     const {
@@ -208,7 +233,7 @@ export const AuthProvider: React.FC<{
           event
         );
 
-        // PASSWORD RESET
+        // PASSWORD RECOVERY
         if (
           event ===
           'PASSWORD_RECOVERY'
@@ -238,15 +263,16 @@ export const AuthProvider: React.FC<{
             session.access_token
           );
 
-          const { data: profile } =
-            await supabase
-              .from('users')
-              .select('*')
-              .eq(
-                'id',
-                session.user.id
-              )
-              .maybeSingle();
+          const {
+            data: profile,
+          } = await supabase
+            .from('users')
+            .select('*')
+            .eq(
+              'id',
+              session.user.id
+            )
+            .maybeSingle();
 
           if (
             profile &&
@@ -361,7 +387,9 @@ export const AuthProvider: React.FC<{
 
     localStorage.setItem(
       'edunexa_user',
-      JSON.stringify(normalized)
+      JSON.stringify(
+        normalized
+      )
     );
   };
 

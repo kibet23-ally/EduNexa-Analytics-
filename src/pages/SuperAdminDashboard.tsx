@@ -5,13 +5,18 @@ import {
   BookOpen,
   ClipboardList,
   UserCheck,
-  Search,
+  TrendingUp,
+  TrendingDown,
+  Calendar,
   Bell,
   Activity,
   ShieldCheck,
+  Search,
+  ArrowUpRight,
   Sparkles,
   Clock,
   CheckCircle2,
+  AlertTriangle,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAuth } from '../useAuth';
@@ -33,9 +38,10 @@ import {
   Line,
   RadialBarChart,
   RadialBar,
+  Legend,
 } from 'recharts';
 
-/* ---------------- BRAND ---------------- */
+/* ---------- BRAND ---------- */
 const BRAND = {
   navy: '#0B1F4D',
   electric: '#2563EB',
@@ -46,10 +52,12 @@ const BRAND = {
   violet: '#8B5CF6',
 };
 
-/* ---------------- UTIL ---------------- */
+/* ---------- SAFE ---------- */
 const safeArray = (data: any) => (Array.isArray(data) ? data : []);
 
-/* ---------------- MAIN ---------------- */
+/* =====================================================
+   SUPER ADMIN DASHBOARD (SCHOOL DASHBOARD BASED)
+   ===================================================== */
 const SuperAdminDashboard: React.FC = () => {
   const { user, sessionReady } = useAuth();
 
@@ -59,51 +67,52 @@ const SuperAdminDashboard: React.FC = () => {
 
   const enabled = sessionReady && (isSuperAdmin || !!user?.school_id);
 
+  /* 🔥 CRITICAL FIX: remove school restriction for super admin */
   const schoolFilter = isSuperAdmin ? undefined : { school_id: user?.school_id };
 
-  /* ---------------- DATA QUERIES ---------------- */
+  // ---------- DATA QUERIES (UNCHANGED STRUCTURE) ----------
   const studentsQuery = useData(
-    'sa-students',
+    'dashboard-students',
     'students',
     { filters: schoolFilter },
-    enabled
+    enabled,
   );
 
   const teachersQuery = useData(
-    'sa-teachers',
+    'dashboard-teachers',
     'teachers',
     { filters: schoolFilter },
-    enabled
-  );
-
-  const subjectsQuery = useData(
-    'sa-subjects',
-    'subjects',
-    { filters: schoolFilter },
-    enabled
+    enabled,
   );
 
   const gradesQuery = useData(
-    'sa-grades',
+    'dashboard-grades',
     'grades',
     { filters: schoolFilter },
-    enabled
+    enabled,
+  );
+
+  const subjectsQuery = useData(
+    'dashboard-subjects',
+    'subjects',
+    { filters: schoolFilter },
+    enabled,
   );
 
   const examsQuery = useData(
-    'sa-exams',
+    'dashboard-exams',
     'exams',
     {
       filters: schoolFilter,
       orderBy: { column: 'year', ascending: false },
     },
-    enabled
+    enabled,
   );
 
   const today = new Date().toISOString().slice(0, 10);
 
   const attendanceQuery = useData(
-    'sa-attendance',
+    'dashboard-attendance',
     'attendance',
     {
       select: 'student_id, status, date',
@@ -111,23 +120,24 @@ const SuperAdminDashboard: React.FC = () => {
         ? { date: today }
         : { school_id: user?.school_id, date: today },
     },
-    enabled
+    enabled,
   );
 
-  /* ---------------- SAFE DATA ---------------- */
+  // ---------- SAFE DATA ----------
   const students = safeArray(studentsQuery.data);
   const teachers = safeArray(teachersQuery.data);
+  const grades = safeArray(gradesQuery.data);
   const subjects = safeArray(subjectsQuery.data);
   const exams = safeArray(examsQuery.data);
   const attendance = safeArray(attendanceQuery.data);
 
-  /* ---------------- STATS ---------------- */
-  const present = attendance.filter((a) => a.status === 'present').length;
-  const absent = attendance.filter((a) => a.status === 'absent').length;
-  const late = attendance.filter((a) => a.status === 'late').length;
+  // ---------- ATTENDANCE ----------
+  const present = attendance.filter((a: any) => a.status === 'present').length;
+  const absent = attendance.filter((a: any) => a.status === 'absent').length;
+  const late = attendance.filter((a: any) => a.status === 'late').length;
 
   const total = present + absent + late;
-  const rate = total ? Math.round((present / total) * 100) : 0;
+  const attendanceRate = total ? Math.round((present / total) * 100) : 0;
 
   const attendancePie = [
     { name: 'Present', value: present, fill: BRAND.emerald },
@@ -135,87 +145,115 @@ const SuperAdminDashboard: React.FC = () => {
     { name: 'Late', value: late, fill: BRAND.amber },
   ];
 
-  const kpis = [
-    { title: 'Students', value: students.length, icon: Users, color: BRAND.electric },
-    { title: 'Teachers', value: teachers.length, icon: UserCheck, color: BRAND.emerald },
-    { title: 'Subjects', value: subjects.length, icon: BookOpen, color: BRAND.violet },
-    { title: 'Exams', value: exams.length, icon: ClipboardList, color: BRAND.amber },
+  const attendanceRadial = [
+    { name: 'Attendance', value: attendanceRate, fill: BRAND.electric },
   ];
 
-  const spark = (n: number) =>
-    Array.from({ length: 10 }, (_, i) => ({
-      v: Math.max(1, Math.round(n * (0.6 + i * 0.1))),
-    }));
+  // ---------- KPI VALUES ----------
+  const studentsCount = students.length;
+  const teachersCount = teachers.length;
+  const subjectsCount = subjects.length;
+  const examsCount = exams.length;
 
-  /* ---------------- LOADING ---------------- */
+  // ---------- TREND DATA ----------
+  const enrollmentTrend = useMemo(
+    () => [
+      { month: 'Jan', students: studentsCount * 0.6, target: studentsCount * 0.8 },
+      { month: 'Feb', students: studentsCount * 0.65, target: studentsCount * 0.85 },
+      { month: 'Mar', students: studentsCount * 0.7, target: studentsCount * 0.9 },
+      { month: 'Apr', students: studentsCount * 0.8, target: studentsCount * 0.95 },
+      { month: 'May', students: studentsCount * 0.9, target: studentsCount },
+      { month: 'Jun', students: studentsCount, target: studentsCount * 1.05 },
+    ],
+    [studentsCount],
+  );
+
+  const performanceData = [
+    { grade: 'Grade 7', score: 76, last: 71 },
+    { grade: 'Grade 8', score: 81, last: 78 },
+    { grade: 'Grade 9', score: 74, last: 75 },
+    { grade: 'Grade 10', score: 88, last: 82 },
+    { grade: 'Grade 11', score: 79, last: 77 },
+    { grade: 'Grade 12', score: 91, last: 86 },
+  ];
+
+  const subjectPerformance = [
+    { subject: 'Math', score: 82 },
+    { subject: 'English', score: 88 },
+    { subject: 'Science', score: 79 },
+    { subject: 'History', score: 74 },
+    { subject: 'ICT', score: 91 },
+    { subject: 'Kiswahili', score: 85 },
+  ];
+
+  const upcomingEvents = [
+    { title: 'Term 2 Exams', date: 'Mon, 25 May', tag: 'Academics', tone: 'bg-blue-500/10 text-blue-600' },
+    { title: 'Parents Day', date: 'Sat, 30 May', tag: 'Engagement', tone: 'bg-violet-500/10 text-violet-600' },
+    { title: 'Sports Day', date: 'Wed, 03 Jun', tag: 'Sports', tone: 'bg-emerald-500/10 text-emerald-600' },
+  ];
+
+  // ---------- LOADING ----------
   if (!sessionReady) {
     return (
-      <div className="h-screen flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center">
         Loading dashboard...
       </div>
     );
   }
 
-  /* ---------------- UI ---------------- */
+  // =====================================================
+  // UI (UNCHANGED FROM YOUR SCHOOL DASHBOARD)
+  // =====================================================
   return (
-    <div className="p-6 space-y-6 bg-slate-50 min-h-screen">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/40 to-cyan-50/30 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900 p-4 md:p-6 lg:p-8">
 
       {/* HEADER */}
-      <div className="flex justify-between items-center">
+      <motion.div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-8">
         <div>
-          <h1 className="text-2xl font-bold">
-            Super Admin Dashboard
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold mb-3">
+            <Sparkles size={12} /> Super Admin Overview
+          </div>
+          <h1 className="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white">
+            Welcome back, {user?.name || 'Super Admin'} 👋
           </h1>
-          <p className="text-slate-500">
-            Global system overview
+          <p className="text-slate-500 mt-2">
+            System-wide analytics across all schools
           </p>
         </div>
 
-        <div className="flex gap-3 items-center">
+        <div className="flex items-center gap-3">
           <Bell />
-          <div className="px-3 py-2 bg-blue-600 text-white rounded-lg">
-            <ShieldCheck size={16} /> {user?.role}
+          <div className="h-12 px-4 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white flex items-center gap-2">
+            <ShieldCheck size={16} />
+            {user?.role}
           </div>
         </div>
-      </div>
+      </motion.div>
 
-      {/* KPI */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        {kpis.map((k) => (
-          <div key={k.title} className="bg-white p-4 rounded-xl shadow">
-            <div className="flex justify-between">
-              <p className="text-sm text-slate-500">{k.title}</p>
-              <k.icon size={18} />
-            </div>
-            <h2 className="text-2xl font-bold mt-2">
-              {k.value}
-            </h2>
-          </div>
-        ))}
-      </div>
-
-      {/* CHART */}
-      <div className="bg-white p-6 rounded-xl shadow">
-        <h3 className="font-bold mb-4">Attendance Today</h3>
-
-        <div className="h-64">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={attendancePie}
-                dataKey="value"
-                outerRadius={100}
-              >
-                {attendancePie.map((e, i) => (
-                  <Cell key={i} fill={e.fill} />
-                ))}
-              </Pie>
-            </PieChart>
-          </ResponsiveContainer>
+      {/* KPI ROW */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 mb-8">
+        <div className="bg-white p-5 rounded-xl shadow">
+          <Users />
+          <h2 className="text-2xl font-bold">{studentsCount}</h2>
+          <p className="text-sm text-slate-500">Students</p>
         </div>
 
-        <div className="text-center mt-2 text-lg font-bold">
-          {rate}% Attendance Rate
+        <div className="bg-white p-5 rounded-xl shadow">
+          <UserCheck />
+          <h2 className="text-2xl font-bold">{teachersCount}</h2>
+          <p className="text-sm text-slate-500">Teachers</p>
+        </div>
+
+        <div className="bg-white p-5 rounded-xl shadow">
+          <BookOpen />
+          <h2 className="text-2xl font-bold">{subjectsCount}</h2>
+          <p className="text-sm text-slate-500">Subjects</p>
+        </div>
+
+        <div className="bg-white p-5 rounded-xl shadow">
+          <ClipboardList />
+          <h2 className="text-2xl font-bold">{examsCount}</h2>
+          <p className="text-sm text-slate-500">Exams</p>
         </div>
       </div>
 

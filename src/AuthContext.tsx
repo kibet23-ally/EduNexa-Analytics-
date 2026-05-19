@@ -1,131 +1,439 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase'; // ✅ FIXED PATH
+import React, { useState, useEffect } from 'react';
+import { AuthContext } from './useAuth';
+import { User } from './types';
+import { supabase } from './lib/supabase';
 
-interface User {
-  id: string;
-  name: string;
-  email: string;
-  role: string;
-  school_id: number | null;
+function normalizeUser(raw: User | null): User | null {
+  if (!raw) return null;
+
+  return {
+    ...raw,
+    school_id:
+      raw.school_id != null
+        ? Number(raw.school_id)
+        : raw.school_id,
+  };
 }
 
-interface AuthContextType {
-  user: User | null;
-  sessionReady: boolean;
-  loading: boolean;
-  logout: () => Promise<void>;
+function loadUserFromStorage(): User | null {
+  try {
+    const saved =
+      localStorage.getItem('edunexa_user');
+
+    return saved
+      ? normalizeUser(JSON.parse(saved))
+      : null;
+  } catch {
+    localStorage.removeItem(
+      'edunexa_user'
+    );
+
+    return null;
+  }
 }
 
-const AuthContext = createContext<AuthContextType>({
-  user: null,
-  sessionReady: false,
-  loading: true,
-  logout: async () => {},
-});
+export const AuthProvider: React.FC<{
+  children: React.ReactNode;
+}> = ({ children }) => {
+  const [user, setUser] =
+    useState<User | null>(
+      loadUserFromStorage
+    );
 
-export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [sessionReady, setSessionReady] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [token, setToken] =
+    useState<string | null>(() =>
+      localStorage.getItem(
+        'edunexa_token'
+      )
+    );
 
-  const normalizeUser = (profile: any): User => ({
-    id: profile?.id || '',
-    name: profile?.name || '',
-    email: profile?.email || '',
-    role: (profile?.role || '').toLowerCase(),
-    school_id: profile?.school_id ? Number(profile.school_id) : null,
-  });
+  // IMPORTANT FIX
+  const [sessionReady, setSessionReady] =
+    useState(true);
+
+  const [theme, setThemeState] =
+    useState<'light' | 'dark'>(() => {
+      const saved =
+        localStorage.getItem(
+          'edunexa_theme'
+        );
+
+      return saved === 'dark'
+        ? 'dark'
+        : 'light';
+    });
+
+  // =============================
+  // THEME
+  // =============================
+
+  const setTheme = (
+    newTheme: 'light' | 'dark'
+  ) => {
+    setThemeState(newTheme);
+
+    localStorage.setItem(
+      'edunexa_theme',
+      newTheme
+    );
+
+    document.documentElement.classList.toggle(
+      'dark',
+      newTheme === 'dark'
+    );
+  };
+
+  useEffect(() => {
+    document.documentElement.classList.toggle(
+      'dark',
+      theme === 'dark'
+    );
+  }, [theme]);
+
+  // =============================
+  // SESSION RESTORE
+  // =============================
 
   useEffect(() => {
     let mounted = true;
 
-    const init = async () => {
+    const restoreSession = async () => {
       try {
-        setLoading(true);
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
 
-        const { data: { session } } = await supabase.auth.getSession();
+        if (!mounted) return;
+
+        // =============================
+        // NO ACTIVE SESSION
+        // =============================
 
         if (!session?.user) {
-          if (mounted) {
+          // IMPORTANT FIX
+          // Restore cached user
+          const savedUser =
+            loadUserFromStorage();
+
+          const savedToken =
+            localStorage.getItem(
+              'edunexa_token'
+            );
+
+          if (
+            savedUser &&
+            savedToken
+          ) {
+            setUser(savedUser);
+            setToken(savedToken);
+          } else {
             setUser(null);
-            setSessionReady(true);
-            setLoading(false);
+            setToken(null);
           }
+
+          setSessionReady(true);
+
           return;
         }
 
-        const { data } = await supabase
-          .from('users') // ⚠️ CHANGE THIS IF YOUR TABLE IS DIFFERENT
+        // =============================
+        // SESSION EXISTS
+        // =============================
+
+        setToken(session.access_token);
+
+        localStorage.setItem(
+          'edunexa_token',
+          session.access_token
+        );
+
+        // IMPORTANT
+        // USING id
+        const {
+          data: profile,
+          error,
+        } = await supabase
+          .from('users')
           .select('*')
           .eq('id', session.user.id)
-          .single();
+          .maybeSingle();
 
-        if (mounted) {
-          setUser(data ? normalizeUser(data) : null);
+        if (!mounted) return;
+
+        if (error) {
+          console.error(
+            'Profile fetch error:',
+            error
+          );
+
           setSessionReady(true);
-          setLoading(false);
+
+          return;
         }
 
+        if (profile) {
+          const normalized =
+            normalizeUser(
+              profile as User
+            );
+
+          setUser(normalized);
+
+          localStorage.setItem(
+            'edunexa_user',
+            JSON.stringify(
+              normalized
+            )
+          );
+        }
+
+        setSessionReady(true);
       } catch (err) {
-        console.error('Auth crash:', err);
+        console.error(
+          'Restore session failed:',
+          err
+        );
 
-        if (mounted) {
-          setUser(null);
-          setSessionReady(true);
-          setLoading(false);
+        // IMPORTANT FIX
+        // Do NOT clear immediately
+        const savedUser =
+          loadUserFromStorage();
+
+        const savedToken =
+          localStorage.getItem(
+            'edunexa_token'
+          );
+
+        if (
+          savedUser &&
+          savedToken
+        ) {
+          setUser(savedUser);
+          setToken(savedToken);
         }
+
+        setSessionReady(true);
       }
     };
 
-    init();
+    restoreSession();
 
-    const { data: listener } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
-        try {
-          if (!session?.user) {
-            setUser(null);
-            setSessionReady(true);
-            return;
-          }
+    // =============================
+    // AUTH STATE LISTENER
+    // =============================
 
-          const { data } = await supabase
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (!mounted) return;
+
+        console.log(
+          'AUTH EVENT:',
+          event
+        );
+
+        // PASSWORD RECOVERY
+        if (
+          event ===
+          'PASSWORD_RECOVERY'
+        ) {
+          window.location.href =
+            '/reset-password';
+
+          return;
+        }
+
+        // =============================
+        // SIGNED IN
+        // =============================
+
+        if (
+          (event === 'SIGNED_IN' ||
+            event ===
+              'TOKEN_REFRESHED') &&
+          session
+        ) {
+          setToken(
+            session.access_token
+          );
+
+          localStorage.setItem(
+            'edunexa_token',
+            session.access_token
+          );
+
+          const {
+            data: profile,
+          } = await supabase
             .from('users')
             .select('*')
-            .eq('id', session.user.id)
-            .single();
+            .eq(
+              'id',
+              session.user.id
+            )
+            .maybeSingle();
 
-          setUser(data ? normalizeUser(data) : null);
+          if (
+            profile &&
+            mounted
+          ) {
+            const normalized =
+              normalizeUser(
+                profile as User
+              );
+
+            setUser(normalized);
+
+            localStorage.setItem(
+              'edunexa_user',
+              JSON.stringify(
+                normalized
+              )
+            );
+          }
+
           setSessionReady(true);
+        }
 
-        } catch (err) {
-          console.error('Auth listener error:', err);
+        // =============================
+        // SIGNED OUT
+        // =============================
+
+        if (
+          event === 'SIGNED_OUT'
+        ) {
           setUser(null);
+          setToken(null);
+
+          localStorage.removeItem(
+            'edunexa_user'
+          );
+
+          localStorage.removeItem(
+            'edunexa_token'
+          );
+
           setSessionReady(true);
         }
       }
     );
 
+    // =============================
+    // STORAGE SYNC
+    // =============================
+
+    const handleStorage = () => {
+      setToken(
+        localStorage.getItem(
+          'edunexa_token'
+        )
+      );
+
+      setUser(
+        loadUserFromStorage()
+      );
+
+      const savedTheme =
+        localStorage.getItem(
+          'edunexa_theme'
+        ) as 'light' | 'dark';
+
+      if (savedTheme) {
+        setThemeState(
+          savedTheme
+        );
+      }
+    };
+
+    window.addEventListener(
+      'storage',
+      handleStorage
+    );
+
     return () => {
       mounted = false;
-      listener?.subscription?.unsubscribe?.(); // ✅ SAFE
+
+      subscription.unsubscribe();
+
+      window.removeEventListener(
+        'storage',
+        handleStorage
+      );
     };
   }, []);
+
+  // =============================
+  // LOGIN
+  // =============================
+
+  const login = (
+    newToken: string,
+    newUser: User
+  ) => {
+    const normalized =
+      normalizeUser(newUser)!;
+
+    setToken(newToken);
+
+    setUser(normalized);
+
+    setSessionReady(true);
+
+    localStorage.setItem(
+      'edunexa_token',
+      newToken
+    );
+
+    localStorage.setItem(
+      'edunexa_user',
+      JSON.stringify(
+        normalized
+      )
+    );
+  };
+
+  // =============================
+  // LOGOUT
+  // =============================
 
   const logout = async () => {
     try {
       await supabase.auth.signOut();
-      setUser(null);
-      setSessionReady(false);
     } catch (err) {
-      console.error('Logout error:', err);
+      console.error(err);
     }
+
+    setUser(null);
+    setToken(null);
+
+    localStorage.removeItem(
+      'edunexa_user'
+    );
+
+    localStorage.removeItem(
+      'edunexa_token'
+    );
+
+    window.location.href =
+      '/login';
   };
 
   return (
-    <AuthContext.Provider value={{ user, sessionReady, loading, logout }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        token,
+        theme,
+        sessionReady,
+        login,
+        logout,
+        setTheme,
+        isAuthenticated:
+          !!token && !!user,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
 };
-
-export const useAuth = () => useContext(AuthContext);

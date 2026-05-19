@@ -7,7 +7,6 @@ import { User, Subject, Grade } from '../types';
 import { UserPlus, Link as LinkIcon, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useData, useDataMutation } from '../hooks/useData';
 import { TableSkeleton } from '../components/ui/Skeleton';
-import { supabase } from '../lib/supabase';
 
 const PAGE_SIZE = 50;
 
@@ -95,12 +94,9 @@ const Teachers = () => {
     grade_id: ''
   });
 
-  /**
-   * ✅ FIX: Safe filtering (DO NOT hide valid teachers)
-   */
   const teachers = useMemo(() => {
     const data = (teachersQuery.data as User[]) || [];
-    return data.filter((t) => {
+    return data.filter(t => {
       const role = (t.role || '').toLowerCase().trim();
       return role !== 'superadmin' && role !== 'super admin';
     });
@@ -112,18 +108,20 @@ const Teachers = () => {
   const rawAssignments = useMemo(() => (assignmentsQuery.data as AssignmentRecord[]) || [], [assignmentsQuery.data]);
 
   const processedAssignments = useMemo(() => {
-    return rawAssignments.map((item) => ({
-      id: item.id,
-      teacher_id: item.teacher_id,
-      teacher_name: item.teachers?.name || 'Unknown',
-      subject_name: item.subjects?.subject_name || 'Unknown',
-      grade_name: item.grades?.grade_name || 'Unknown'
+    return rawAssignments.map(a => ({
+      id: a.id,
+      teacher_id: a.teacher_id,
+      teacher_name: a.teachers?.name || 'Unknown',
+      subject_name: a.subjects?.subject_name || 'Unknown',
+      grade_name: a.grades?.grade_name || 'Unknown'
     }));
   }, [rawAssignments]);
 
-  /**
-   * ✅ FIXED SAVE (keeps school_id ALWAYS)
-   */
+  const resetTeacherForm = () => {
+    setTeacherForm({ id: '', name: '', email: '', phone: '', password: '', role: 'Teacher' });
+    setIsEditing(false);
+  };
+
   const handleSaveTeacher = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isReadOnly) return;
@@ -135,14 +133,11 @@ const Teachers = () => {
       let cleanPhone = teacherForm.phone.replace(/\s+/g, '');
 
       if (cleanPhone) {
-        if (cleanPhone.startsWith('0')) {
-          cleanPhone = '+254' + cleanPhone.substring(1);
-        } else if (!cleanPhone.startsWith('+')) {
-          cleanPhone = '+254' + cleanPhone;
-        }
+        if (cleanPhone.startsWith('0')) cleanPhone = '+254' + cleanPhone.slice(1);
+        else if (!cleanPhone.startsWith('+')) cleanPhone = '+254' + cleanPhone;
 
         if (!/^\+254\d{9}$/.test(cleanPhone)) {
-          throw new Error('Invalid Kenya phone format');
+          throw new Error('Invalid phone format');
         }
       }
 
@@ -154,7 +149,7 @@ const Teachers = () => {
             email: teacherForm.email,
             phone: cleanPhone || null,
             role: teacherForm.role,
-            school_id: Number(user?.school_id) // 🔥 IMPORTANT FIX
+            school_id: Number(user?.school_id)
           },
           filters: { id: teacherForm.id }
         });
@@ -175,12 +170,9 @@ const Teachers = () => {
           ]
         });
 
-        setFeedback({ type: 'success', message: 'Teacher created successfully' });
+        setFeedback({ type: 'success', message: 'Teacher added successfully' });
       }
 
-      /**
-       * ✅ FIX: Prevent disappearing data
-       */
       setPage(0);
       await teachersQuery.refetch?.();
 
@@ -192,31 +184,6 @@ const Teachers = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const resetTeacherForm = () => {
-    setTeacherForm({
-      id: '',
-      name: '',
-      email: '',
-      phone: '',
-      password: '',
-      role: 'Teacher'
-    });
-    setIsEditing(false);
-  };
-
-  const handleEditClick = (teacher: any) => {
-    setTeacherForm({
-      id: teacher.id,
-      name: teacher.name,
-      email: teacher.email,
-      phone: teacher.phone || '',
-      password: '',
-      role: teacher.role || 'Teacher'
-    });
-    setIsEditing(true);
-    setShowTeacherModal(true);
   };
 
   const handleAssign = async (e: React.FormEvent) => {
@@ -254,19 +221,150 @@ const Teachers = () => {
   return (
     <div className="space-y-8">
 
+      {/* Feedback */}
       {feedback && (
-        <div
-          className={`fixed top-4 right-4 z-[100] px-6 py-4 rounded-2xl shadow-2xl border flex items-center gap-3 ${
-            feedback.type === 'success'
-              ? 'bg-emerald-50 border-emerald-100 text-emerald-800'
-              : 'bg-red-50 border-red-100 text-red-800'
-          }`}
-        >
-          <span className="font-bold text-sm">{feedback.message}</span>
+        <div className={`fixed top-4 right-4 z-[100] px-6 py-4 rounded-2xl shadow-2xl border ${
+          feedback.type === 'success'
+            ? 'bg-emerald-50 text-emerald-800 border-emerald-100'
+            : 'bg-red-50 text-red-800 border-red-100'
+        }`}>
+          {feedback.message}
         </div>
       )}
 
-      {/* UI remains unchanged below (same as your original) */}
+      {/* HEADER */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Teachers</h1>
+          <p className="text-sm text-slate-500">Manage staff and assignments</p>
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            onClick={() => setShowAssignModal(true)}
+            className="px-4 py-2 border rounded-lg"
+          >
+            <LinkIcon size={18} /> Assign Subject
+          </button>
+
+          <button
+            onClick={() => setShowTeacherModal(true)}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg"
+          >
+            <UserPlus size={18} /> Add Teacher
+          </button>
+        </div>
+      </div>
+
+      {/* TABLES (RESTORED) */}
+      <div className="grid lg:grid-cols-2 gap-6">
+
+        {/* TEACHERS */}
+        <div className="bg-white rounded-xl border">
+          <div className="p-4 border-b flex justify-between">
+            <span className="font-bold">Teachers</span>
+          </div>
+
+          <div className="p-4">
+            {teachersQuery.isLoading ? (
+              <TableSkeleton rows={5} cols={3} />
+            ) : (
+              <table className="w-full text-sm">
+                <tbody>
+                  {teachers.map(t => (
+                    <tr key={t.id} className="border-b">
+                      <td className="py-2">{t.name}</td>
+                      <td>{t.email}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+
+        {/* ASSIGNMENTS */}
+        <div className="bg-white rounded-xl border">
+          <div className="p-4 border-b font-bold">Assignments</div>
+
+          <div className="p-4">
+            {assignmentsQuery.isLoading ? (
+              <TableSkeleton rows={5} cols={3} />
+            ) : (
+              <table className="w-full text-sm">
+                <tbody>
+                  {processedAssignments.map(a => (
+                    <tr key={a.id} className="border-b">
+                      <td>{a.teacher_name}</td>
+                      <td>{a.subject_name}</td>
+                      <td>{a.grade_name}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* MODALS */}
+      {showTeacherModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
+          <div className="bg-white p-6 rounded-xl w-[400px]">
+            <form onSubmit={handleSaveTeacher} className="space-y-3">
+              <input placeholder="Name" className="w-full border p-2" value={teacherForm.name}
+                onChange={e => setTeacherForm({ ...teacherForm, name: e.target.value })} />
+
+              <input placeholder="Email" className="w-full border p-2" value={teacherForm.email}
+                onChange={e => setTeacherForm({ ...teacherForm, email: e.target.value })} />
+
+              <input placeholder="Phone" className="w-full border p-2" value={teacherForm.phone}
+                onChange={e => setTeacherForm({ ...teacherForm, phone: e.target.value })} />
+
+              <button className="bg-blue-600 text-white px-4 py-2 rounded w-full">
+                Save
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showAssignModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
+          <div className="bg-white p-6 rounded-xl w-[400px]">
+            <form onSubmit={handleAssign} className="space-y-3">
+
+              <select className="w-full border p-2"
+                onChange={e => setAssignForm({ ...assignForm, teacher_id: e.target.value })}>
+                <option>Select Teacher</option>
+                {teachers.map(t => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+
+              <select className="w-full border p-2"
+                onChange={e => setAssignForm({ ...assignForm, subject_id: e.target.value })}>
+                <option>Select Subject</option>
+                {subjects.map(s => (
+                  <option key={s.id}>{s.subject_name}</option>
+                ))}
+              </select>
+
+              <select className="w-full border p-2"
+                onChange={e => setAssignForm({ ...assignForm, grade_id: e.target.value })}>
+                <option>Select Grade</option>
+                {grades.map(g => (
+                  <option key={g.id}>{g.grade_name}</option>
+                ))}
+              </select>
+
+              <button className="bg-blue-600 text-white px-4 py-2 rounded w-full">
+                Assign
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   );

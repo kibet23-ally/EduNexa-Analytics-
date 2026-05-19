@@ -23,34 +23,52 @@ export function useData<T>(
   const { sessionReady, user } = useAuth();
   const queryClient = useQueryClient();
 
+  const isSuperAdmin =
+    user?.role === 'super_admin' || user?.role === 'superadmin';
+
   /**
-   * 🔥 AUTO-SCOPE EVERYTHING TO SCHOOL
-   * This fixes 90% of "zero data" issues in multi-tenant apps
+   * ✅ FIX: Only scope by school IF NOT super admin
    */
   const scopedFilters = React.useMemo(() => {
-    if (!user?.school_id) return options.filters;
+    if (isSuperAdmin) {
+      return options.filters || {};
+    }
+
+    if (!user?.school_id) {
+      return options.filters || {};
+    }
 
     return {
       school_id: user.school_id,
       ...options.filters,
     };
-  }, [user?.school_id, options.filters]);
+  }, [isSuperAdmin, user?.school_id, options.filters]);
 
   /**
-   * 🔥 INVALIDATE AFTER LOGIN/SCHOOL LOAD
+   * ✅ FIX: Proper invalidation
    */
   React.useEffect(() => {
-    if (sessionReady && user?.school_id) {
+    if (sessionReady && user) {
       queryClient.invalidateQueries({
         queryKey: [table],
+        exact: false,
       });
     }
-  }, [sessionReady, user?.school_id, table, queryClient]);
+  }, [sessionReady, user, table, queryClient]);
+
+  /**
+   * ✅ FIX: Allow super admin even without school_id
+   */
+  const queryEnabled =
+    enabled &&
+    sessionReady &&
+    !!user &&
+    (isSuperAdmin || !!user?.school_id);
 
   return useQuery({
     queryKey: [table, key, scopedFilters],
 
-    enabled: enabled && sessionReady && !!user?.school_id,
+    enabled: queryEnabled,
 
     queryFn: async () => {
       const res = await fetchWithProxy(table, {
@@ -62,7 +80,6 @@ export function useData<T>(
         countOnly: options.countOnly,
       });
 
-      // IMPORTANT: normalize response
       if (options.countOnly) {
         return Number(res.count ?? 0);
       }
@@ -78,7 +95,7 @@ export function useData<T>(
 }
 
 /**
- * 🔥 MUTATION HOOK (SAFE + SCOPED)
+ * ✅ SAFE MUTATION HOOK
  */
 export function useDataMutation(table: string) {
   const queryClient = useQueryClient();
@@ -95,17 +112,14 @@ export function useDataMutation(table: string) {
       filters?: any;
       onConflict?: string;
     }) => {
-      return await writeWithProxy(
-        table,
-        operation,
-        payload,
-        filters,
-        onConflict
-      );
+      return await writeWithProxy(table, operation, payload, filters, onConflict);
     },
 
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [table] });
+      queryClient.invalidateQueries({
+        queryKey: [table],
+        exact: false,
+      });
     },
   });
 }

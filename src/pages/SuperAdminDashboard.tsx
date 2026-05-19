@@ -1,229 +1,226 @@
 import React, { useMemo } from 'react';
-import { 
-  Building2, Users, CreditCard, TrendingUp,
-  AlertTriangle, CheckCircle2, Clock, ArrowUpRight
+import {
+  Users,
+  GraduationCap,
+  BookOpen,
+  ClipboardList,
+  UserCheck,
+  Search,
+  Bell,
+  Activity,
+  ShieldCheck,
+  Sparkles,
+  Clock,
+  CheckCircle2,
 } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { School } from '../types';
-import { useData } from '../hooks/useData';
+import { motion } from 'framer-motion';
 import { useAuth } from '../useAuth';
-import { Skeleton } from '../components/ui/Skeleton';
+import { useData } from '../hooks/useData';
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  PieChart,
+  Pie,
+  Cell,
+  LineChart,
+  Line,
+  RadialBarChart,
+  RadialBar,
+} from 'recharts';
 
-const SuperAdminDashboard = () => {
-  const { sessionReady } = useAuth();
+/* ---------------- BRAND ---------------- */
+const BRAND = {
+  navy: '#0B1F4D',
+  electric: '#2563EB',
+  cyan: '#22D3EE',
+  emerald: '#10B981',
+  amber: '#F59E0B',
+  rose: '#EF4444',
+  violet: '#8B5CF6',
+};
 
-  // Gate on sessionReady so queries never fire before JWT is set
-  const schoolsQuery = useData<School>(
-    'all-schools-stats', 'schools',
-    { select: 'id, subscription_status, created_at, name, logo_url, subscription_end_date' },
-    sessionReady,
-    300000
+/* ---------------- UTIL ---------------- */
+const safeArray = (data: any) => (Array.isArray(data) ? data : []);
+
+/* ---------------- MAIN ---------------- */
+const SuperAdminDashboard: React.FC = () => {
+  const { user, sessionReady } = useAuth();
+
+  const isSuperAdmin =
+    user?.role?.toLowerCase?.() === 'superadmin' ||
+    user?.role?.toLowerCase?.() === 'super_admin';
+
+  const enabled = sessionReady && (isSuperAdmin || !!user?.school_id);
+
+  const schoolFilter = isSuperAdmin ? undefined : { school_id: user?.school_id };
+
+  /* ---------------- DATA QUERIES ---------------- */
+  const studentsQuery = useData(
+    'sa-students',
+    'students',
+    { filters: schoolFilter },
+    enabled
   );
 
-  const studentsCountQuery = useData<number>(
-    'total-students-platform', 'students',
-    { countOnly: true },
-    sessionReady,
-    300000
+  const teachersQuery = useData(
+    'sa-teachers',
+    'teachers',
+    { filters: schoolFilter },
+    enabled
   );
 
-  const stats = useMemo(() => {
-    if (!schoolsQuery.data) return null;
-    const schools = schoolsQuery.data as School[];
-    return {
-      totalSchools:        schools.length,
-      activeSubscriptions: schools.filter(s => s.subscription_status?.toLowerCase() === 'active').length,
-      expiredSchools:      schools.filter(s => s.subscription_status?.toLowerCase() === 'expired').length,
-      totalStudents:       typeof studentsCountQuery.data === 'number' ? studentsCountQuery.data : 0,
-    };
-  }, [schoolsQuery.data, studentsCountQuery.data]);
+  const subjectsQuery = useData(
+    'sa-subjects',
+    'subjects',
+    { filters: schoolFilter },
+    enabled
+  );
 
-  const recentSchools = useMemo(() => {
-    if (!schoolsQuery.data) return [];
-    return [...(schoolsQuery.data as School[])]
-      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-      .slice(0, 5);
-  }, [schoolsQuery.data]);
+  const gradesQuery = useData(
+    'sa-grades',
+    'grades',
+    { filters: schoolFilter },
+    enabled
+  );
 
-  const growthData = useMemo(() => {
-    if (!schoolsQuery.data) return [];
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const countsByMonth: Record<string, number> = {};
-    (schoolsQuery.data as School[]).forEach(s => {
-      const month = months[new Date(s.created_at).getMonth()];
-      countsByMonth[month] = (countsByMonth[month] || 0) + 1;
-    });
-    return months.map(m => ({ month: m, schools: countsByMonth[m] || 0 }));
-  }, [schoolsQuery.data]);
+  const examsQuery = useData(
+    'sa-exams',
+    'exams',
+    {
+      filters: schoolFilter,
+      orderBy: { column: 'year', ascending: false },
+    },
+    enabled
+  );
 
-  const loading = !sessionReady || schoolsQuery.isLoading || studentsCountQuery.isLoading;
+  const today = new Date().toISOString().slice(0, 10);
 
-  if (loading) {
+  const attendanceQuery = useData(
+    'sa-attendance',
+    'attendance',
+    {
+      select: 'student_id, status, date',
+      filters: isSuperAdmin
+        ? { date: today }
+        : { school_id: user?.school_id, date: today },
+    },
+    enabled
+  );
+
+  /* ---------------- SAFE DATA ---------------- */
+  const students = safeArray(studentsQuery.data);
+  const teachers = safeArray(teachersQuery.data);
+  const subjects = safeArray(subjectsQuery.data);
+  const exams = safeArray(examsQuery.data);
+  const attendance = safeArray(attendanceQuery.data);
+
+  /* ---------------- STATS ---------------- */
+  const present = attendance.filter((a) => a.status === 'present').length;
+  const absent = attendance.filter((a) => a.status === 'absent').length;
+  const late = attendance.filter((a) => a.status === 'late').length;
+
+  const total = present + absent + late;
+  const rate = total ? Math.round((present / total) * 100) : 0;
+
+  const attendancePie = [
+    { name: 'Present', value: present, fill: BRAND.emerald },
+    { name: 'Absent', value: absent, fill: BRAND.rose },
+    { name: 'Late', value: late, fill: BRAND.amber },
+  ];
+
+  const kpis = [
+    { title: 'Students', value: students.length, icon: Users, color: BRAND.electric },
+    { title: 'Teachers', value: teachers.length, icon: UserCheck, color: BRAND.emerald },
+    { title: 'Subjects', value: subjects.length, icon: BookOpen, color: BRAND.violet },
+    { title: 'Exams', value: exams.length, icon: ClipboardList, color: BRAND.amber },
+  ];
+
+  const spark = (n: number) =>
+    Array.from({ length: 10 }, (_, i) => ({
+      v: Math.max(1, Math.round(n * (0.6 + i * 0.1))),
+    }));
+
+  /* ---------------- LOADING ---------------- */
+  if (!sessionReady) {
     return (
-      <div className="p-8 space-y-8 max-w-7xl mx-auto">
-        <Skeleton className="h-10 w-1/3 mb-8" />
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-32 rounded-3xl" />)}
-        </div>
-        <Skeleton className="h-96 w-full rounded-3xl" />
+      <div className="h-screen flex items-center justify-center">
+        Loading dashboard...
       </div>
     );
   }
 
-  const alerts = [
-    { type: 'warning', message: '3 School subscriptions expiring this week', icon: Clock },
-    { type: 'error',   message: '5 Schools have expired subscriptions',       icon: AlertTriangle },
-    { type: 'info',    message: 'New deployment successful in Cluster 2',     icon: CheckCircle2 },
-  ];
-
+  /* ---------------- UI ---------------- */
   return (
-    <div className="p-8 space-y-8 max-w-7xl mx-auto animate-in fade-in duration-500">
-      <header>
-        <h1 className="text-3xl font-display font-bold text-slate-900 dark:text-white">EduNexa Platform Overview</h1>
-        <p className="text-slate-500 dark:text-slate-400 mt-2 font-medium">Operational intelligence for the entire network.</p>
-      </header>
+    <div className="p-6 space-y-6 bg-slate-50 min-h-screen">
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard label="Total Schools"  value={stats?.totalSchools || 0}        icon={Building2}    color="bg-primary"   trend="+12% from last month" />
-        <StatCard label="Total Students" value={stats?.totalStudents || 0}        icon={Users}        color="bg-accent"    trend="+8.4% from last month" />
-        <StatCard label="Active Subs"    value={stats?.activeSubscriptions || 0}  icon={CreditCard}   color="bg-primary"   trend="92% retention rate" />
-        <StatCard label="Expired/Risk"   value={stats?.expiredSchools || 0}       icon={AlertTriangle} color="bg-red-600" trend="Action required" />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Growth Chart */}
-        <div className="lg:col-span-2 bg-white dark:bg-slate-900 p-8 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-800">
-          <div className="flex items-center justify-between mb-8">
-            <h3 className="text-xl font-display font-bold text-slate-900 dark:text-white flex items-center gap-3">
-              <TrendingUp className="text-primary" size={24} />
-              Platform Growth
-            </h3>
-          </div>
-          <div className="h-[350px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={growthData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12, fontWeight: 700 }} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12, fontWeight: 700 }} />
-                <Tooltip
-                  cursor={{ fill: '#f8fafc' }}
-                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: '#1e293b', color: '#fff' }}
-                />
-                <Bar dataKey="schools" fill="#1E3A8A" radius={[6, 6, 0, 0]} barSize={40} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+      {/* HEADER */}
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold">
+            Super Admin Dashboard
+          </h1>
+          <p className="text-slate-500">
+            Global system overview
+          </p>
         </div>
 
-        {/* Alerts */}
-        <div className="space-y-6">
-          <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-800">
-            <h3 className="text-xl font-display font-bold text-slate-900 dark:text-white mb-8 flex items-center gap-3">
-              <AlertTriangle className="text-accent" size={24} /> System Alerts
-            </h3>
-            <div className="space-y-4">
-              {alerts.map((alert, idx) => (
-                <div key={idx} className={`p-5 rounded-2xl flex items-start gap-4 ${
-                  alert.type === 'warning' ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-400' :
-                  alert.type === 'error'   ? 'bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-400' :
-                  'bg-primary/5 dark:bg-primary/10 text-primary'
-                }`}>
-                  <alert.icon size={20} className="mt-0.5 shrink-0" />
-                  <p className="text-sm font-bold leading-tight">{alert.message}</p>
-                </div>
-              ))}
+        <div className="flex gap-3 items-center">
+          <Bell />
+          <div className="px-3 py-2 bg-blue-600 text-white rounded-lg">
+            <ShieldCheck size={16} /> {user?.role}
+          </div>
+        </div>
+      </div>
+
+      {/* KPI */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        {kpis.map((k) => (
+          <div key={k.title} className="bg-white p-4 rounded-xl shadow">
+            <div className="flex justify-between">
+              <p className="text-sm text-slate-500">{k.title}</p>
+              <k.icon size={18} />
             </div>
+            <h2 className="text-2xl font-bold mt-2">
+              {k.value}
+            </h2>
           </div>
-          <div className="bg-gradient-to-br from-primary to-primary-dark p-8 rounded-3xl text-white shadow-xl shadow-primary/20">
-            <h4 className="font-display font-bold text-lg mb-2">Platform Health</h4>
-            <div className="flex items-center gap-4 mt-6">
-              <div className="flex-1 h-2 bg-white/20 rounded-full overflow-hidden">
-                <div className="h-full bg-white w-[98.7%]" />
-              </div>
-              <span className="font-mono text-sm font-bold text-accent">99.9%</span>
-            </div>
-            <p className="text-[10px] uppercase font-bold text-white/40 mt-4 tracking-widest">Region: europe-west1</p>
-          </div>
+        ))}
+      </div>
+
+      {/* CHART */}
+      <div className="bg-white p-6 rounded-xl shadow">
+        <h3 className="font-bold mb-4">Attendance Today</h3>
+
+        <div className="h-64">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={attendancePie}
+                dataKey="value"
+                outerRadius={100}
+              >
+                {attendancePie.map((e, i) => (
+                  <Cell key={i} fill={e.fill} />
+                ))}
+              </Pie>
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="text-center mt-2 text-lg font-bold">
+          {rate}% Attendance Rate
         </div>
       </div>
 
-      {/* Recent Schools */}
-      <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-800">
-        <div className="flex items-center justify-between mb-8">
-          <h3 className="text-xl font-display font-bold text-slate-900 dark:text-white">Recently Activated Tenants</h3>
-          <button onClick={() => window.location.href = '/super/schools'}
-            className="text-primary text-xs font-black uppercase tracking-wider flex items-center gap-2 hover:gap-3 transition-all">
-            View All Schools <ArrowUpRight size={18} />
-          </button>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="text-slate-400 dark:text-slate-500 text-[10px] uppercase tracking-widest font-black border-b border-slate-50 dark:border-slate-800">
-                <th className="px-4 py-4">School Name</th>
-                <th className="px-4 py-4">Status</th>
-                <th className="px-4 py-4">Sub Ends</th>
-                <th className="px-4 py-4">Onboarding</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
-              {recentSchools.map(school => (
-                <tr key={school.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
-                  <td className="px-4 py-6">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 flex items-center justify-center text-slate-300 group-hover:scale-110 transition-transform">
-                        {school.logo_url
-                          ? <img src={school.logo_url} className="w-full h-full object-contain rounded-2xl" />
-                          : <Building2 size={24} />}
-                      </div>
-                      <span className="font-bold text-slate-900 dark:text-white text-base">{school.name}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-6">
-                    <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                      school.subscription_status?.toLowerCase() === 'active'  ? 'bg-accent/10 text-accent-dark' :
-                      school.subscription_status?.toLowerCase() === 'expired' ? 'bg-red-50 dark:bg-red-900/20 text-red-600' :
-                      'bg-amber-50 dark:bg-amber-900/20 text-amber-600'
-                    }`}>
-                      {school.subscription_status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-6 text-sm text-slate-500 font-mono font-bold">
-                    {school.subscription_end_date ? new Date(school.subscription_end_date).toLocaleDateString() : 'N/A'}
-                  </td>
-                  <td className="px-4 py-6 text-sm text-slate-400 font-bold">
-                    {new Date(school.created_at).toLocaleDateString()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
     </div>
   );
 };
-
-const StatCard = ({ label, value, icon: Icon, color, trend }: {
-  label: string; value: number; icon: React.ElementType; color: string; trend: string;
-}) => (
-  <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-800 relative overflow-hidden group hover:shadow-xl transition-all cursor-default">
-    <div className={`absolute top-0 right-0 w-32 h-32 -mr-8 -mt-8 ${color} opacity-[0.05] rounded-full group-hover:scale-125 transition-transform duration-500`} />
-    <div className="flex items-center gap-6">
-      <div className={`${color} text-white p-5 rounded-2xl shadow-lg relative z-10 group-hover:rotate-12 transition-transform`}>
-        <Icon size={26} />
-      </div>
-      <div className="relative z-10">
-        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{label}</p>
-        <h4 className="text-3xl font-display font-bold text-slate-900 dark:text-white mt-1">{value}</h4>
-      </div>
-    </div>
-    <div className="mt-6 flex items-center gap-2 text-xs font-bold text-accent">
-      <div className="bg-accent/10 p-1.5 rounded-lg"><TrendingUp size={14} /></div>
-      {trend}
-    </div>
-  </div>
-);
 
 export default SuperAdminDashboard;

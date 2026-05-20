@@ -124,7 +124,7 @@ title, value, delta, tone, icon: Icon, accent, spark, loading,
 </div>  
 <div  
 className="w-11 h-11 rounded-2xl flex items-center justify-center text-white shadow-lg"  
-style={{ background: linear-gradient(135deg, ${accent}, ${accent}cc) }}  
+style={{ background: `linear-gradient(135deg, ${accent}, ${accent}cc)` }}  
 >  
 <Icon size={20} />  
 </div>  

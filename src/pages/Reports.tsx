@@ -16,6 +16,8 @@ import {
   User,
   Users,
 } from "lucide-react";
+import { useData } from '../hooks/useData';
+import { useAuth } from '../useAuth';
 
 // IMPORTANT:
 // Keep all your existing imports from the current repo.
@@ -24,8 +26,8 @@ import {
 // Keep your rankings logic.
 
 /* ────────────────────────────────────────────────────────────────
-REASONABLE, HUMAN-SOUNDING REMARKS
-Tiered by CBC performance band derived from average points (1–8).
+   REASONABLE, HUMAN-SOUNDING REMARKS
+   Tiered by CBC performance band derived from average points (1–8).
 ──────────────────────────────────────────────────────────────── */
 
 type Band = 'EE' | 'ME' | 'AE' | 'BE';
@@ -66,9 +68,27 @@ const PRINCIPAL_REMARKS: Record<Band, string> = {
 };
 
 const Reports = () => {
+  // ── SCHOOL FIX: fetch school using existing useData hook ──
+  const { user } = useAuth();
+
+  const { data: schoolsData } = useData<any>(
+    `school-${user?.school_id}`,
+    'schools',
+    {
+      select: 'id,name,logo_url,motto,address,phone,email,website',
+      filters: { id: user?.school_id },
+      single: true,
+    },
+    !!user?.school_id
+  );
+
+  const school = Array.isArray(schoolsData)
+    ? schoolsData[0] ?? null
+    : schoolsData ?? null;
+  // ── END SCHOOL FIX ──
+
   // KEEP ALL YOUR EXISTING STATE/FETCHING LOGIC HERE
   // Example:
-  // const { school } = useSchool();
   // const { student } = useStudent();
   // const reportResults = ...
   // const rankings = ...
@@ -90,17 +110,14 @@ const Reports = () => {
             body {
               background: white !important;
             }
-
             .no-print {
               display: none !important;
             }
-
             .print-container {
               box-shadow: none !important;
               margin: 0 !important;
               width: 100% !important;
             }
-
             table {
               page-break-inside: avoid;
             }
@@ -122,10 +139,8 @@ const Reports = () => {
       <div className="print-container max-w-7xl mx-auto bg-white rounded-3xl overflow-hidden shadow-2xl">
 
         {/* ================= LETTERHEAD ================= */}
-
         <div className="bg-gradient-to-r from-blue-950 via-blue-900 to-blue-950 rounded-t-3xl overflow-hidden text-white relative">
           <div className="absolute inset-0 opacity-10 bg-[radial-gradient(circle_at_top_right,white,transparent)]" />
-
           <div className="relative z-10 px-6 py-8">
             <div className="flex flex-col md:flex-row items-center gap-5">
 
@@ -143,9 +158,7 @@ const Reports = () => {
                 <h1 className="text-3xl md:text-5xl font-black uppercase tracking-wide">
                   {school?.name}
                 </h1>
-
                 <div className="w-40 h-1 bg-yellow-400 rounded-full my-3 mx-auto md:mx-0" />
-
                 <p className="text-yellow-300 text-lg italic font-semibold">
                   Motto: {school?.motto || "Excellence Through Education"}
                 </p>
@@ -155,58 +168,47 @@ const Reports = () => {
         </div>
 
         {/* ================= REPORT TITLE ================= */}
-
         <div className="bg-white px-6 pt-6">
           <div className="flex items-center justify-center gap-4 mb-8">
             <div className="h-[2px] bg-yellow-500 flex-1 max-w-[120px]" />
-
             <h2 className="text-2xl md:text-4xl font-black uppercase text-blue-950 text-center">
               Student Progress Report
             </h2>
-
             <div className="h-[2px] bg-yellow-500 flex-1 max-w-[120px]" />
           </div>
 
           {/* ================= STUDENT INFO ================= */}
-
           <div className="border rounded-3xl p-6 grid md:grid-cols-3 gap-6 shadow-sm mb-8">
-
             <InfoCard
               icon={<User />}
               label="Student Name"
               value={student?.student_name}
             />
-
             <InfoCard
               icon={<Hash />}
               label="Admission No."
               value={student?.admission_number}
             />
-
             <InfoCard
               icon={<Users />}
               label="Gender"
               value={student?.gender}
             />
-
             <InfoCard
               icon={<GraduationCap />}
               label="Grade / Class"
               value={student?.class_name}
             />
-
             <InfoCard
               icon={<ClipboardList />}
               label="Exam"
               value={selectedExam?.name}
             />
-
             <InfoCard
               icon={<CalendarDays />}
               label="Term & Year"
               value={`${term} ${year}`}
             />
-
             <InfoCard
               icon={<Trophy />}
               label="Position In Class"
@@ -215,10 +217,8 @@ const Reports = () => {
           </div>
 
           {/* ================= RESULTS TABLE ================= */}
-
           <div className="overflow-x-auto border rounded-3xl shadow-sm mb-8">
             <table className="w-full">
-
               <thead className="bg-blue-950 text-white">
                 <tr>
                   <th className="p-4 text-left">Learning Area</th>
@@ -228,7 +228,6 @@ const Reports = () => {
                   <th className="p-4 text-left">Teacher's Remark</th>
                 </tr>
               </thead>
-
               <tbody>
                 {reportResults.map((subject: any, index: number) => (
                   <tr
@@ -243,19 +242,15 @@ const Reports = () => {
                         {subject.subject_name}
                       </div>
                     </td>
-
                     <td className="p-4 text-center font-bold">
                       {subject.marks}
                     </td>
-
                     <td className="p-4 text-center">
                       {subject.grade}
                     </td>
-
                     <td className="p-4 text-center">
                       {subject.points}
                     </td>
-
                     <td className="p-4">
                       {subject.remark}
                     </td>
@@ -266,27 +261,22 @@ const Reports = () => {
           </div>
 
           {/* ================= SUMMARY ================= */}
-
           <div className="grid md:grid-cols-4 gap-4 mb-8">
-
             <SummaryCard
               title="Total Marks"
               value={`${totalMarks}`}
               icon={<Award />}
             />
-
             <SummaryCard
               title="Percentage"
               value={`${percentage}%`}
               icon={<Star />}
             />
-
             <SummaryCard
               title="Overall Grade"
               value={overallGrade}
               icon={<GraduationCap />}
             />
-
             <SummaryCard
               title="Points"
               value={overallPoints}
@@ -295,12 +285,10 @@ const Reports = () => {
           </div>
 
           {/* ================= GRADING SCALE ================= */}
-
           <div className="border rounded-3xl p-5 mb-8">
             <h3 className="text-blue-950 font-black text-lg mb-4">
               GRADING SCALE
             </h3>
-
             <div className="flex flex-wrap gap-4 text-sm font-semibold text-slate-700">
               <span>EE1 (90–100%)</span>
               <span>EE2 (75–89%)</span>
@@ -314,37 +302,28 @@ const Reports = () => {
           </div>
 
           {/* ================= REMARKS ================= */}
-
           <div className="grid md:grid-cols-2 gap-6 mb-10">
-
             <div className="border rounded-3xl p-6">
               <h3 className="font-black text-blue-950 text-lg mb-4">
                 Class Teacher's Remarks
               </h3>
-
               <p className="text-lg mb-10">
                 {teacherRemark}
               </p>
-
               <div className="border-b border-dashed mb-2 w-52" />
-
               <div className="flex justify-between text-sm text-slate-500">
                 <span>Teacher Signature</span>
                 <span>{formattedDate}</span>
               </div>
             </div>
-
             <div className="border rounded-3xl p-6">
               <h3 className="font-black text-blue-950 text-lg mb-4">
                 Principal's Remarks
               </h3>
-
               <p className="text-lg mb-10">
                 {principalRemark}
               </p>
-
               <div className="border-b border-dashed mb-2 w-52" />
-
               <div className="flex justify-between text-sm text-slate-500">
                 <span>Principal Signature</span>
                 <span>{formattedDate}</span>
@@ -353,15 +332,12 @@ const Reports = () => {
           </div>
 
           {/* ================= STUDENT RANKINGS ================= */}
-
           <div className="mt-12 mb-10">
             <div className="flex items-center justify-center gap-4 mb-8">
               <div className="h-[2px] bg-yellow-500 flex-1 max-w-[120px]" />
-
               <h2 className="text-2xl md:text-4xl font-black uppercase text-blue-950 text-center">
                 Student Rankings
               </h2>
-
               <div className="h-[2px] bg-yellow-500 flex-1 max-w-[120px]" />
             </div>
 
@@ -378,7 +354,6 @@ const Reports = () => {
                     <th className="p-4 text-center">Points</th>
                   </tr>
                 </thead>
-
                 <tbody>
                   {rankings.map((item: any, index: number) => (
                     <tr
@@ -397,27 +372,21 @@ const Reports = () => {
                       <td className="p-4 font-black text-blue-950">
                         #{item.rank}
                       </td>
-
                       <td className="p-4 font-semibold">
                         {item.student_name}
                       </td>
-
                       <td className="p-4">
                         {item.admission_number}
                       </td>
-
                       <td className="p-4 text-center font-bold">
                         {item.total_marks}
                       </td>
-
                       <td className="p-4 text-center">
                         {item.average}%
                       </td>
-
                       <td className="p-4 text-center font-bold">
                         {item.grade}
                       </td>
-
                       <td className="p-4 text-center">
                         {item.points}
                       </td>
@@ -430,25 +399,20 @@ const Reports = () => {
         </div>
 
         {/* ================= FOOTER ================= */}
-
         <div className="bg-blue-950 text-white px-6 py-5 rounded-b-3xl">
           <div className="grid md:grid-cols-4 gap-4 text-sm">
-
             <div className="flex items-center gap-2">
               <MapPin className="w-4 h-4" />
               <span>{school?.address}</span>
             </div>
-
             <div className="flex items-center gap-2">
               <Phone className="w-4 h-4" />
               <span>{school?.phone}</span>
             </div>
-
             <div className="flex items-center gap-2">
               <Mail className="w-4 h-4" />
               <span>{school?.email}</span>
             </div>
-
             <div className="flex items-center gap-2">
               <Globe className="w-4 h-4" />
               <span>{school?.website}</span>
@@ -465,12 +429,10 @@ const InfoCard = ({ icon, label, value }: any) => (
     <div className="bg-slate-100 p-3 rounded-full text-blue-950">
       {icon}
     </div>
-
     <div>
       <p className="text-sm uppercase text-slate-500 font-medium">
         {label}
       </p>
-
       <h3 className="font-bold text-lg text-slate-800">
         {value}
       </h3>
@@ -483,12 +445,10 @@ const SummaryCard = ({ title, value, icon }: any) => (
     <div className="bg-blue-950 text-white p-3 rounded-xl">
       {icon}
     </div>
-
     <div>
       <p className="text-sm uppercase text-slate-500 font-semibold">
         {title}
       </p>
-
       <h2 className="text-2xl font-black text-blue-950">
         {value}
       </h2>

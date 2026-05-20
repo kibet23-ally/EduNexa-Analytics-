@@ -409,6 +409,7 @@ function daysFromNow(dateStr: string) {
 
 /* =====================================================
    ACADEMIC PERFORMANCE HOOK (real data)
+   exams table has: id, exam_name, term (int), year (int)
    ===================================================== */
 function useAcademicPerformance(schoolId: number | undefined) {
   const [data, setData] = useState<{ label: string; avg: number }[]>([]);
@@ -421,20 +422,23 @@ function useAcademicPerformance(schoolId: number | undefined) {
       setLoading(true);
       const { data: rows, error: err } = await supabase
         .from('marks')
-        .select('score, exam_id, exams!inner(id, exam_name, exam_date)')
+        .select('score, exam_id, exams!inner(id, exam_name, term, year)')
         .not('score', 'is', null);
       if (err) { setError(err.message); setLoading(false); return; }
 
-      const map = new Map<string, { label: string; scores: number[]; date: string }>();
+      const map = new Map<string, { label: string; scores: number[]; sortKey: string }>();
       for (const row of rows ?? []) {
-        const exam = (row as any).exams as { id: number; exam_name: string; exam_date: string } | null;
+        const exam = (row as any).exams as { id: number; exam_name: string; term: number; year: number } | null;
         if (!exam || row.score === null) continue;
         const key = String(exam.id);
-        if (!map.has(key)) map.set(key, { label: exam.exam_name, scores: [], date: exam.exam_date ?? '' });
+        // sortKey: "2024-2" so we can sort chronologically by year then term
+        const sortKey = `${exam.year ?? 0}-${String(exam.term ?? 0).padStart(2, '0')}`;
+        const label = `${exam.exam_name} (T${exam.term ?? '?'} ${exam.year ?? ''})`.trim();
+        if (!map.has(key)) map.set(key, { label, scores: [], sortKey });
         map.get(key)!.scores.push(row.score as number);
       }
       const result = Array.from(map.values())
-        .sort((a, b) => (a.date > b.date ? 1 : -1))
+        .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
         .slice(-6)
         .map(e => ({ label: e.label, avg: Math.round(e.scores.reduce((s, v) => s + v, 0) / e.scores.length) }));
       setData(result);
@@ -792,7 +796,7 @@ const SchoolDashboard: React.FC = () => {
       </div>
 
       {/* ---------- ROW 3: Subject Performance + Upcoming Events ---------- */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
         {/* ── Subject Performance Trend — REAL DATA ── */}
         <GlassCard className="lg:col-span-2 p-6">

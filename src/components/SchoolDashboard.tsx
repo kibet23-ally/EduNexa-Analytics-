@@ -350,8 +350,22 @@ const diff = Math.round((d.getTime() - today.getTime()) / 86400000);
 if (diff === 0) return 'Today';  
 if (diff === 1) return 'Tomorrow';  
 if (diff < 0) return `${Math.abs(diff)}d ago`;
-return `In ${diff}d`; 
-return In ${diff}d;  
+function daysFromNow(dateStr: string) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const d = new Date(dateStr + 'T00:00:00');
+
+  const diff = Math.round(
+    (d.getTime() - today.getTime()) / 86400000
+  );
+
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Tomorrow';
+  if (diff < 0) return `${Math.abs(diff)}d ago`;
+
+  return `In ${diff}d`;
+}   
 }  /* ─────────────────────────────────────────────────────────────
 ACADEMIC PERFORMANCE HOOK
 ───────────────────────────────────────────────────────────── */

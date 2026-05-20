@@ -138,7 +138,13 @@ style={{ background: `linear-gradient(135deg, ${accent}, ${accent}cc)` }}
 <stop offset="100%" stopColor={accent} stopOpacity={0} />  
 </linearGradient>  
 </defs>  
-<Area type="monotone" dataKey="v" stroke={accent} strokeWidth={2} fill={url(#g-${title})} />  
+<Area
+  type="monotone"
+  dataKey="v"
+  stroke={accent}
+  strokeWidth={2}
+  fill={`url(#g-${title})`}
+/>  
 </AreaChart>  
 </ResponsiveContainer>  
 </div>  

@@ -25,7 +25,7 @@ import {
 import { motion } from 'framer-motion';
 import { useAuth } from '../useAuth';
 import { useData } from '../hooks/useData';
-import { supabase } from '../lib/supabaseClient';
+import { supabase } from '../lib/supabase';
 import {
   ResponsiveContainer,
   AreaChart,

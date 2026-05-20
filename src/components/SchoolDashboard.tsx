@@ -389,7 +389,8 @@ for (const row of rows ?? []) {
 const exam = (row as any).exams as { id: number; exam_name: string; term: number; year: number } | null;
 if (!exam || row.score === null) continue;
 const key     = String(exam.id);
-const sortKey = ${exam.year ?? 0}-${String(exam.term ?? 0).padStart(2, '0')};
+const sortKey = `${exam.year ?? 0}-${String(exam.term ?? 0).padStart(2, '0')}`;
+const label = `${exam.exam_name} (T${exam.term ?? '?'} ${exam.year ?? ''})`.trim();
 const label   = ${exam.exam_name} (T${exam.term ?? '?'} ${exam.year ?? ''}).trim();
 if (!map.has(key)) map.set(key, { label, scores: [], sortKey });
 map.get(key)!.scores.push(row.score as number);

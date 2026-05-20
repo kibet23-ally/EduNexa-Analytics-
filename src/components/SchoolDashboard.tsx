@@ -66,7 +66,9 @@ down:    'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400',
 neutral: 'bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-300',  
 } as const;  
 return (  
-<span className={inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full ${map[tone]}}>  
+<span
+  className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full ${map[tone]}`}
+>  
 {tone === 'up'   && <TrendingUp size={12} />}  
 {tone === 'down' && <TrendingDown size={12} />}  
 {children}  

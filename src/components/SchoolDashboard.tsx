@@ -96,42 +96,154 @@ const ChartTooltip = ({ active, payload, label }: any) => {
   );
 };
 
-/* ... (rest of your components: KpiCard, Event types, useEvents, EventModal, DeleteConfirm remain mostly the same) ... */
+/* KpiCard Component */
+interface KpiProps {
+  title: string;
+  value: number | string;
+  delta?: string;
+  tone?: 'up' | 'down' | 'neutral';
+  icon: React.ElementType;
+  accent: string;
+  spark: { v: number }[];
+  loading?: boolean;
+}
 
-/* Fixed helper */
+const KpiCard: React.FC<KpiProps> = ({ title, value, delta, tone, icon: Icon, accent, spark, loading }) => (
+  <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45 }}>
+    <GlassCard className="p-5 overflow-hidden group hover:shadow-[0_20px_60px_-20px_rgba(37,99,235,0.35)] transition-shadow">
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{title}</p>
+          <div className="mt-2 flex items-baseline gap-2">
+            {loading ? (
+              <div className="h-9 w-20 rounded-lg bg-slate-200/70 dark:bg-white/10 animate-pulse" />
+            ) : (
+              <h2 className="text-3xl font-bold text-slate-900 dark:text-white tabular-nums">
+                {typeof value === 'number' ? value.toLocaleString() : value}
+              </h2>
+            )}
+            {delta && <Pill tone={tone}>{delta}</Pill>}
+          </div>
+        </div>
+        <div className="w-11 h-11 rounded-2xl flex items-center justify-center text-white shadow-lg" 
+             style={{ background: `linear-gradient(135deg, ${accent}, ${accent}cc)` }}>
+          <Icon size={20} />
+        </div>
+      </div>
+      <div className="h-14 mt-3 -mx-1">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={spark}>
+            <defs>
+              <linearGradient id={`spark-${title}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={accent} stopOpacity={0.6} />
+                <stop offset="100%" stopColor={accent} stopOpacity={0.05} />
+              </linearGradient>
+            </defs>
+            <Area type="natural" dataKey="v" stroke={accent} strokeWidth={2.5} fill={`url(#spark-${title})`} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </GlassCard>
+  </motion.div>
+);
+
+/* Event Interfaces */
+interface SchoolEvent {
+  id: string;
+  title: string;
+  event_date: string;
+  category: string;
+  description?: string;
+  location?: string;
+}
+
+interface EventFormData {
+  title: string;
+  event_date: string;
+  category: string;
+  description: string;
+  location: string;
+}
+
+/* useEvents Hook with school_id fix */
+function useEvents(schoolId: number | undefined) {
+  const [events, setEvents] = useState<SchoolEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refetch = useCallback(async () => {
+    if (!schoolId) {
+      setEvents([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    const { data, error: err } = await supabase
+      .from('events')
+      .select('*')
+      .eq('school_id', schoolId)
+      .order('event_date', { ascending: true });
+
+    if (err) setError(err.message);
+    else setEvents(data || []);
+    setLoading(false);
+  }, [schoolId]);
+
+  useEffect(() => {
+    refetch();
+  }, [refetch]);
+
+  const add = async (form: EventFormData) => { /* your original add logic */ };
+  const update = async (id: string, form: EventFormData) => { /* your original */ };
+  const remove = async (id: string) => { /* your original */ };
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  const upcoming = events.filter(e => e.event_date >= todayStr).slice(0, 5);
+
+  return { events, upcoming, loading, error, add, update, remove, refetch };
+}
+
+/* daysFromNow - Fixed */
 function daysFromNow(dateStr: string) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-
   const d = new Date(dateStr + 'T00:00:00');
   const diff = Math.round((d.getTime() - today.getTime()) / 86400000);
 
   if (diff === 0) return 'Today';
   if (diff === 1) return 'Tomorrow';
   if (diff < 0) return `${Math.abs(diff)}d ago`;
-
   return `In ${diff}d`;
 }
 
-/* ... rest of hooks (useAcademicPerformance, useSubjectPerformance) ... */
-
-/* In useEvents → improve the query */
-const refetch = useCallback(async () => {
-  if (!schoolId) return;
-  setLoading(true); setError(null);
-  const { data, error: err } = await supabase
-    .from('events')
-    .select('*')
-    .eq('school_id', schoolId)           // ← Added school filter
-    .order('event_date', { ascending: true });
-  // ...
-}, [schoolId]);
-
-/* Main component — Loading moved to top */
+/* Main Component */
 const SchoolDashboard: React.FC = () => {
   const { user, sessionReady } = useAuth();
-  // ... all hooks ...
+  const schoolId = user?.school_id;
 
+  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+
+  /* Your original queries */
+  const studentsQuery = useData<any>('dashboard-students', 'students', { filters: { school_id: schoolId } }, !!schoolId);
+  const teachersQuery = useData<any>('dashboard-teachers', 'teachers', { filters: { school_id: schoolId } }, !!schoolId);
+  const subjectsQuery = useData<any>('dashboard-subjects', 'subjects', { filters: { school_id: schoolId } }, !!schoolId);
+  const attendanceQuery = useData<any>(`dashboard-attendance-${today}`, 'attendance_daily', {
+    filters: { school_id: schoolId }
+  }, !!schoolId);
+
+  const { upcoming, loading: loadingEvents, add, update, remove } = useEvents(schoolId);
+
+  /* Event Modal States */
+  const [showAdd, setShowAdd] = useState(false);
+  const [editTarget, setEditTarget] = useState<SchoolEvent | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<SchoolEvent | null>(null);
+
+  const handleAdd = async (form: EventFormData) => { /* your original */ };
+  const handleEdit = async (form: EventFormData) => { /* your original */ };
+  const handleDelete = async () => { /* your original */ };
+
+  /* ←←← LOADING SCREEN - NOW IN CORRECT POSITION →→→ */
   if (!sessionReady) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50/40 to-cyan-50/30 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900">
@@ -147,7 +259,15 @@ const SchoolDashboard: React.FC = () => {
     );
   }
 
-  // ... rest of your component (attendanceRows, charts, etc.)
+  /* ←←← PASTE ALL YOUR ORIGINAL RETURN JSX HERE (from the <div className="min-h-screen ..."> to the end) →→→ */
+  /* Everything below this comment should be your original dashboard JSX (KPI grid, charts, tables, modals, etc.) */
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/40 to-cyan-50/30 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900 p-4 md:p-6 lg:p-8">
+      {/* Your full original JSX goes here - unchanged */}
+      {/* ... All sections, charts, EventModal, DeleteConfirmModal, etc. ... */}
+    </div>
+  );
 };
 
 export default SchoolDashboard;

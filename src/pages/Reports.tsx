@@ -1,21 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef } from "react";
 import {
-  Award,
-  BookOpen,
-  CalendarDays,
-  ClipboardList,
-  Globe,
-  GraduationCap,
-  Hash,
-  Mail,
-  MapPin,
-  Phone,
-  Printer,
-  Star,
-  Trophy,
-  User,
-  Users,
+  Award, BookOpen, CalendarDays, ClipboardList, GraduationCap, Hash,
+  Mail, MapPin, Phone, Globe, Printer, Star, Trophy, User, Users,
+  Sparkles, ShieldCheck, FileText, TrendingUp, Search, Download,
 } from "lucide-react";
 import { useAuth } from "../useAuth";
 import { useData } from "../hooks/useData";
@@ -25,33 +13,22 @@ import { useData } from "../hooks/useData";
 ──────────────────────────────────────────────────────────────── */
 type Band = "EE" | "ME" | "AE" | "BE";
 
-const bandFromScore = (score: number): Band => {
-  if (score >= 75) return "EE";
-  if (score >= 58) return "ME";
-  if (score >= 31) return "AE";
-  return "BE";
-};
+const bandFromScore = (s: number): Band =>
+  s >= 75 ? "EE" : s >= 58 ? "ME" : s >= 31 ? "AE" : "BE";
 
-const cbcGrade = (score: number): string => {
-  if (score >= 90) return "EE1";
-  if (score >= 75) return "EE2";
-  if (score >= 58) return "ME1";
-  if (score >= 41) return "ME2";
-  if (score >= 31) return "AE1";
-  if (score >= 21) return "AE2";
-  if (score >= 11) return "BE1";
-  return "BE2";
-};
+const cbcGrade = (s: number): string =>
+  s >= 90 ? "EE1" : s >= 75 ? "EE2" : s >= 58 ? "ME1" : s >= 41 ? "ME2"
+  : s >= 31 ? "AE1" : s >= 21 ? "AE2" : s >= 11 ? "BE1" : "BE2";
 
-const cbcPoints = (score: number): number => {
-  if (score >= 90) return 8;
-  if (score >= 75) return 7;
-  if (score >= 58) return 6;
-  if (score >= 41) return 5;
-  if (score >= 31) return 4;
-  if (score >= 21) return 3;
-  if (score >= 11) return 2;
-  return 1;
+const cbcPoints = (s: number): number =>
+  s >= 90 ? 8 : s >= 75 ? 7 : s >= 58 ? 6 : s >= 41 ? 5
+  : s >= 31 ? 4 : s >= 21 ? 3 : s >= 11 ? 2 : 1;
+
+const BAND_TONE: Record<Band, { ring: string; chip: string; text: string; soft: string }> = {
+  EE: { ring: "ring-emerald-300", chip: "bg-emerald-100 text-emerald-800", text: "text-emerald-700", soft: "from-emerald-50 to-emerald-100/40" },
+  ME: { ring: "ring-sky-300",     chip: "bg-sky-100 text-sky-800",         text: "text-sky-700",     soft: "from-sky-50 to-sky-100/40" },
+  AE: { ring: "ring-amber-300",   chip: "bg-amber-100 text-amber-800",     text: "text-amber-700",   soft: "from-amber-50 to-amber-100/40" },
+  BE: { ring: "ring-rose-300",    chip: "bg-rose-100 text-rose-800",       text: "text-rose-700",    soft: "from-rose-50 to-rose-100/40" },
 };
 
 const CLASS_TEACHER_REMARKS: Record<Band, string> = {
@@ -68,17 +45,24 @@ const PRINCIPAL_REMARKS: Record<Band, string> = {
   BE: "We believe in your potential. Greater effort, discipline and support will help you improve steadily.",
 };
 
+const SUBJECT_REMARK = (s: number) =>
+  s >= 75 ? "Excellent mastery of the concepts. Keep up the impressive work."
+: s >= 58 ? "A good grasp of the work. Maintain the steady effort and revise often."
+: s >= 31 ? "Fair effort shown. More practice and consistent revision are needed."
+:           "Requires extra support and remedial work. Please seek help promptly.";
+
 /* ────────────────────────────────────────────────────────────────
    MAIN COMPONENT
 ──────────────────────────────────────────────────────────────── */
-const Reports = () => {
+const Reports: React.FC = () => {
   const { user } = useAuth();
+  const printRef = useRef<HTMLDivElement>(null);
 
-  // ── UI state ──
   const [selectedStudentId, setSelectedStudentId] = useState<number | null>(null);
   const [selectedExamId, setSelectedExamId] = useState<number | null>(null);
+  const [studentQuery, setStudentQuery] = useState("");
 
-  // ── SCHOOL ──
+  /* SCHOOL */
   const { data: schoolsData } = useData<any>(
     `school-${user?.school_id}`,
     "schools",
@@ -89,11 +73,9 @@ const Reports = () => {
     },
     !!user?.school_id
   );
-  const school = Array.isArray(schoolsData)
-    ? schoolsData[0] ?? null
-    : schoolsData ?? null;
+  const school = Array.isArray(schoolsData) ? schoolsData[0] ?? null : schoolsData ?? null;
 
-  // ── STUDENTS ──
+  /* STUDENTS */
   const { data: studentsRaw = [] } = useData<any>(
     "students-report",
     "students",
@@ -104,7 +86,7 @@ const Reports = () => {
     !!user?.school_id
   );
 
-  // ── EXAMS ──
+  /* EXAMS */
   const { data: examsRaw = [] } = useData<any>(
     "exams-report",
     "exams",
@@ -115,7 +97,7 @@ const Reports = () => {
     !!user?.school_id
   );
 
-  // ── RESULTS for selected student + exam ──
+  /* RESULTS for selected student + exam */
   const { data: resultsRaw = [] } = useData<any>(
     `results-${selectedStudentId}-${selectedExamId}`,
     "results",
@@ -129,7 +111,7 @@ const Reports = () => {
     !!selectedStudentId && !!selectedExamId
   );
 
-  // ── ALL RESULTS for selected exam (for rankings) ──
+  /* ALL RESULTS for selected exam (rankings) */
   const { data: allResultsRaw = [] } = useData<any>(
     `all-results-${selectedExamId}`,
     "results",
@@ -140,7 +122,6 @@ const Reports = () => {
     !!selectedExamId
   );
 
-  // ── Derived: selected student & exam objects ──
   const selectedStudent = useMemo(
     () => studentsRaw.find((s: any) => s.id === selectedStudentId) ?? null,
     [studentsRaw, selectedStudentId]
@@ -150,56 +131,46 @@ const Reports = () => {
     [examsRaw, selectedExamId]
   );
 
-  // ── Derived: per-subject report rows ──
-  const reportResults = useMemo(() => {
-    return resultsRaw.map((r: any) => {
-      const grade = cbcGrade(r.marks);
-      const points = cbcPoints(r.marks);
-      const band = bandFromScore(r.marks);
-      return {
-        ...r,
-        grade,
-        points,
-        remark:
-          band === "EE"
-            ? "Excellent mastery of the concepts. Keep up the impressive work."
-            : band === "ME"
-            ? "A good grasp of the work. Maintain the steady effort and revise often."
-            : band === "AE"
-            ? "Fair effort shown. More practice and consistent revision are needed."
-            : "Requires extra support and remedial work. Please seek help promptly.",
-      };
-    });
-  }, [resultsRaw]);
+  const filteredStudents = useMemo(() => {
+    const q = studentQuery.trim().toLowerCase();
+    if (!q) return studentsRaw;
+    return studentsRaw.filter(
+      (s: any) =>
+        s.name?.toLowerCase().includes(q) ||
+        String(s.admission_number)?.toLowerCase().includes(q)
+    );
+  }, [studentsRaw, studentQuery]);
 
-  // ── Derived: summary stats ──
-  const totalMarks = useMemo(
-    () => reportResults.reduce((sum: number, r: any) => sum + (r.marks ?? 0), 0),
-    [reportResults]
+  const reportResults = useMemo(
+    () =>
+      resultsRaw.map((r: any) => ({
+        ...r,
+        grade: cbcGrade(r.marks),
+        points: cbcPoints(r.marks),
+        band: bandFromScore(r.marks),
+        remark: SUBJECT_REMARK(r.marks),
+      })),
+    [resultsRaw]
   );
+
+  const totalMarks = reportResults.reduce((sum: number, r: any) => sum + (r.marks ?? 0), 0);
   const subjectCount = reportResults.length || 1;
-  const percentage = useMemo(
-    () => Math.round((totalMarks / (subjectCount * 100)) * 100),
-    [totalMarks, subjectCount]
-  );
+  const percentage = Math.round((totalMarks / (subjectCount * 100)) * 100);
   const overallGrade = cbcGrade(percentage);
-  const overallPoints = useMemo(
-    () => Math.round(reportResults.reduce((sum: number, r: any) => sum + (r.points ?? 0), 0) / subjectCount),
-    [reportResults, subjectCount]
+  const overallPoints = Math.round(
+    reportResults.reduce((sum: number, r: any) => sum + (r.points ?? 0), 0) / subjectCount
   );
   const band = bandFromScore(percentage);
+  const tone = BAND_TONE[band];
   const teacherRemark = CLASS_TEACHER_REMARKS[band];
   const principalRemark = PRINCIPAL_REMARKS[band];
 
-  // ── Derived: rankings ──
   const rankings = useMemo(() => {
-    // Group all results by student_id, sum marks
     const totals: Record<number, number> = {};
     allResultsRaw.forEach((r: any) => {
       totals[r.student_id] = (totals[r.student_id] ?? 0) + (r.marks ?? 0);
     });
-    // Map student details
-    const rows = Object.entries(totals)
+    return Object.entries(totals)
       .map(([sid, total]) => {
         const st = studentsRaw.find((s: any) => s.id === Number(sid));
         const subjects = allResultsRaw.filter((r: any) => r.student_id === Number(sid));
@@ -208,271 +179,433 @@ const Reports = () => {
           student_id: Number(sid),
           student_name: st?.name ?? "—",
           admission_number: st?.admission_number ?? "—",
-          total_marks: total,
+          total_marks: total as number,
           average: avg,
           grade: cbcGrade(avg),
           points: cbcPoints(avg),
         };
       })
-      .sort((a, b) => (b.total_marks as number) - (a.total_marks as number))
+      .sort((a, b) => b.total_marks - a.total_marks)
       .map((row, i) => ({ ...row, rank: i + 1 }));
-    return rows;
   }, [allResultsRaw, studentsRaw]);
 
   const totalStudents = rankings.length;
   const studentRank = rankings.find((r) => r.student_id === selectedStudentId)?.rank ?? "—";
+  const classAverage = rankings.length
+    ? Math.round(rankings.reduce((s, r) => s + r.average, 0) / rankings.length)
+    : 0;
 
-  const formattedDate = useMemo(() => new Date().toLocaleDateString(), []);
+  const formattedDate = new Date().toLocaleDateString(undefined, {
+    year: "numeric", month: "long", day: "numeric",
+  });
+  const serial = useMemo(() => {
+    const stamp = Date.now().toString(36).toUpperCase().slice(-6);
+    return `RPT-${selectedExamId ?? "X"}-${selectedStudentId ?? "X"}-${stamp}`;
+  }, [selectedStudentId, selectedExamId]);
 
   const handlePrint = () => window.print();
-
-  // ── Loading / no-selection state ──
   const showReport = !!selectedStudentId && !!selectedExamId && reportResults.length > 0;
 
   return (
-    <div className="bg-slate-100 min-h-screen p-4 md:p-8">
+    <div className="min-h-screen bg-gradient-to-br from-slate-100 via-blue-50 to-indigo-100 p-4 md:p-8 relative overflow-hidden">
+      {/* Aurora background */}
+      <div className="pointer-events-none absolute inset-0 -z-0 no-print">
+        <div className="absolute -top-32 -left-32 h-[420px] w-[420px] rounded-full bg-blue-400/20 blur-3xl" />
+        <div className="absolute top-1/2 -right-32 h-[420px] w-[420px] rounded-full bg-indigo-400/20 blur-3xl" />
+        <div className="absolute bottom-0 left-1/3 h-[360px] w-[360px] rounded-full bg-cyan-300/20 blur-3xl" />
+      </div>
+
+      {/* Print styles */}
       <style>{`
         @media print {
+          @page { size: A4; margin: 12mm; }
           body { background: white !important; }
           .no-print { display: none !important; }
-          .print-container { box-shadow: none !important; margin: 0 !important; width: 100% !important; }
-          table { page-break-inside: avoid; }
+          .print-container { box-shadow: none !important; margin: 0 !important; width: 100% !important; border-radius: 0 !important; }
+          .avoid-break { page-break-inside: avoid; }
         }
       `}</style>
 
-      {/* ── SELECTOR BAR ── */}
-      <div className="no-print flex flex-col sm:flex-row gap-3 mb-6">
-        <select
-          className="flex-1 border rounded-xl px-4 py-2 text-sm bg-white shadow-sm"
-          value={selectedStudentId ?? ""}
-          onChange={(e) => setSelectedStudentId(e.target.value ? Number(e.target.value) : null)}
-        >
-          <option value="">— Select Student —</option>
-          {studentsRaw.map((s: any) => (
-            <option key={s.id} value={s.id}>
-              {s.name} ({s.admission_number})
-            </option>
-          ))}
-        </select>
+      {/* ── CONTROL BAR ── */}
+      <div className="no-print relative z-10 max-w-7xl mx-auto mb-6">
+        <div className="rounded-3xl bg-white/70 backdrop-blur-xl border border-white/60 shadow-xl p-4 md:p-5">
+          <div className="flex flex-col md:flex-row md:items-center gap-3">
+            <div className="flex items-center gap-3 md:pr-4 md:border-r border-slate-200">
+              <div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 grid place-items-center text-white shadow-lg">
+                <FileText className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500 font-semibold">Academic Office</p>
+                <h1 className="text-base md:text-lg font-black text-slate-900 leading-tight">Report Card Generator</h1>
+              </div>
+            </div>
 
-        <select
-          className="flex-1 border rounded-xl px-4 py-2 text-sm bg-white shadow-sm"
-          value={selectedExamId ?? ""}
-          onChange={(e) => setSelectedExamId(e.target.value ? Number(e.target.value) : null)}
-        >
-          <option value="">— Select Exam —</option>
-          {examsRaw.map((e: any) => (
-            <option key={e.id} value={e.id}>
-              {e.exam_name} — Term {e.term}, {e.year}
-            </option>
-          ))}
-        </select>
+            <div className="flex-1 grid sm:grid-cols-3 gap-3">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  value={studentQuery}
+                  onChange={(e) => setStudentQuery(e.target.value)}
+                  placeholder="Search student…"
+                  className="w-full pl-9 pr-3 py-2.5 text-sm rounded-xl border border-slate-200 bg-white/80 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                />
+              </div>
+              <select
+                className="rounded-xl border border-slate-200 bg-white/80 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                value={selectedStudentId ?? ""}
+                onChange={(e) => setSelectedStudentId(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">— Select Student —</option>
+                {filteredStudents.map((s: any) => (
+                  <option key={s.id} value={s.id}>{s.name} ({s.admission_number})</option>
+                ))}
+              </select>
+              <select
+                className="rounded-xl border border-slate-200 bg-white/80 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                value={selectedExamId ?? ""}
+                onChange={(e) => setSelectedExamId(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">— Select Exam —</option>
+                {examsRaw.map((e: any) => (
+                  <option key={e.id} value={e.id}>{e.exam_name} — Term {e.term}, {e.year}</option>
+                ))}
+              </select>
+            </div>
 
-        {showReport && (
-          <button
-            onClick={handlePrint}
-            className="flex items-center gap-2 bg-blue-950 hover:bg-blue-900 text-white px-5 py-2 rounded-xl transition-all text-sm"
-          >
-            <Printer className="w-4 h-4" />
-            Print
-          </button>
-        )}
+            {showReport && (
+              <button
+                onClick={handlePrint}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-700 to-indigo-700 text-white text-sm font-semibold shadow-lg hover:shadow-blue-500/30 transition-all"
+              >
+                <Printer className="w-4 h-4" />
+                Print / Save PDF
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* ── EMPTY STATE ── */}
       {!showReport && (
-        <div className="text-center py-24 text-slate-400 text-sm">
-          {!selectedStudentId || !selectedExamId
-            ? "Select a student and exam above to generate the report."
-            : "No results found for this student and exam."}
+        <div className="no-print relative z-10 max-w-3xl mx-auto text-center py-20">
+          <div className="mx-auto h-16 w-16 rounded-2xl bg-white/70 backdrop-blur-xl border border-white/60 shadow-xl grid place-items-center mb-4">
+            <Sparkles className="w-7 h-7 text-blue-600" />
+          </div>
+          <h2 className="text-xl font-black text-slate-800">Generate a premium report card</h2>
+          <p className="text-sm text-slate-500 mt-2">
+            {(!selectedStudentId || !selectedExamId)
+              ? "Select a student and an exam to build the official school report."
+              : "No results found for this student and exam yet."}
+          </p>
         </div>
       )}
 
       {/* ── REPORT ── */}
       {showReport && (
-        <div className="print-container max-w-7xl mx-auto bg-white rounded-3xl overflow-hidden shadow-2xl">
+        <div
+          ref={printRef}
+          className="print-container relative z-10 max-w-7xl mx-auto bg-white rounded-[28px] overflow-hidden shadow-[0_30px_80px_-30px_rgba(15,23,42,0.35)] ring-1 ring-slate-200"
+        >
+          {/* ── LETTERHEAD ── */}
+          <div className="relative overflow-hidden text-white">
+            <div className="absolute inset-0 bg-[linear-gradient(120deg,#0b1d4a_0%,#142b6f_45%,#1e3a8a_75%,#1e1b4b_100%)]" />
+            <div className="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.35),transparent_60%)]" />
+            <div className="absolute -bottom-20 -left-10 h-56 w-56 rounded-full bg-yellow-400/15 blur-3xl" />
+            <div className="absolute -top-16 right-20 h-40 w-40 rounded-full bg-cyan-400/20 blur-3xl" />
 
-          {/* LETTERHEAD */}
-          <div className="bg-gradient-to-r from-blue-950 via-blue-900 to-blue-950 rounded-t-3xl overflow-hidden text-white relative">
-            <div className="absolute inset-0 opacity-10 bg-[radial-gradient(circle_at_top_right,white,transparent)]" />
-            <div className="relative z-10 px-6 py-8">
-              <div className="flex flex-col md:flex-row items-center gap-5">
-                <div className="bg-white rounded-2xl p-3 shadow-xl">
-                  <img
-                    src={school?.logo_url || "/placeholder.svg"}
-                    alt="School Logo"
-                    className="w-24 h-24 object-contain"
-                  />
+            {/* Top hairlines */}
+            <div className="relative z-10 flex items-center gap-2 px-8 pt-4">
+              <span className="h-px flex-1 bg-white/20" />
+              <span className="text-[10px] tracking-[0.3em] text-white/60 uppercase">Official Document</span>
+              <span className="h-px flex-1 bg-white/20" />
+            </div>
+
+            <div className="relative z-10 px-8 py-7">
+              <div className="flex flex-col md:flex-row items-center gap-6">
+                <div className="shrink-0">
+                  <div className="relative">
+                    <div className="absolute inset-0 rounded-2xl bg-yellow-400/40 blur-xl" />
+                    <div className="relative bg-white rounded-2xl p-3 shadow-2xl ring-1 ring-white/40">
+                      <img
+                        src={school?.logo_url || "/placeholder.svg"}
+                        alt={`${school?.name ?? "School"} logo`}
+                        className="w-24 h-24 object-contain"
+                      />
+                    </div>
+                  </div>
                 </div>
+
                 <div className="flex-1 text-center md:text-left">
-                  <h1 className="text-3xl md:text-5xl font-black uppercase tracking-wide">
-                    {school?.name}
-                  </h1>
-                  <div className="w-40 h-1 bg-yellow-400 rounded-full my-3 mx-auto md:mx-0" />
-                  <p className="text-yellow-300 text-lg italic font-semibold">
-                    Motto: {school?.motto || "Excellence Through Education"}
+                  <p className="text-[11px] tracking-[0.35em] text-yellow-300/90 uppercase font-semibold">
+                    {selectedExam?.exam_name} • Term {selectedExam?.term} • {selectedExam?.year}
                   </p>
+                  <h1 className="text-3xl md:text-5xl font-black uppercase tracking-tight mt-1 drop-shadow-sm">
+                    {school?.name ?? "School Name"}
+                  </h1>
+                  <div className="flex items-center gap-2 mt-3 justify-center md:justify-start">
+                    <span className="h-[3px] w-10 bg-yellow-400 rounded-full" />
+                    <p className="italic text-yellow-200/95 text-sm md:text-base font-medium">
+                      {school?.motto ? `“${school.motto}”` : "“Excellence Through Education”"}
+                    </p>
+                    <span className="h-[3px] w-10 bg-yellow-400/40 rounded-full" />
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap justify-center md:justify-start gap-x-5 gap-y-1.5 text-[12px] text-white/85">
+                    {school?.address && <span className="inline-flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-yellow-300" />{school.address}</span>}
+                    {school?.phone   && <span className="inline-flex items-center gap-1.5"><Phone className="w-3.5 h-3.5 text-yellow-300" />{school.phone}</span>}
+                    {school?.email   && <span className="inline-flex items-center gap-1.5"><Mail className="w-3.5 h-3.5 text-yellow-300" />{school.email}</span>}
+                    {school?.website && <span className="inline-flex items-center gap-1.5"><Globe className="w-3.5 h-3.5 text-yellow-300" />{school.website}</span>}
+                  </div>
+                </div>
+
+                {/* Serial / authenticity */}
+                <div className="hidden md:flex flex-col items-end gap-2">
+                  <div className="px-3 py-1.5 rounded-full bg-white/10 border border-white/20 text-[11px] tracking-widest uppercase backdrop-blur">
+                    <ShieldCheck className="inline w-3.5 h-3.5 mr-1 text-emerald-300" />
+                    Verified
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] tracking-[0.25em] uppercase text-white/60">Serial No.</p>
+                    <p className="font-mono text-sm text-white/95">{serial}</p>
+                    <p className="text-[10px] text-white/60 mt-0.5">Issued {formattedDate}</p>
+                  </div>
                 </div>
               </div>
             </div>
+
+            {/* Gold accent strip */}
+            <div className="relative z-10 h-2 bg-gradient-to-r from-yellow-500 via-yellow-300 to-yellow-500" />
           </div>
 
-          {/* REPORT TITLE */}
-          <div className="bg-white px-6 pt-6">
+          {/* ── BODY ── */}
+          <div className="px-6 md:px-10 pt-8 pb-2">
+            {/* Title */}
             <div className="flex items-center justify-center gap-4 mb-8">
-              <div className="h-[2px] bg-yellow-500 flex-1 max-w-[120px]" />
-              <h2 className="text-2xl md:text-4xl font-black uppercase text-blue-950 text-center">
+              <div className="h-[2px] bg-gradient-to-r from-transparent via-yellow-500 to-transparent flex-1 max-w-[160px]" />
+              <h2 className="text-2xl md:text-3xl font-black uppercase text-blue-950 tracking-wide">
                 Student Progress Report
               </h2>
-              <div className="h-[2px] bg-yellow-500 flex-1 max-w-[120px]" />
+              <div className="h-[2px] bg-gradient-to-r from-transparent via-yellow-500 to-transparent flex-1 max-w-[160px]" />
             </div>
 
-            {/* STUDENT INFO */}
-            <div className="border rounded-3xl p-6 grid md:grid-cols-3 gap-6 shadow-sm mb-8">
-              <InfoCard icon={<User />} label="Student Name" value={selectedStudent?.name} />
-              <InfoCard icon={<Hash />} label="Admission No." value={selectedStudent?.admission_number} />
-              <InfoCard icon={<Users />} label="Gender" value={selectedStudent?.gender} />
-              <InfoCard icon={<GraduationCap />} label="Grade / Class" value={(selectedStudent?.grades as any)?.grade_name} />
-              <InfoCard icon={<ClipboardList />} label="Exam" value={selectedExam?.exam_name} />
-              <InfoCard icon={<CalendarDays />} label="Term & Year" value={`Term ${selectedExam?.term}, ${selectedExam?.year}`} />
-              <InfoCard icon={<Trophy />} label="Position In Class" value={`${studentRank} out of ${totalStudents}`} />
+            {/* Student info + Hero score */}
+            <div className="grid lg:grid-cols-3 gap-5 mb-8 avoid-break">
+              <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-5 shadow-sm">
+                <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-4">
+                  <InfoCard icon={<User className="w-4 h-4" />} label="Student Name" value={selectedStudent?.name} />
+                  <InfoCard icon={<Hash className="w-4 h-4" />} label="Admission No." value={selectedStudent?.admission_number} />
+                  <InfoCard icon={<Users className="w-4 h-4" />} label="Gender" value={selectedStudent?.gender} />
+                  <InfoCard icon={<GraduationCap className="w-4 h-4" />} label="Grade / Class" value={(selectedStudent?.grades as any)?.grade_name} />
+                  <InfoCard icon={<ClipboardList className="w-4 h-4" />} label="Exam" value={selectedExam?.exam_name} />
+                  <InfoCard icon={<CalendarDays className="w-4 h-4" />} label="Term & Year" value={`Term ${selectedExam?.term}, ${selectedExam?.year}`} />
+                </div>
+              </div>
+
+              <div className={`rounded-2xl p-5 border ring-1 ${tone.ring} bg-gradient-to-br ${tone.soft} shadow-sm relative overflow-hidden`}>
+                <div className="absolute -top-8 -right-8 h-28 w-28 rounded-full bg-white/40 blur-2xl" />
+                <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500 font-semibold">Overall Performance</p>
+                <div className="mt-2 flex items-end gap-2">
+                  <span className="text-6xl font-black text-slate-900 leading-none">{percentage}</span>
+                  <span className="text-2xl font-bold text-slate-500 mb-1">%</span>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${tone.chip}`}>Grade {overallGrade}</span>
+                  <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-slate-900 text-white">{overallPoints} pts</span>
+                  <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-white/70 text-slate-700 border border-slate-200">
+                    <Trophy className="inline w-3 h-3 mr-1 text-yellow-600" />
+                    Rank {studentRank}/{totalStudents}
+                  </span>
+                </div>
+                <div className="mt-4">
+                  <div className="h-2 w-full rounded-full bg-white/70 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 transition-all"
+                      style={{ width: `${Math.min(100, Math.max(0, percentage))}%` }}
+                    />
+                  </div>
+                  <div className="mt-1.5 flex justify-between text-[10px] text-slate-500 font-semibold">
+                    <span>Class Avg {classAverage}%</span>
+                    <span>Target 100%</span>
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* RESULTS TABLE */}
-            <div className="overflow-x-auto border rounded-3xl shadow-sm mb-8">
-              <table className="w-full">
-                <thead className="bg-blue-950 text-white">
-                  <tr>
-                    <th className="p-4 text-left">Learning Area</th>
-                    <th className="p-4 text-center">Marks</th>
-                    <th className="p-4 text-center">Grade</th>
-                    <th className="p-4 text-center">Points</th>
-                    <th className="p-4 text-left">Teacher's Remark</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {reportResults.map((subject: any, index: number) => (
-                    <tr key={index} className={`border-b ${index % 2 === 0 ? "bg-white" : "bg-slate-50"}`}>
-                      <td className="p-4 font-semibold">
-                        <div className="flex items-center gap-3">
-                          <BookOpen className="w-5 h-5 text-blue-900" />
-                          {subject.subject_name}
-                        </div>
-                      </td>
-                      <td className="p-4 text-center font-bold">{subject.marks}</td>
-                      <td className="p-4 text-center">{subject.grade}</td>
-                      <td className="p-4 text-center">{subject.points}</td>
-                      <td className="p-4">{subject.remark}</td>
+            <div className="rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-8 avoid-break">
+              <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                <h3 className="text-sm font-black uppercase tracking-wide text-slate-700">Learning Areas</h3>
+                <span className="text-[11px] text-slate-500">{reportResults.length} subjects</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gradient-to-r from-blue-950 to-indigo-900 text-white">
+                    <tr>
+                      <th className="p-4 text-left font-semibold">Learning Area</th>
+                      <th className="p-4 text-center font-semibold">Marks</th>
+                      <th className="p-4 text-left font-semibold w-1/3">Performance</th>
+                      <th className="p-4 text-center font-semibold">Grade</th>
+                      <th className="p-4 text-center font-semibold">Points</th>
+                      <th className="p-4 text-left font-semibold">Teacher's Remark</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {reportResults.map((subject: any, index: number) => {
+                      const t = BAND_TONE[subject.band as Band];
+                      return (
+                        <tr key={index} className={`border-b last:border-0 ${index % 2 === 0 ? "bg-white" : "bg-slate-50/60"}`}>
+                          <td className="p-4 font-semibold text-slate-800">
+                            <div className="flex items-center gap-3">
+                              <span className="h-8 w-8 rounded-lg bg-blue-50 text-blue-700 grid place-items-center">
+                                <BookOpen className="w-4 h-4" />
+                              </span>
+                              {subject.subject_name}
+                            </div>
+                          </td>
+                          <td className="p-4 text-center font-black text-slate-900">{subject.marks}</td>
+                          <td className="p-4">
+                            <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-600"
+                                style={{ width: `${Math.min(100, Math.max(0, subject.marks))}%` }}
+                              />
+                            </div>
+                          </td>
+                          <td className="p-4 text-center">
+                            <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${t.chip}`}>{subject.grade}</span>
+                          </td>
+                          <td className="p-4 text-center font-bold text-slate-700">{subject.points}</td>
+                          <td className="p-4 text-slate-600 text-[13px]">{subject.remark}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
             {/* SUMMARY */}
-            <div className="grid md:grid-cols-4 gap-4 mb-8">
-              <SummaryCard title="Total Marks" value={`${totalMarks}`} icon={<Award />} />
-              <SummaryCard title="Percentage" value={`${percentage}%`} icon={<Star />} />
-              <SummaryCard title="Overall Grade" value={overallGrade} icon={<GraduationCap />} />
-              <SummaryCard title="Points" value={`${overallPoints}`} icon={<Trophy />} />
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8 avoid-break">
+              <SummaryCard title="Total Marks" value={`${totalMarks}`} sub={`/ ${subjectCount * 100}`} icon={<Award className="w-4 h-4" />} accent="from-blue-600 to-indigo-600" />
+              <SummaryCard title="Percentage" value={`${percentage}%`} sub={`Class avg ${classAverage}%`} icon={<Star className="w-4 h-4" />} accent="from-amber-500 to-orange-600" />
+              <SummaryCard title="Overall Grade" value={overallGrade} sub={`Band ${band}`} icon={<GraduationCap className="w-4 h-4" />} accent="from-emerald-500 to-teal-600" />
+              <SummaryCard title="Class Position" value={`${studentRank}`} sub={`of ${totalStudents}`} icon={<Trophy className="w-4 h-4" />} accent="from-fuchsia-500 to-pink-600" />
             </div>
 
             {/* GRADING SCALE */}
-            <div className="border rounded-3xl p-5 mb-8">
-              <h3 className="text-blue-950 font-black text-lg mb-4">GRADING SCALE</h3>
-              <div className="flex flex-wrap gap-4 text-sm font-semibold text-slate-700">
-                <span>EE1 (90–100%)</span>
-                <span>EE2 (75–89%)</span>
-                <span>ME1 (58–74%)</span>
-                <span>ME2 (41–57%)</span>
-                <span>AE1 (31–40%)</span>
-                <span>AE2 (21–30%)</span>
-                <span>BE1 (11–20%)</span>
-                <span>BE2 (0–10%)</span>
+            <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-5 mb-8 avoid-break">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-black uppercase tracking-wide text-slate-700">CBC Grading Scale</h3>
+                <span className="text-[11px] text-slate-500">EE • ME • AE • BE</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-2 text-xs font-semibold">
+                {[
+                  ["EE1","90–100"],["EE2","75–89"],["ME1","58–74"],["ME2","41–57"],
+                  ["AE1","31–40"],["AE2","21–30"],["BE1","11–20"],["BE2","0–10"],
+                ].map(([g, r]) => (
+                  <div key={g} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-center">
+                    <p className="text-blue-950 font-black">{g}</p>
+                    <p className="text-[10px] text-slate-500 mt-0.5">{r}%</p>
+                  </div>
+                ))}
               </div>
             </div>
 
             {/* REMARKS */}
-            <div className="grid md:grid-cols-2 gap-6 mb-10">
-              <div className="border rounded-3xl p-6">
-                <h3 className="font-black text-blue-950 text-lg mb-4">Class Teacher's Remarks</h3>
-                <p className="text-lg mb-10">{teacherRemark}</p>
-                <div className="border-b border-dashed mb-2 w-52" />
-                <div className="flex justify-between text-sm text-slate-500">
-                  <span>Teacher Signature</span>
-                  <span>{formattedDate}</span>
-                </div>
-              </div>
-              <div className="border rounded-3xl p-6">
-                <h3 className="font-black text-blue-950 text-lg mb-4">Principal's Remarks</h3>
-                <p className="text-lg mb-10">{principalRemark}</p>
-                <div className="border-b border-dashed mb-2 w-52" />
-                <div className="flex justify-between text-sm text-slate-500">
-                  <span>Principal Signature</span>
-                  <span>{formattedDate}</span>
-                </div>
-              </div>
+            <div className="grid md:grid-cols-2 gap-5 mb-10 avoid-break">
+              <RemarkCard title="Class Teacher's Remarks" body={teacherRemark} signer="Class Teacher" date={formattedDate} />
+              <RemarkCard title="Principal's Remarks" body={principalRemark} signer="Principal" date={formattedDate} />
             </div>
 
-            {/* STUDENT RANKINGS */}
-            <div className="mt-12 mb-10">
-              <div className="flex items-center justify-center gap-4 mb-8">
-                <div className="h-[2px] bg-yellow-500 flex-1 max-w-[120px]" />
-                <h2 className="text-2xl md:text-4xl font-black uppercase text-blue-950 text-center">
-                  Student Rankings
+            {/* RANKINGS */}
+            <div className="mt-2 mb-8">
+              <div className="flex items-center justify-center gap-4 mb-6">
+                <div className="h-[2px] bg-gradient-to-r from-transparent via-yellow-500 to-transparent flex-1 max-w-[140px]" />
+                <h2 className="text-xl md:text-2xl font-black uppercase text-blue-950 tracking-wide flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-blue-700" /> Class Rankings
                 </h2>
-                <div className="h-[2px] bg-yellow-500 flex-1 max-w-[120px]" />
+                <div className="h-[2px] bg-gradient-to-r from-transparent via-yellow-500 to-transparent flex-1 max-w-[140px]" />
               </div>
-              <div className="overflow-x-auto border rounded-3xl shadow-sm">
-                <table className="w-full">
-                  <thead className="bg-blue-950 text-white">
+
+              <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm">
+                <table className="w-full text-sm">
+                  <thead className="bg-gradient-to-r from-blue-950 to-indigo-900 text-white">
                     <tr>
-                      <th className="p-4 text-left">Rank</th>
-                      <th className="p-4 text-left">Student Name</th>
-                      <th className="p-4 text-left">Admission No</th>
-                      <th className="p-4 text-center">Total Marks</th>
-                      <th className="p-4 text-center">Average</th>
-                      <th className="p-4 text-center">Grade</th>
-                      <th className="p-4 text-center">Points</th>
+                      <th className="p-3.5 text-left font-semibold">Rank</th>
+                      <th className="p-3.5 text-left font-semibold">Student Name</th>
+                      <th className="p-3.5 text-left font-semibold">Adm. No</th>
+                      <th className="p-3.5 text-center font-semibold">Total</th>
+                      <th className="p-3.5 text-center font-semibold">Average</th>
+                      <th className="p-3.5 text-center font-semibold">Grade</th>
+                      <th className="p-3.5 text-center font-semibold">Points</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {rankings.map((item: any, index: number) => (
-                      <tr
-                        key={index}
-                        className={`border-b transition-all hover:bg-slate-50 ${
-                          item.rank === 1
-                            ? "bg-yellow-100"
-                            : item.rank === 2
-                            ? "bg-slate-200"
-                            : item.rank === 3
-                            ? "bg-orange-100"
-                            : "bg-white"
-                        }`}
-                      >
-                        <td className="p-4 font-black text-blue-950">#{item.rank}</td>
-                        <td className="p-4 font-semibold">{item.student_name}</td>
-                        <td className="p-4">{item.admission_number}</td>
-                        <td className="p-4 text-center font-bold">{item.total_marks}</td>
-                        <td className="p-4 text-center">{item.average}%</td>
-                        <td className="p-4 text-center font-bold">{item.grade}</td>
-                        <td className="p-4 text-center">{item.points}</td>
-                      </tr>
-                    ))}
+                    {rankings.map((item) => {
+                      const isMe = item.student_id === selectedStudentId;
+                      const podium =
+                        item.rank === 1 ? "bg-yellow-50" :
+                        item.rank === 2 ? "bg-slate-50" :
+                        item.rank === 3 ? "bg-orange-50" : "bg-white";
+                      return (
+                        <tr
+                          key={item.student_id}
+                          className={`border-b last:border-0 ${podium} ${isMe ? "ring-2 ring-inset ring-blue-500/40 bg-blue-50/70" : ""}`}
+                        >
+                          <td className="p-3.5">
+                            <span className={`inline-flex items-center justify-center h-7 min-w-[34px] px-2 rounded-full text-xs font-black ${
+                              item.rank === 1 ? "bg-yellow-400 text-yellow-950" :
+                              item.rank === 2 ? "bg-slate-300 text-slate-800" :
+                              item.rank === 3 ? "bg-orange-300 text-orange-950" :
+                              "bg-slate-100 text-slate-700"
+                            }`}>#{item.rank}</span>
+                          </td>
+                          <td className="p-3.5 font-semibold text-slate-800">
+                            {item.student_name}{isMe && <span className="ml-2 text-[10px] uppercase tracking-wider text-blue-700 font-black">You</span>}
+                          </td>
+                          <td className="p-3.5 text-slate-600">{item.admission_number}</td>
+                          <td className="p-3.5 text-center font-black text-slate-900">{item.total_marks}</td>
+                          <td className="p-3.5 text-center">{item.average}%</td>
+                          <td className="p-3.5 text-center">
+                            <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${BAND_TONE[bandFromScore(item.average)].chip}`}>{item.grade}</span>
+                          </td>
+                          <td className="p-3.5 text-center font-bold">{item.points}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             </div>
           </div>
 
-          {/* FOOTER */}
-          <div className="bg-blue-950 text-white px-6 py-5 rounded-b-3xl">
-            <div className="grid md:grid-cols-4 gap-4 text-sm">
-              <div className="flex items-center gap-2"><MapPin className="w-4 h-4" /><span>{school?.address}</span></div>
-              <div className="flex items-center gap-2"><Phone className="w-4 h-4" /><span>{school?.phone}</span></div>
-              <div className="flex items-center gap-2"><Mail className="w-4 h-4" /><span>{school?.email}</span></div>
-              <div className="flex items-center gap-2"><Globe className="w-4 h-4" /><span>{school?.website}</span></div>
+          {/* ── FOOTER ── */}
+          <div className="relative text-white overflow-hidden">
+            <div className="absolute inset-0 bg-[linear-gradient(120deg,#0b1d4a,#1e1b4b)]" />
+            <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_bottom_left,rgba(255,255,255,0.4),transparent_55%)]" />
+            <div className="relative z-10 px-6 md:px-10 py-6 grid md:grid-cols-3 gap-4 text-[12px]">
+              <div>
+                <p className="text-[10px] tracking-[0.3em] text-yellow-300 uppercase font-semibold mb-2">Contact</p>
+                <ul className="space-y-1.5">
+                  {school?.address && <li className="flex items-center gap-2"><MapPin className="w-3.5 h-3.5 text-yellow-300" />{school.address}</li>}
+                  {school?.phone   && <li className="flex items-center gap-2"><Phone className="w-3.5 h-3.5 text-yellow-300" />{school.phone}</li>}
+                  {school?.email   && <li className="flex items-center gap-2"><Mail className="w-3.5 h-3.5 text-yellow-300" />{school.email}</li>}
+                  {school?.website && <li className="flex items-center gap-2"><Globe className="w-3.5 h-3.5 text-yellow-300" />{school.website}</li>}
+                </ul>
+              </div>
+              <div>
+                <p className="text-[10px] tracking-[0.3em] text-yellow-300 uppercase font-semibold mb-2">Authenticity</p>
+                <p className="font-mono text-white/95">{serial}</p>
+                <p className="text-white/70 mt-1">Issued on {formattedDate}</p>
+                <p className="text-white/60 mt-1">This document is computer-generated and certified by {school?.name ?? "the school"}.</p>
+              </div>
+              <div className="md:text-right">
+                <p className="text-[10px] tracking-[0.3em] text-yellow-300 uppercase font-semibold mb-2">Powered by</p>
+                <p className="text-white/95 font-black tracking-wide">EduNexa Analytics</p>
+                <p className="text-white/60">© {new Date().getFullYear()} {school?.name ?? "School"} • All rights reserved.</p>
+              </div>
             </div>
+            <div className="h-1.5 bg-gradient-to-r from-yellow-500 via-yellow-300 to-yellow-500" />
           </div>
         </div>
       )}
@@ -480,23 +613,46 @@ const Reports = () => {
   );
 };
 
-/* ── SUB-COMPONENTS ── */
-const InfoCard = ({ icon, label, value }: any) => (
-  <div className="flex items-start gap-4">
-    <div className="bg-slate-100 p-3 rounded-full text-blue-950">{icon}</div>
-    <div>
-      <p className="text-sm uppercase text-slate-500 font-medium">{label}</p>
-      <h3 className="font-bold text-lg text-slate-800">{value ?? "—"}</h3>
+/* ────────────────────────────────────────────────────────────────
+   SUBCOMPONENTS
+──────────────────────────────────────────────────────────────── */
+const InfoCard: React.FC<{ icon: React.ReactNode; label: string; value?: React.ReactNode }> = ({ icon, label, value }) => (
+  <div className="rounded-xl border border-slate-200/80 bg-white p-3.5 hover:shadow-sm transition-shadow">
+    <div className="flex items-center gap-2 text-slate-500">
+      <span className="h-7 w-7 rounded-lg bg-blue-50 text-blue-700 grid place-items-center">{icon}</span>
+      <p className="text-[10px] uppercase tracking-[0.18em] font-bold">{label}</p>
     </div>
+    <p className="mt-2 text-[15px] font-black text-slate-900 leading-snug">{value ?? "—"}</p>
   </div>
 );
 
-const SummaryCard = ({ title, value, icon }: any) => (
-  <div className="bg-slate-50 border rounded-2xl p-5 flex items-center gap-4">
-    <div className="bg-blue-950 text-white p-3 rounded-xl">{icon}</div>
-    <div>
-      <p className="text-sm uppercase text-slate-500 font-semibold">{title}</p>
-      <h2 className="text-2xl font-black text-blue-950">{value}</h2>
+const SummaryCard: React.FC<{
+  title: string; value: string; sub?: string; icon: React.ReactNode; accent: string;
+}> = ({ title, value, sub, icon, accent }) => (
+  <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className={`absolute -top-10 -right-10 h-24 w-24 rounded-full bg-gradient-to-br ${accent} opacity-10`} />
+    <div className="flex items-center gap-2 text-slate-500">
+      <span className={`h-7 w-7 rounded-lg bg-gradient-to-br ${accent} text-white grid place-items-center shadow`}>{icon}</span>
+      <p className="text-[10px] uppercase tracking-[0.18em] font-bold">{title}</p>
+    </div>
+    <p className="mt-2 text-2xl font-black text-slate-900">{value}</p>
+    {sub && <p className="text-[11px] text-slate-500 mt-0.5">{sub}</p>}
+  </div>
+);
+
+const RemarkCard: React.FC<{ title: string; body: string; signer: string; date: string }> = ({ title, body, signer, date }) => (
+  <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-6 shadow-sm">
+    <div className="flex items-center gap-2 mb-3">
+      <span className="h-7 w-7 rounded-lg bg-blue-50 text-blue-700 grid place-items-center">
+        <FileText className="w-4 h-4" />
+      </span>
+      <h3 className="font-black text-blue-950 text-sm uppercase tracking-wide">{title}</h3>
+    </div>
+    <p className="text-slate-700 leading-relaxed text-[14px] mb-10">{body}</p>
+    <div className="border-b border-dashed border-slate-300 mb-2 w-56" />
+    <div className="flex justify-between text-[12px] text-slate-500">
+      <span className="font-semibold">{signer} Signature</span>
+      <span>{date}</span>
     </div>
   </div>
 );

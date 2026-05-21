@@ -638,7 +638,9 @@ const kpis: KpiProps[] = [
 { title: 'Exams Tracked',  value: examsCount,    delta: '+12%',   tone: 'up',      icon: ClipboardList,accent: BRAND.amber,    spark: mkSpark(examsCount    || 8),  loading: examsQuery.isLoading    },
 ];
 
-const topSubject = subjectData[0] ? Top: ${subjectData[0].subject} ${subjectData[0].avg}% : null;
+const topSubject = subjectData[0]
+  ? `Top: ${subjectData[0].subject} ${subjectData[0].avg}%`
+  : null;
 
 /* ════════════════════════════════════════════════════════
 RENDER

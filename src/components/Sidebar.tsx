@@ -114,10 +114,9 @@ const Sidebar = () => {
         { to: '/attendance', label: 'Take Attendance' },
         { to: '/attendance/report', label: 'Attendance Report' },
       ]
-    },
-    {
+ },
       { to: '/assessment-hub', icon: BarChart3, label: 'Assessment Hub' },
-  ];
+    ];
 
   // Add Teachers and Subscription for school admins
   if (isSchoolAdmin) {

@@ -91,16 +91,15 @@ const Sidebar = () => {
   const schoolAdminNav: NavItem[] = [
     { to: '/school-admin', icon: LayoutDashboard, label: 'Dashboard' },
     { to: '/students', icon: Users, label: 'Students' },
-    {
       {
-  icon: GraduationCap,
-  label: 'Academics',
-  subItems: [
-    { to: '/grades', label: 'Grades' },
-    { to: '/subjects', label: 'Subjects' },
-    ...(!isTeacher ? [{ to: '/promotion', label: 'Promotion' }] : []),
-  ]
-},
+        icon: GraduationCap,
+        label: 'Academics',
+        subItems: [
+          { to: '/grades', label: 'Grades' },
+          { to: '/subjects', label: 'Subjects' },
+          ...(!isTeacher ? [{ to: '/promotion', label: 'Promotion' }] : []),
+        ]
+      },
     {
       icon: ClipboardList,
       label: 'Examinations',

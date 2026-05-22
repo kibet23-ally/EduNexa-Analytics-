@@ -116,13 +116,7 @@ const Sidebar = () => {
       ]
     },
     {
-      icon: BarChart3,
-      label: 'Analytics & Reports',
-      subItems: [
-        { to: '/analytics', label: 'Analytics' },
-        { to: '/reports', label: 'Reports' },
-      ]
-    },
+      { to: '/assessment-hub', icon: BarChart3, label: 'Assessment Hub' },
   ];
 
   // Add Teachers and Subscription for school admins

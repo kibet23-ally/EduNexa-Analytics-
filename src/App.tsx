@@ -19,8 +19,7 @@ const Grades           = lazy(() => import('./pages/Grades'));
 const Subjects         = lazy(() => import('./pages/Subjects'));
 const Exams            = lazy(() => import('./pages/Exams'));
 const MarksEntry       = lazy(() => import('./pages/MarksEntry'));
-const Analytics        = lazy(() => import('./pages/Analytics'));
-const Reports          = lazy(() => import('./pages/Reports'));
+const AssessmentHub    = lazy(() => import('./pages/AssessmentHub'));
 const Teachers         = lazy(() => import('./pages/Teachers'));
 const OrderForm        = lazy(() => import('./pages/OrderForm'));
 const Schools          = lazy(() => import('./pages/Schools'));
@@ -167,8 +166,14 @@ const AppRoutes = () => (
     <Route path="/marks"       element={<ProtectedRoute><Layout>{wrap(<MarksEntry />, 'Marks Entry')}</Layout></ProtectedRoute>} />
     <Route path="/attendance"  element={<ProtectedRoute><Layout>{wrap(<Attendance />, 'Attendance')}</Layout></ProtectedRoute>} />
     <Route path="/attendance/report" element={<ProtectedRoute><Layout>{wrap(<AttendanceReport />, 'Attendance Report')}</Layout></ProtectedRoute>} />
-    <Route path="/analytics"   element={<ProtectedRoute><Layout>{wrap(<Analytics />, 'Analytics')}</Layout></ProtectedRoute>} />
-    <Route path="/reports"     element={<ProtectedRoute><Layout>{wrap(<Reports />, 'Reports')}</Layout></ProtectedRoute>} />
+    <Route
+  path="/assessment-hub"
+  element={
+    <ProtectedRoute>
+      <Layout>{wrap(<AssessmentHub />, 'Assessment Hub')}</Layout>
+    </ProtectedRoute>
+  }
+/>
     <Route path="/settings"    element={<ProtectedRoute><Layout>{wrap(<SettingsPage />, 'Settings')}</Layout></ProtectedRoute>} />
 
     {/* Role-protected */}

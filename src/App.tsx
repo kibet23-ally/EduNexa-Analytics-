@@ -108,7 +108,7 @@ const RoleProtectedRoute: React.FC<{
   const normalizedAllowedRoles = allowedRoles.map(r => normalize(r));
 
   if (!normalizedAllowedRoles.includes(normalizedUserRole)) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/school-admin" />;
   }
 
   return <>{children}</>;

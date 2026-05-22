@@ -984,7 +984,7 @@ const Reports = () => {
         )}
 
         {/* ── CLASS ANALYSIS CONTROLS ── */}
-        {tab === "rankings" && (
+         {tab === "rankings" && (
           <div className="flex flex-col sm:flex-row gap-2">
             <select
               className="flex-1 border border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
@@ -1291,39 +1291,37 @@ const Reports = () => {
 
                 {/* Subject Rankings */}
                 <div>
-                  <div className="flex items-center justify-center gap-4 mb-5">
-                    <div className="h-[2px] bg-yellow-500 flex-1 max-w-[100px]" />
-                    <h2 className="text-xl font-black uppercase text-blue-950">Subject Rankings</h2>
-                    <div className="h-[2px] bg-yellow-500 flex-1 max-w-[100px]" />
-                  </div>
-                  <div className="overflow-x-auto border rounded-3xl shadow-sm">
-                    <table className="w-full">
-                      <thead className="bg-blue-950 text-white">
-                        <tr>
-                          {["Rank", "Subject", "Class Average", "Highest Score", "Lowest Score", "No. of Students"].map(h => (
-                            <th key={h} className="p-4 text-left text-sm font-semibold">{h}</th>
+                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">
+                    Subject Rankings — Best to Least
+                  </h3>
+                  <div className="overflow-x-auto rounded-xl border border-slate-200">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-slate-800 text-white">
+                          {["Rank", "Subject", "Class Average", "Highest", "Lowest", "Students"].map(h => (
+                            <th key={h} className="px-4 py-3 text-left text-xs font-medium tracking-wide">{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {subjectRankings.map((s, i) => (
-                          <tr key={i} className={`border-b hover:bg-slate-50 ${i % 2 === 0 ? "bg-white" : "bg-slate-50"}`}>
-                            <td className="p-4 font-black text-blue-950">#{i + 1}</td>
-                            <td className="p-4 font-semibold flex items-center gap-2">
-                              <TrendingUp className={`w-4 h-4 ${i === 0 ? "text-emerald-500" : i === subjectRankings.length - 1 ? "text-rose-400" : "text-slate-300"}`} />
+                          <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50 ${i % 2 === 0 ? "bg-white" : "bg-slate-50/50"}`}>
+                            <td className="px-4 py-3 font-bold text-slate-600">#{i + 1}</td>
+                            <td className="px-4 py-3 font-medium text-slate-800 flex items-center gap-2">
+                              <TrendingUp className={`w-3.5 h-3.5 ${i === 0 ? "text-emerald-500" : i === subjectRankings.length - 1 ? "text-rose-400" : "text-slate-300"}`} />
                               {s.subject_name}
                             </td>
-                            <td className="p-4">
+                            <td className="px-4 py-3">
                               <div className="flex items-center gap-2">
-                                <div className="w-24 h-2 bg-slate-100 rounded-full overflow-hidden">
-                                  <div className="h-full rounded-full bg-blue-500" style={{ width: `${s.avg}%` }} />
+                                <div className="w-20 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                  <div className="h-full rounded-full bg-slate-600" style={{ width: `${s.avg}%` }} />
                                 </div>
-                                <span className="font-bold text-slate-800">{s.avg.toFixed(1)}%</span>
+                                <span className="font-semibold text-slate-700 text-xs">{s.avg.toFixed(1)}%</span>
                               </div>
                             </td>
-                            <td className="p-4 text-center font-semibold text-emerald-600">{s.highest}</td>
-                            <td className="p-4 text-center font-semibold text-rose-500">{s.lowest}</td>
-                            <td className="p-4 text-center text-slate-600">{s.count}</td>
+                            <td className="px-4 py-3 text-center font-medium text-emerald-700">{s.highest}</td>
+                            <td className="px-4 py-3 text-center font-medium text-rose-600">{s.lowest}</td>
+                            <td className="px-4 py-3 text-center text-slate-600">{s.count}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1335,82 +1333,147 @@ const Reports = () => {
           )}
 
           {/* ── BULK DOWNLOAD ── */}
-          <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6">
-            <h3 className="text-lg font-black text-blue-950 mb-1">Bulk Download Report Cards</h3>
-            <p className="text-sm text-slate-500 mb-4">
-              Select an exam, choose students, and download all report cards as a single PDF.
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+            <h3 className="text-base font-semibold text-slate-800 mb-0.5">Bulk Download Report Cards</h3>
+            <p className="text-sm text-slate-500 mb-5">
+              Select an exam and optionally a grade. Download all selected report cards as a single PDF.
             </p>
 
+            {/* Exam + Grade selectors */}
             <div className="flex flex-col sm:flex-row gap-3 mb-4">
               <select
-                className="flex-1 border border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-white"
+                className="flex-1 border border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
                 value={bulkExamId ?? ""}
                 onChange={e => {
                   setBulkExamId(e.target.value ? Number(e.target.value) : null);
                   setSelectedBulkIds(new Set());
+                  setBulkGradeId(null);
                 }}>
-                <option value="">— Select Exam for Bulk Download —</option>
+                <option value="">Select exam…</option>
                 {examsRaw.map((e: any) => (
                   <option key={e.id} value={e.id}>{e.exam_name} — Term {e.term}, {e.year}</option>
                 ))}
               </select>
-              {bulkExamId && (
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setSelectedBulkIds(new Set(studentsRaw.map((s: any) => s.id)))}
-                    className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-all">
-                    <CheckSquare className="w-4 h-4" /> Select All
-                  </button>
-                  <button
-                    onClick={() => setSelectedBulkIds(new Set())}
-                    className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-all">
-                    <Square className="w-4 h-4" /> Clear
-                  </button>
-                  <button
-                    onClick={handleBulkDownload}
-                    disabled={selectedBulkIds.size === 0 || bulkDownloading}
-                    className="flex items-center gap-2 bg-blue-950 hover:bg-blue-900 disabled:opacity-50 text-white px-5 py-2.5 rounded-xl text-sm font-semibold transition-all">
-                    {bulkDownloading
-                      ? <><Loader2 className="w-4 h-4 animate-spin" /> {bulkProgress}%</>
-                      : <><Download className="w-4 h-4" /> Download {selectedBulkIds.size > 0 ? `(${selectedBulkIds.size})` : ""}</>}
-                  </button>
-                </div>
-              )}
+
+              <select
+                className="flex-1 border border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                value={bulkGradeId ?? ""}
+                onChange={e => {
+                  const gid = e.target.value ? Number(e.target.value) : null;
+                  setBulkGradeId(gid);
+                  setSelectedBulkIds(
+                    gid
+                      ? new Set(studentsRaw.filter((s: any) => s.grade_id === gid).map((s: any) => s.id))
+                      : new Set()
+                  );
+                }}>
+                <option value="">All grades</option>
+                {gradesRaw.map((g: any) => (
+                  <option key={g.id} value={g.id}>
+                    {g.grade_name} ({studentsRaw.filter((s: any) => s.grade_id === g.id).length} students)
+                  </option>
+                ))}
+              </select>
             </div>
 
+            {/* Toolbar */}
             {bulkExamId && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 max-h-64 overflow-y-auto">
-                {studentsRaw.map((s: any) => {
-                  const selected = selectedBulkIds.has(s.id);
+              <div className="flex flex-wrap gap-2 mb-4 items-center">
+                <button
+                  onClick={() => {
+                    const pool = bulkGradeId
+                      ? studentsRaw.filter((s: any) => s.grade_id === bulkGradeId)
+                      : studentsRaw;
+                    setSelectedBulkIds(new Set(pool.map((s: any) => s.id)));
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-all">
+                  <CheckSquare className="w-3.5 h-3.5" />
+                  {bulkGradeId ? "Select all in grade" : "Select all"}
+                </button>
+                <button
+                  onClick={() => setSelectedBulkIds(new Set())}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-all">
+                  <Square className="w-3.5 h-3.5" /> Clear
+                </button>
+
+                {/* Per-grade quick-toggle pills (only when no grade filter active) */}
+                {!bulkGradeId && gradesRaw.map((g: any) => {
+                  const gs = studentsRaw.filter((s: any) => s.grade_id === g.id);
+                  if (!gs.length) return null;
+                  const allSel = gs.every((s: any) => selectedBulkIds.has(s.id));
+                  return (
+                    <button key={g.id}
+                      onClick={() => {
+                        const next = new Set(selectedBulkIds);
+                        if (allSel) gs.forEach((s: any) => next.delete(s.id));
+                        else        gs.forEach((s: any) => next.add(s.id));
+                        setSelectedBulkIds(next);
+                      }}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium transition-all
+                        ${allSel
+                          ? "border-slate-700 bg-slate-800 text-white"
+                          : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"}`}>
+                      {allSel ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+                      {g.grade_name}
+                    </button>
+                  );
+                })}
+
+                <button
+                  onClick={handleBulkDownload}
+                  disabled={selectedBulkIds.size === 0 || bulkDownloading}
+                  className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 disabled:opacity-40 text-white px-4 py-2 rounded-lg text-xs font-medium transition-all ml-auto">
+                  {bulkDownloading
+                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> {bulkProgress}%</>
+                    : <><Download className="w-3.5 h-3.5" /> Download PDF {selectedBulkIds.size > 0 ? `(${selectedBulkIds.size})` : ""}</>}
+                </button>
+              </div>
+            )}
+
+            {/* Student checkboxes */}
+            {bulkExamId && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 max-h-60 overflow-y-auto pr-1">
+                {(bulkGradeId
+                  ? studentsRaw.filter((s: any) => s.grade_id === bulkGradeId)
+                  : studentsRaw
+                ).map((s: any) => {
+                  const sel       = selectedBulkIds.has(s.id);
+                  const gradeName = gradesRaw.find((g: any) => g.id === s.grade_id)?.grade_name ?? "";
                   return (
                     <div key={s.id}
                       onClick={() => {
                         const next = new Set(selectedBulkIds);
-                        if (selected) next.delete(s.id); else next.add(s.id);
+                        if (sel) next.delete(s.id); else next.add(s.id);
                         setSelectedBulkIds(next);
                       }}
-                      className={`flex items-center gap-2 px-3 py-2 rounded-xl border cursor-pointer text-xs font-medium transition-all
-                        ${selected ? "border-blue-500 bg-blue-50 text-blue-800" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"}`}>
-                      <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-all
-                        ${selected ? "bg-blue-600" : "border-2 border-slate-300"}`}>
-                        {selected && <X className="w-2.5 h-2.5 text-white" />}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-xs font-medium transition-all select-none
+                        ${sel
+                          ? "border-slate-700 bg-slate-800 text-white"
+                          : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"}`}>
+                      <div className={`w-3.5 h-3.5 rounded flex items-center justify-center flex-shrink-0 transition-all
+                        ${sel ? "bg-white/20 border border-white/40" : "border border-slate-300"}`}>
+                        {sel && <X className="w-2 h-2 text-white" />}
                       </div>
-                      <span className="truncate">{s.name}</span>
+                      <div className="min-w-0">
+                        <div className="truncate">{s.name}</div>
+                        {!bulkGradeId && <div className="text-[9px] opacity-60 truncate">{gradeName}</div>}
+                      </div>
                     </div>
                   );
                 })}
               </div>
             )}
 
+            {/* Progress bar */}
             {bulkDownloading && (
               <div className="mt-4">
-                <div className="flex items-center justify-between text-xs text-slate-500 mb-1.5">
+                <div className="flex justify-between text-xs text-slate-500 mb-1.5">
                   <span>Generating report cards…</span>
                   <span>{bulkProgress}%</span>
                 </div>
-                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-blue-600 rounded-full transition-all duration-300"
+                    className="h-full bg-slate-700 rounded-full transition-all duration-300"
                     style={{ width: `${bulkProgress}%` }}
                   />
                 </div>
@@ -1425,23 +1488,24 @@ const Reports = () => {
 
 /* ── Sub-components ── */
 const InfoCard = ({ icon, label, value }: any) => (
-  <div className="flex items-start gap-4">
-    <div className="bg-slate-100 p-3 rounded-full text-blue-950">{icon}</div>
+  <div className="flex items-start gap-3">
+    <div className="bg-slate-100 p-2.5 rounded-lg text-slate-500 flex-shrink-0">{icon}</div>
     <div>
-      <p className="text-sm uppercase text-slate-500 font-medium">{label}</p>
-      <h3 className="font-bold text-lg text-slate-800">{value ?? "—"}</h3>
+      <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">{label}</p>
+      <p className="text-sm font-semibold text-slate-800 mt-0.5">{value ?? "—"}</p>
     </div>
   </div>
 );
 
 const SummaryCard = ({ title, value, icon }: any) => (
-  <div className="bg-slate-50 border rounded-2xl p-5 flex items-center gap-4">
-    <div className="bg-blue-950 text-white p-3 rounded-xl">{icon}</div>
+  <div className="bg-slate-800 text-white rounded-xl p-4 flex items-center gap-3">
+    <div className="text-amber-400">{icon}</div>
     <div>
-      <p className="text-sm uppercase text-slate-500 font-semibold">{title}</p>
-      <h2 className="text-2xl font-black text-blue-950">{value}</h2>
+      <p className="text-[10px] text-slate-400 font-medium uppercase tracking-widest">{title}</p>
+      <p className="text-xl font-bold">{value}</p>
     </div>
   </div>
 );
 
 export default Reports;
+                        

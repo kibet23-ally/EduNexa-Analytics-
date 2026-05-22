@@ -1,51 +1,35 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useState, useMemo, useRef, useCallback } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import {
   Award, BookOpen, CalendarDays, ClipboardList,
-  Download, FileSpreadsheet, FileText, Globe,
+  Download, FileSpreadsheet, FileText,
   GraduationCap, Hash, Loader2, Mail, MapPin,
-  Phone, Printer, Star, Trophy, TrendingUp, User, Users,
-  X, CheckSquare, Square, AlertTriangle,
+  Phone, Printer, Star, Trophy, TrendingUp,
+  User, Users, X, CheckSquare, Square, AlertTriangle,
 } from "lucide-react";
 import { useAuth } from "../useAuth";
 import { useData } from "../hooks/useData";
+import { supabase } from "../lib/supabase";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-/* ─────────────────────────────────────────────────────────────
+/* ═══════════════════════════════════════════════════════════
    CBC HELPERS
-───────────────────────────────────────────────────────────── */
+═══════════════════════════════════════════════════════════ */
 type Band = "EE" | "ME" | "AE" | "BE";
 
-const cbcGrade = (score: number): string => {
-  if (score >= 90) return "EE1";
-  if (score >= 75) return "EE2";
-  if (score >= 58) return "ME1";
-  if (score >= 41) return "ME2";
-  if (score >= 31) return "AE1";
-  if (score >= 21) return "AE2";
-  if (score >= 11) return "BE1";
-  return "BE2";
-};
+const cbcGrade = (s: number) =>
+  s >= 90 ? "EE1" : s >= 75 ? "EE2" : s >= 58 ? "ME1" :
+  s >= 41 ? "ME2" : s >= 31 ? "AE1" : s >= 21 ? "AE2" :
+  s >= 11 ? "BE1" : "BE2";
 
-const cbcPoints = (score: number): number => {
-  if (score >= 90) return 8;
-  if (score >= 75) return 7;
-  if (score >= 58) return 6;
-  if (score >= 41) return 5;
-  if (score >= 31) return 4;
-  if (score >= 21) return 3;
-  if (score >= 11) return 2;
-  return 1;
-};
+const cbcPoints = (s: number) =>
+  s >= 90 ? 8 : s >= 75 ? 7 : s >= 58 ? 6 : s >= 41 ? 5 :
+  s >= 31 ? 4 : s >= 21 ? 3 : s >= 11 ? 2 : 1;
 
-const bandFromScore = (score: number): Band => {
-  if (score >= 75) return "EE";
-  if (score >= 58) return "ME";
-  if (score >= 31) return "AE";
-  return "BE";
-};
+const bandFromScore = (s: number): Band =>
+  s >= 75 ? "EE" : s >= 58 ? "ME" : s >= 31 ? "AE" : "BE";
 
 const CLASS_TEACHER_REMARKS: Record<Band, string> = {
   EE: "An exemplary learner who shows discipline, focus and consistent academic excellence. Continue setting the pace for others.",
@@ -61,9 +45,9 @@ const PRINCIPAL_REMARKS: Record<Band, string> = {
   BE: "We believe in your potential. Greater effort, discipline and support will help you improve steadily.",
 };
 
-/* ─────────────────────────────────────────────────────────────
+/* ═══════════════════════════════════════════════════════════
    TYPES
-───────────────────────────────────────────────────────────── */
+═══════════════════════════════════════════════════════════ */
 interface ReportRow {
   subject_name: string;
   marks: number;
@@ -71,7 +55,6 @@ interface ReportRow {
   points: number;
   remark: string;
 }
-
 interface RankingRow {
   student_id: number;
   student_name: string;
@@ -82,7 +65,6 @@ interface RankingRow {
   points: number;
   rank: number;
 }
-
 interface SubjectRankRow {
   subject_name: string;
   avg: number;
@@ -90,7 +72,6 @@ interface SubjectRankRow {
   lowest: number;
   count: number;
 }
-
 interface MostImprovedRow {
   student_id: number;
   student_name: string;
@@ -100,216 +81,478 @@ interface MostImprovedRow {
   improvement: number;
 }
 
-/* ─────────────────────────────────────────────────────────────
-   PDF GENERATION — single student report card
-───────────────────────────────────────────────────────────── */
-function generateReportPDF(opts: {
-  school: any;
-  student: any;
-  exam: any;
-  reportRows: ReportRow[];
-  totalMarks: number;
-  percentage: number;
-  overallGrade: string;
-  overallPoints: number;
-  studentRank: number | string;
-  totalStudents: number;
-  teacherRemark: string;
-  principalRemark: string;
-  formattedDate: string;
-}): jsPDF {
-  const {
-    school, student, exam, reportRows,
-    totalMarks, percentage, overallGrade, overallPoints,
-    studentRank, totalStudents, teacherRemark, principalRemark, formattedDate,
-  } = opts;
+/* ═══════════════════════════════════════════════════════════
+   PDF DESIGN TOKENS — professional, understated palette
+   No bright colours. Charcoal headings, slate body text,
+   warm stone accent line, ivory/white page background.
+═══════════════════════════════════════════════════════════ */
+const PDF = {
+  /* Page */
+  pageW: 210,
+  pageH: 297,
+  margin: 14,
 
-  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-  const W = 210;
+  /* Palette — RGB tuples */
+  headerBg:   [30,  41,  59]  as [number,number,number], // slate-800
+  headerText: [255, 255, 255] as [number,number,number],
+  accentLine: [203, 175, 112] as [number,number,number], // warm gold/stone
+  subheadBg:  [248, 250, 252] as [number,number,number], // slate-50
+  subheadText:[30,  41,  59]  as [number,number,number],
+  bodyText:   [51,  65,  85]  as [number,number,number], // slate-700
+  mutedText:  [100, 116, 139] as [number,number,number], // slate-500
+  borderLine: [226, 232, 240] as [number,number,number], // slate-200
+  rowAlt:     [249, 250, 251] as [number,number,number], // gray-50
+  summaryBg:  [241, 245, 249] as [number,number,number], // slate-100
+  footerBg:   [30,  41,  59]  as [number,number,number],
+  footerText: [203, 213, 225] as [number,number,number], // slate-300
 
-  // ── Header band ──
-  doc.setFillColor(11, 31, 77);
-  doc.rect(0, 0, W, 42, "F");
+  /* Table header */
+  tHeadBg:    [30,  41,  59]  as [number,number,number],
+  tHeadText:  [255, 255, 255] as [number,number,number],
 
-  // Logo placeholder
-  if (school?.logo_url) {
-    try { doc.addImage(school.logo_url, "JPEG", 10, 5, 30, 30); } catch { /* skip */ }
-  }
+  /* Rank medal colours */
+  gold:       [254, 240, 138] as [number,number,number],
+  silver:     [226, 232, 240] as [number,number,number],
+  bronze:     [254, 237, 213] as [number,number,number],
+};
 
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(16);
-  doc.setFont("helvetica", "bold");
-  doc.text((school?.name ?? "School Name").toUpperCase(), W / 2, 15, { align: "center" });
-
-  doc.setFontSize(9);
-  doc.setFont("helvetica", "normal");
-  doc.setTextColor(253, 224, 71);
-  doc.text(`Motto: ${school?.motto ?? "Excellence Through Education"}`, W / 2, 22, { align: "center" });
-
-  doc.setTextColor(200, 215, 255);
-  doc.setFontSize(8);
-  const contact = [school?.address, school?.phone, school?.email].filter(Boolean).join("   |   ");
-  doc.text(contact, W / 2, 30, { align: "center" });
-
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(13);
-  doc.setFont("helvetica", "bold");
-  doc.text("STUDENT PROGRESS REPORT", W / 2, 39, { align: "center" });
-
-  // ── Student info grid ──
-  doc.setTextColor(30, 41, 59);
-  doc.setFontSize(9);
-  doc.setFont("helvetica", "normal");
-
-  const infoY = 50;
-  const fields = [
-    ["Student Name",    student?.name ?? "—"],
-    ["Admission No.",   student?.admission_number ?? "—"],
-    ["Gender",          student?.gender ?? "—"],
-    ["Grade / Class",   (student?.grades as any)?.grade_name ?? "—"],
-    ["Exam",            exam?.exam_name ?? "—"],
-    ["Term & Year",     `Term ${exam?.term ?? ""}, ${exam?.year ?? ""}`],
-    ["Position",        `${studentRank} out of ${totalStudents}`],
-    ["Date",            formattedDate],
-  ];
-
-  fields.forEach((f, i) => {
-    const col = i % 2 === 0 ? 10 : 110;
-    const row = infoY + Math.floor(i / 2) * 7;
-    doc.setFont("helvetica", "bold");
-    doc.text(f[0] + ":", col, row);
-    doc.setFont("helvetica", "normal");
-    doc.text(f[1], col + 35, row);
-  });
-
-  // ── Results table ──
-  autoTable(doc, {
-    startY: infoY + Math.ceil(fields.length / 2) * 7 + 4,
-    head: [["Learning Area", "Marks", "Grade", "Points", "Teacher's Remark"]],
-    body: reportRows.map(r => [r.subject_name, r.marks, r.grade, r.points, r.remark]),
-    headStyles: { fillColor: [11, 31, 77], textColor: 255, fontStyle: "bold", fontSize: 9 },
-    bodyStyles: { fontSize: 8 },
-    columnStyles: {
-      0: { cellWidth: 40 },
-      1: { cellWidth: 18, halign: "center" },
-      2: { cellWidth: 18, halign: "center" },
-      3: { cellWidth: 18, halign: "center" },
-      4: { cellWidth: 90 },
-    },
-    alternateRowStyles: { fillColor: [248, 250, 252] },
-  });
-
-  const afterTableY = (doc as any).lastAutoTable.finalY + 6;
-
-  // ── Summary boxes ──
-  const summaryItems = [
-    ["Total Marks", String(totalMarks)],
-    ["Percentage", `${percentage}%`],
-    ["Overall Grade", overallGrade],
-    ["Points", String(overallPoints)],
-  ];
-  const boxW = (W - 20) / 4;
-  summaryItems.forEach((s, i) => {
-    const bx = 10 + i * (boxW + 2);
-    doc.setFillColor(248, 250, 252);
-    doc.roundedRect(bx, afterTableY, boxW, 14, 2, 2, "F");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(13);
-    doc.setTextColor(11, 31, 77);
-    doc.text(s[1], bx + boxW / 2, afterTableY + 8, { align: "center" });
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
-    doc.setTextColor(100, 116, 139);
-    doc.text(s[0].toUpperCase(), bx + boxW / 2, afterTableY + 13, { align: "center" });
-  });
-
-  // ── Remarks ──
-  const remarkY = afterTableY + 20;
-  [[`Class Teacher's Remarks`, teacherRemark], [`Principal's Remarks`, principalRemark]].forEach((r, i) => {
-    const rx = i === 0 ? 10 : 110;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9);
-    doc.setTextColor(11, 31, 77);
-    doc.text(r[0], rx, remarkY);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(30, 41, 59);
-    const lines = doc.splitTextToSize(r[1], 88) as string[];
-    doc.text(lines, rx, remarkY + 6);
-    const sigY = remarkY + 6 + lines.length * 4 + 8;
-    doc.setDrawColor(180, 190, 210);
-    doc.line(rx, sigY, rx + 50, sigY);
-    doc.setFontSize(7);
-    doc.setTextColor(100, 116, 139);
-    doc.text(i === 0 ? "Teacher Signature" : "Principal Signature", rx, sigY + 4);
-    doc.text(formattedDate, rx + 65, sigY + 4);
-  });
-
-  // ── Footer ──
-  doc.setFillColor(11, 31, 77);
-  doc.rect(0, 280, W, 17, "F");
-  doc.setTextColor(200, 215, 255);
-  doc.setFontSize(7);
-  doc.text(
-    [school?.address, school?.phone, school?.email, school?.website]
-      .filter(Boolean).join("   |   "),
-    W / 2, 290, { align: "center" }
-  );
-
-  return doc;
+/* ── narrow utility ── */
+function setColor(doc: jsPDF, rgb: [number,number,number], target: "fill"|"text"|"draw") {
+  if (target === "fill")  doc.setFillColor(rgb[0], rgb[1], rgb[2]);
+  if (target === "text")  doc.setTextColor(rgb[0], rgb[1], rgb[2]);
+  if (target === "draw")  doc.setDrawColor(rgb[0], rgb[1], rgb[2]);
 }
 
-/* ─────────────────────────────────────────────────────────────
-   EXCEL RANKINGS EXPORT
-───────────────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════
+   drawReportPage — renders one student report card
+   onto the current page of `doc`.
+═══════════════════════════════════════════════════════════ */
+function drawReportPage(
+  doc: jsPDF,
+  opts: {
+    school: any;
+    student: any;
+    exam: any;
+    rows: ReportRow[];
+    totalMarks: number;
+    pct: number;
+    grade: string;
+    points: number;
+    rank: number | string;
+    total: number;
+    teacherRemark: string;
+    principalRemark: string;
+    date: string;
+  }
+): void {
+  const {
+    school, student, exam, rows,
+    totalMarks, pct, grade, points,
+    rank, total, teacherRemark, principalRemark, date,
+  } = opts;
+  const W = PDF.pageW;
+  const M = PDF.margin;
+
+  /* ── 1. Header band ── */
+  setColor(doc, PDF.headerBg, "fill");
+  doc.rect(0, 0, W, 38, "F");
+
+  /* Logo */
+  if (school?.logo_url) {
+    try {
+      doc.addImage(school.logo_url, "JPEG", M, 4, 28, 28);
+    } catch { /* skip missing/CORS logo */ }
+  }
+
+  /* School name */
+  setColor(doc, PDF.headerText, "text");
+  doc.setFontSize(15);
+  doc.setFont("helvetica", "bold");
+  doc.text((school?.name ?? "School").toUpperCase(), W / 2, 13, { align: "center" });
+
+  /* Accent rule */
+  setColor(doc, PDF.accentLine, "draw");
+  doc.setLineWidth(0.6);
+  doc.line(M + 30, 17, W - M, 17);
+
+  /* Motto */
+  setColor(doc, PDF.accentLine, "text");
+  doc.setFontSize(8.5);
+  doc.setFont("helvetica", "italic");
+  doc.text(
+    school?.motto ? `"${school.motto}"` : "Excellence Through Education",
+    W / 2, 23, { align: "center" }
+  );
+
+  /* Contact row */
+  const contact = [school?.address, school?.phone, school?.email].filter(Boolean).join("   ·   ");
+  if (contact) {
+    setColor(doc, [180, 195, 215] as any, "text");
+    doc.setFontSize(7);
+    doc.setFont("helvetica", "normal");
+    doc.text(contact, W / 2, 30, { align: "center" });
+  }
+
+  /* Document title */
+  setColor(doc, PDF.headerText, "text");
+  doc.setFontSize(9);
+  doc.setFont("helvetica", "bold");
+  doc.text("STUDENT PROGRESS REPORT", W / 2, 36, { align: "center" });
+
+  /* ── 2. Info grid ── */
+  const infoY = 45;
+  const fields: [string, string][] = [
+    ["Student Name",  student?.name ?? "—"],
+    ["Admission No.", student?.admission_number ?? "—"],
+    ["Gender",        student?.gender ?? "—"],
+    ["Grade / Class", (student?.grades as any)?.grade_name ?? "—"],
+    ["Exam",          exam?.exam_name ?? "—"],
+    ["Term & Year",   `Term ${exam?.term ?? ""}, ${exam?.year ?? ""}`],
+    ["Class Position",`${rank} of ${total}`],
+    ["Issue Date",    date],
+  ];
+
+  setColor(doc, PDF.summaryBg, "fill");
+  setColor(doc, PDF.borderLine, "draw");
+  doc.setLineWidth(0.3);
+  doc.roundedRect(M, infoY, W - M * 2, Math.ceil(fields.length / 2) * 7 + 4, 2, 2, "FD");
+
+  fields.forEach(([label, value], i) => {
+    const col = i % 2 === 0 ? M + 4 : W / 2 + 4;
+    const y   = infoY + 6 + Math.floor(i / 2) * 7;
+    doc.setFontSize(7.5);
+    setColor(doc, PDF.mutedText, "text");
+    doc.setFont("helvetica", "normal");
+    doc.text(label + ":", col, y);
+    setColor(doc, PDF.bodyText, "text");
+    doc.setFont("helvetica", "bold");
+    doc.text(value, col + 28, y);
+  });
+
+  /* ── 3. Results table ── */
+  const tableY = infoY + Math.ceil(fields.length / 2) * 7 + 10;
+
+  doc.setFontSize(8);
+  doc.setFont("helvetica", "bold");
+  setColor(doc, PDF.subheadText, "text");
+  doc.text("ACADEMIC RESULTS", M, tableY - 2);
+
+  autoTable(doc, {
+    startY: tableY,
+    head: [["Learning Area", "Marks /100", "Grade", "Pts", "Teacher's Remark"]],
+    body: rows.map(r => [r.subject_name, r.marks, r.grade, r.points, r.remark]),
+    headStyles: {
+      fillColor: PDF.tHeadBg,
+      textColor: PDF.tHeadText,
+      fontStyle: "bold",
+      fontSize: 8,
+      cellPadding: 3,
+    },
+    bodyStyles: {
+      fontSize: 7.5,
+      cellPadding: 2.5,
+      textColor: PDF.bodyText,
+    },
+    columnStyles: {
+      0: { cellWidth: 38, fontStyle: "bold" },
+      1: { cellWidth: 20, halign: "center" },
+      2: { cellWidth: 16, halign: "center" },
+      3: { cellWidth: 10, halign: "center" },
+      4: { cellWidth: 92 },
+    },
+    alternateRowStyles: { fillColor: PDF.rowAlt },
+    tableLineColor: PDF.borderLine,
+    tableLineWidth: 0.2,
+    margin: { left: M, right: M },
+  });
+
+  const afterTable = (doc as any).lastAutoTable.finalY + 5;
+
+  /* ── 4. Summary strip ── */
+  const summaryItems: [string, string][] = [
+    ["TOTAL MARKS",    String(totalMarks)],
+    ["PERCENTAGE",     `${pct}%`],
+    ["OVERALL GRADE",  grade],
+    ["OVERALL POINTS", String(points)],
+  ];
+  const boxW = (W - M * 2) / 4 - 1;
+
+  summaryItems.forEach(([label, value], i) => {
+    const bx = M + i * (boxW + 1.3);
+    setColor(doc, PDF.summaryBg, "fill");
+    setColor(doc, PDF.borderLine, "draw");
+    doc.setLineWidth(0.3);
+    doc.roundedRect(bx, afterTable, boxW, 14, 1.5, 1.5, "FD");
+
+    /* Accent top bar */
+    setColor(doc, PDF.accentLine, "fill");
+    doc.roundedRect(bx, afterTable, boxW, 1.5, 1, 1, "F");
+
+    setColor(doc, PDF.bodyText, "text");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text(value, bx + boxW / 2, afterTable + 8.5, { align: "center" });
+
+    setColor(doc, PDF.mutedText, "text");
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(6);
+    doc.text(label, bx + boxW / 2, afterTable + 13, { align: "center" });
+  });
+
+  /* ── 5. CBC Grading scale ── */
+  const scaleY = afterTable + 20;
+  doc.setFontSize(7);
+  doc.setFont("helvetica", "bold");
+  setColor(doc, PDF.mutedText, "text");
+  doc.text("CBC GRADING SCALE:", M, scaleY);
+  doc.setFont("helvetica", "normal");
+  const scale = "EE1 ≥90  ·  EE2 75–89  ·  ME1 58–74  ·  ME2 41–57  ·  AE1 31–40  ·  AE2 21–30  ·  BE1 11–20  ·  BE2 0–10";
+  doc.text(scale, M + 30, scaleY);
+
+  /* ── 6. Remarks ── */
+  const remY = scaleY + 6;
+  ([
+    ["Class Teacher's Remarks", teacherRemark,   "Class Teacher"],
+    ["Principal's Remarks",     principalRemark, "Principal / Head Teacher"],
+  ] as [string, string, string][]).forEach(([title, remark, sigLabel], i) => {
+    const rx = i === 0 ? M : W / 2 + 2;
+    const rw = W / 2 - M - 4;
+
+    setColor(doc, PDF.summaryBg, "fill");
+    setColor(doc, PDF.borderLine, "draw");
+    doc.setLineWidth(0.3);
+    doc.roundedRect(rx, remY, rw, 30, 1.5, 1.5, "FD");
+
+    /* Left accent bar */
+    setColor(doc, PDF.accentLine, "fill");
+    doc.rect(rx, remY, 1.5, 30, "F");
+
+    setColor(doc, PDF.bodyText, "text");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.text(title, rx + 5, remY + 5);
+
+    setColor(doc, PDF.bodyText, "text");
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    const lines = doc.splitTextToSize(remark, rw - 8) as string[];
+    doc.text(lines, rx + 5, remY + 11);
+
+    /* Signature line */
+    setColor(doc, PDF.borderLine, "draw");
+    doc.setLineWidth(0.3);
+    doc.line(rx + 5, remY + 26, rx + 40, remY + 26);
+    setColor(doc, PDF.mutedText, "text");
+    doc.setFontSize(6.5);
+    doc.text(sigLabel, rx + 5, remY + 29.5);
+    doc.text(date, rx + rw - 5, remY + 29.5, { align: "right" });
+  });
+
+  /* ── 7. Footer band ── */
+  setColor(doc, PDF.footerBg, "fill");
+  doc.rect(0, 282, W, 15, "F");
+  setColor(doc, PDF.footerText, "text");
+  doc.setFontSize(7);
+  doc.setFont("helvetica", "normal");
+  if (contact) doc.text(contact, W / 2, 291, { align: "center" });
+  doc.setFontSize(6.5);
+  setColor(doc, [100, 116, 139] as any, "text");
+  doc.text("Confidential — For the attention of parent/guardian only", W / 2, 295, { align: "center" });
+}
+
+/* ═══════════════════════════════════════════════════════════
+   exportRankingsPDF — professional class analysis document
+═══════════════════════════════════════════════════════════ */
+function exportRankingsPDF(opts: {
+  school: any; exam: any;
+  rankings: RankingRow[]; subjectRankings: SubjectRankRow[];
+  mostImproved: MostImprovedRow | null;
+}) {
+  const { school, exam, rankings, subjectRankings, mostImproved } = opts;
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const W = PDF.pageW;
+  const M = PDF.margin;
+
+  /* Header */
+  setColor(doc, PDF.headerBg, "fill");
+  doc.rect(0, 0, W, 36, "F");
+  if (school?.logo_url) {
+    try { doc.addImage(school.logo_url, "JPEG", M, 4, 26, 26); } catch { /* skip */ }
+  }
+  setColor(doc, PDF.headerText, "text");
+  doc.setFontSize(14);
+  doc.setFont("helvetica", "bold");
+  doc.text((school?.name ?? "School").toUpperCase(), W / 2, 12, { align: "center" });
+  setColor(doc, PDF.accentLine, "draw");
+  doc.setLineWidth(0.5);
+  doc.line(M + 28, 16, W - M, 16);
+  setColor(doc, PDF.accentLine, "text");
+  doc.setFontSize(8);
+  doc.setFont("helvetica", "italic");
+  doc.text(school?.motto ? `"${school.motto}"` : "", W / 2, 21, { align: "center" });
+  setColor(doc, PDF.headerText, "text");
+  doc.setFontSize(9.5);
+  doc.setFont("helvetica", "bold");
+  doc.text("CLASS PERFORMANCE ANALYSIS", W / 2, 30, { align: "center" });
+
+  /* Sub-header */
+  setColor(doc, PDF.summaryBg, "fill");
+  doc.rect(0, 36, W, 10, "F");
+  setColor(doc, PDF.bodyText, "text");
+  doc.setFontSize(8);
+  doc.setFont("helvetica", "normal");
+  doc.text(
+    `Exam: ${exam?.exam_name ?? ""}     Term ${exam?.term ?? ""},  ${exam?.year ?? ""}     Generated: ${new Date().toLocaleDateString()}`,
+    W / 2, 42.5, { align: "center" }
+  );
+
+  let curY = 52;
+
+  /* Most Improved */
+  if (mostImproved) {
+    setColor(doc, [240, 253, 244] as any, "fill");
+    setColor(doc, [187, 247, 208] as any, "draw");
+    doc.setLineWidth(0.3);
+    doc.roundedRect(M, curY, W - M * 2, 18, 2, 2, "FD");
+
+    setColor(doc, PDF.accentLine, "fill");
+    doc.rect(M, curY, 1.5, 18, "F");
+
+    setColor(doc, [22, 163, 74] as any, "text");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7);
+    doc.text("MOST IMPROVED STUDENT", M + 5, curY + 5);
+
+    setColor(doc, [15, 118, 54] as any, "text");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text(
+      `${mostImproved.student_name}  (${mostImproved.admission_number})`,
+      M + 5, curY + 12
+    );
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    setColor(doc, [22, 163, 74] as any, "text");
+    doc.text(
+      `${mostImproved.prev_avg.toFixed(1)}%  →  ${mostImproved.curr_avg.toFixed(1)}%   ·   Improvement: +${mostImproved.improvement.toFixed(1)}%`,
+      W - M - 5, curY + 12, { align: "right" }
+    );
+    curY += 24;
+  }
+
+  /* Student Rankings table */
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  setColor(doc, PDF.bodyText, "text");
+  doc.text("STUDENT RANKINGS", M, curY);
+  curY += 4;
+
+  autoTable(doc, {
+    startY: curY,
+    head: [["Rank", "Student Name", "Admission No.", "Total", "Average", "Grade", "Points"]],
+    body: rankings.map(r => [`#${r.rank}`, r.student_name, r.admission_number, r.total_marks, `${r.average}%`, r.grade, r.points]),
+    headStyles: { fillColor: PDF.tHeadBg, textColor: PDF.tHeadText, fontStyle: "bold", fontSize: 8, cellPadding: 3 },
+    bodyStyles: { fontSize: 7.5, textColor: PDF.bodyText, cellPadding: 2.5 },
+    columnStyles: {
+      0: { cellWidth: 14, halign: "center", fontStyle: "bold" },
+      1: { cellWidth: 52 },
+      2: { cellWidth: 28 },
+      3: { cellWidth: 16, halign: "center" },
+      4: { cellWidth: 18, halign: "center" },
+      5: { cellWidth: 16, halign: "center" },
+      6: { cellWidth: 16, halign: "center" },
+    },
+    alternateRowStyles: { fillColor: PDF.rowAlt },
+    tableLineColor: PDF.borderLine,
+    tableLineWidth: 0.2,
+    margin: { left: M, right: M },
+    didParseCell: (data) => {
+      if (data.section === "body") {
+        if (data.row.index === 0)      { data.cell.styles.fillColor = PDF.gold; }
+        else if (data.row.index === 1) { data.cell.styles.fillColor = PDF.silver; }
+        else if (data.row.index === 2) { data.cell.styles.fillColor = PDF.bronze; }
+      }
+    },
+  });
+
+  curY = (doc as any).lastAutoTable.finalY + 10;
+
+  /* Subject Rankings table */
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  setColor(doc, PDF.bodyText, "text");
+  doc.text("SUBJECT PERFORMANCE RANKINGS  (Best → Least)", M, curY);
+  curY += 4;
+
+  autoTable(doc, {
+    startY: curY,
+    head: [["Rank", "Subject", "Class Avg", "Highest", "Lowest", "No. Students"]],
+    body: subjectRankings.map((s, i) => [
+      `#${i + 1}`, s.subject_name,
+      `${s.avg.toFixed(1)}%`, s.highest, s.lowest, s.count,
+    ]),
+    headStyles: { fillColor: PDF.tHeadBg, textColor: PDF.tHeadText, fontStyle: "bold", fontSize: 8, cellPadding: 3 },
+    bodyStyles: { fontSize: 7.5, textColor: PDF.bodyText, cellPadding: 2.5 },
+    alternateRowStyles: { fillColor: PDF.rowAlt },
+    tableLineColor: PDF.borderLine,
+    tableLineWidth: 0.2,
+    margin: { left: M, right: M },
+  });
+
+  /* Footer */
+  const contact = [school?.address, school?.phone, school?.email].filter(Boolean).join("   ·   ");
+  setColor(doc, PDF.footerBg, "fill");
+  doc.rect(0, 282, W, 15, "F");
+  setColor(doc, PDF.footerText, "text");
+  doc.setFontSize(7);
+  doc.setFont("helvetica", "normal");
+  if (contact) doc.text(contact, W / 2, 291, { align: "center" });
+  doc.setFontSize(6.5);
+  setColor(doc, [100, 116, 139] as any, "text");
+  doc.text("Confidential — School Administration Document", W / 2, 295, { align: "center" });
+
+  doc.save(
+    `${(school?.name ?? "school").replace(/\s+/g, "_")}_class_analysis_T${exam?.term ?? ""}_${exam?.year ?? ""}.pdf`
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   exportRankingsExcel
+═══════════════════════════════════════════════════════════ */
 function exportRankingsExcel(opts: {
-  school: any;
-  exam: any;
-  rankings: RankingRow[];
-  subjectRankings: SubjectRankRow[];
+  school: any; exam: any;
+  rankings: RankingRow[]; subjectRankings: SubjectRankRow[];
   mostImproved: MostImprovedRow | null;
 }) {
   const { school, exam, rankings, subjectRankings, mostImproved } = opts;
   const wb = XLSX.utils.book_new();
 
-  // ── Sheet 1: Student Rankings ──
-  const rankHeader = [
+  const wsRankings = XLSX.utils.aoa_to_sheet([
     [`${school?.name ?? "School"} — Student Rankings`],
-    [`Exam: ${exam?.exam_name ?? ""} | Term ${exam?.term ?? ""}, ${exam?.year ?? ""}`],
+    [`Exam: ${exam?.exam_name ?? ""}   |   Term ${exam?.term ?? ""}, ${exam?.year ?? ""}`],
     [`Generated: ${new Date().toLocaleDateString()}`],
     [],
     ["Rank", "Student Name", "Admission No.", "Total Marks", "Average (%)", "Grade", "Points"],
-  ];
-  const rankRows = rankings.map(r => [
-    r.rank, r.student_name, r.admission_number,
-    r.total_marks, r.average, r.grade, r.points,
+    ...rankings.map(r => [r.rank, r.student_name, r.admission_number, r.total_marks, r.average, r.grade, r.points]),
   ]);
-  const wsRankings = XLSX.utils.aoa_to_sheet([...rankHeader, ...rankRows]);
   wsRankings["!cols"] = [
-    { wch: 6 }, { wch: 28 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 10 },
+    { wch: 6 }, { wch: 30 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 10 },
   ];
   XLSX.utils.book_append_sheet(wb, wsRankings, "Student Rankings");
 
-  // ── Sheet 2: Subject Rankings ──
-  const subjHeader = [
-    [`${school?.name ?? "School"} — Subject Performance Rankings`],
-    [`Exam: ${exam?.exam_name ?? ""} | Term ${exam?.term ?? ""}, ${exam?.year ?? ""}`],
+  const wsSubjects = XLSX.utils.aoa_to_sheet([
+    [`${school?.name ?? "School"} — Subject Rankings`],
+    [`Exam: ${exam?.exam_name ?? ""}   |   Term ${exam?.term ?? ""}, ${exam?.year ?? ""}`],
     [],
-    ["Rank", "Subject", "Class Average (%)", "Highest Score", "Lowest Score", "No. of Students"],
-  ];
-  const subjRows = subjectRankings.map((s, i) => [
-    i + 1, s.subject_name,
-    s.avg.toFixed(1), s.highest, s.lowest, s.count,
+    ["Rank", "Subject", "Class Average (%)", "Highest", "Lowest", "No. Students"],
+    ...subjectRankings.map((s, i) => [i + 1, s.subject_name, s.avg.toFixed(1), s.highest, s.lowest, s.count]),
   ]);
-  const wsSubjects = XLSX.utils.aoa_to_sheet([...subjHeader, ...subjRows]);
-  wsSubjects["!cols"] = [
-    { wch: 6 }, { wch: 22 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 18 },
-  ];
+  wsSubjects["!cols"] = [{ wch: 6 }, { wch: 26 }, { wch: 18 }, { wch: 12 }, { wch: 12 }, { wch: 16 }];
   XLSX.utils.book_append_sheet(wb, wsSubjects, "Subject Rankings");
 
-  // ── Sheet 3: Most Improved (if available) ──
   if (mostImproved) {
-    const miData = [
+    const wsMI = XLSX.utils.aoa_to_sheet([
       [`${school?.name ?? "School"} — Most Improved Student`],
       [],
       ["Student Name",     mostImproved.student_name],
@@ -317,8 +560,7 @@ function exportRankingsExcel(opts: {
       ["Previous Average", `${mostImproved.prev_avg.toFixed(1)}%`],
       ["Current Average",  `${mostImproved.curr_avg.toFixed(1)}%`],
       ["Improvement",      `+${mostImproved.improvement.toFixed(1)}%`],
-    ];
-    const wsMI = XLSX.utils.aoa_to_sheet(miData);
+    ]);
     wsMI["!cols"] = [{ wch: 20 }, { wch: 30 }];
     XLSX.utils.book_append_sheet(wb, wsMI, "Most Improved");
   }
@@ -329,190 +571,64 @@ function exportRankingsExcel(opts: {
   );
 }
 
-/* ─────────────────────────────────────────────────────────────
-   RANKINGS PDF EXPORT
-───────────────────────────────────────────────────────────── */
-function exportRankingsPDF(opts: {
-  school: any;
-  exam: any;
-  rankings: RankingRow[];
-  subjectRankings: SubjectRankRow[];
-  mostImproved: MostImprovedRow | null;
-}) {
-  const { school, exam, rankings, subjectRankings, mostImproved } = opts;
-  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-  const W = 210;
-
-  // Header
-  doc.setFillColor(11, 31, 77);
-  doc.rect(0, 0, W, 35, "F");
-  if (school?.logo_url) {
-    try { doc.addImage(school.logo_url, "JPEG", 10, 4, 24, 24); } catch { /* skip */ }
-  }
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(15);
-  doc.setFont("helvetica", "bold");
-  doc.text((school?.name ?? "School").toUpperCase(), W / 2, 14, { align: "center" });
-  doc.setFontSize(9);
-  doc.setFont("helvetica", "normal");
-  doc.setTextColor(253, 224, 71);
-  doc.text(`Motto: ${school?.motto ?? ""}`, W / 2, 21, { align: "center" });
-  doc.setTextColor(200, 215, 255);
-  doc.setFontSize(11);
-  doc.setFont("helvetica", "bold");
-  doc.text("CLASS PERFORMANCE ANALYSIS REPORT", W / 2, 31, { align: "center" });
-
-  // Exam info
-  doc.setTextColor(30, 41, 59);
-  doc.setFontSize(9);
-  doc.setFont("helvetica", "normal");
-  doc.text(`Exam: ${exam?.exam_name ?? ""}    Term ${exam?.term ?? ""}, ${exam?.year ?? ""}    Generated: ${new Date().toLocaleDateString()}`, 10, 43);
-
-  // Student Rankings table
-  doc.setFontSize(10);
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(11, 31, 77);
-  doc.text("STUDENT RANKINGS", 10, 51);
-
-  autoTable(doc, {
-    startY: 54,
-    head: [["Rank", "Student Name", "Adm. No.", "Total", "Average", "Grade", "Points"]],
-    body: rankings.map(r => [
-      `#${r.rank}`, r.student_name, r.admission_number,
-      r.total_marks, `${r.average}%`, r.grade, r.points,
-    ]),
-    headStyles: { fillColor: [11, 31, 77], textColor: 255, fontStyle: "bold", fontSize: 8 },
-    bodyStyles: { fontSize: 8 },
-    columnStyles: {
-      0: { cellWidth: 12, halign: "center" },
-      1: { cellWidth: 52 },
-      2: { cellWidth: 28 },
-      3: { cellWidth: 18, halign: "center" },
-      4: { cellWidth: 20, halign: "center" },
-      5: { cellWidth: 16, halign: "center" },
-      6: { cellWidth: 16, halign: "center" },
-    },
-    alternateRowStyles: { fillColor: [248, 250, 252] },
-    didParseCell: (data) => {
-      if (data.section === "body" && data.row.index === 0) {
-        data.cell.styles.fillColor = [254, 240, 138];
-        data.cell.styles.fontStyle = "bold";
-      } else if (data.section === "body" && data.row.index === 1) {
-        data.cell.styles.fillColor = [226, 232, 240];
-      } else if (data.section === "body" && data.row.index === 2) {
-        data.cell.styles.fillColor = [254, 243, 199];
-      }
-    },
-  });
-
-  const afterRankY = (doc as any).lastAutoTable.finalY + 10;
-
-  // Subject Rankings table
-  doc.setFontSize(10);
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(11, 31, 77);
-  doc.text("SUBJECT PERFORMANCE RANKINGS (Best to Least)", 10, afterRankY);
-
-  autoTable(doc, {
-    startY: afterRankY + 4,
-    head: [["Rank", "Subject", "Class Average", "Highest", "Lowest", "Students"]],
-    body: subjectRankings.map((s, i) => [
-      `#${i + 1}`, s.subject_name,
-      `${s.avg.toFixed(1)}%`, s.highest, s.lowest, s.count,
-    ]),
-    headStyles: { fillColor: [11, 31, 77], textColor: 255, fontStyle: "bold", fontSize: 8 },
-    bodyStyles: { fontSize: 8 },
-    alternateRowStyles: { fillColor: [248, 250, 252] },
-  });
-
-  // Most Improved
-  if (mostImproved) {
-    const miY = (doc as any).lastAutoTable.finalY + 10;
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(11, 31, 77);
-    doc.text("MOST IMPROVED STUDENT 🏅", 10, miY);
-
-    doc.setFillColor(240, 253, 244);
-    doc.roundedRect(10, miY + 4, 190, 22, 3, 3, "F");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(12);
-    doc.setTextColor(16, 185, 129);
-    doc.text(`${mostImproved.student_name}  (${mostImproved.admission_number})`, 20, miY + 13);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(30, 41, 59);
-    doc.text(
-      `Previous Average: ${mostImproved.prev_avg.toFixed(1)}%   →   Current Average: ${mostImproved.curr_avg.toFixed(1)}%   →   Improvement: +${mostImproved.improvement.toFixed(1)}%`,
-      20, miY + 21
-    );
-  }
-
-  // Footer
-  doc.setFillColor(11, 31, 77);
-  doc.rect(0, 280, W, 17, "F");
-  doc.setTextColor(200, 215, 255);
-  doc.setFontSize(7);
-  doc.text(
-    [school?.address, school?.phone, school?.email].filter(Boolean).join("   |   "),
-    W / 2, 290, { align: "center" }
-  );
-
-  doc.save(
-    `${(school?.name ?? "school").replace(/\s+/g, "_")}_class_analysis_T${exam?.term ?? ""}_${exam?.year ?? ""}.pdf`
-  );
-}
-
-/* ─────────────────────────────────────────────────────────────
+/* ═══════════════════════════════════════════════════════════
    MAIN COMPONENT
-───────────────────────────────────────────────────────────── */
+═══════════════════════════════════════════════════════════ */
 const Reports = () => {
   const { user } = useAuth();
 
-  /* ── UI state ── */
-  const [selectedStudentId,  setSelectedStudentId]  = useState<number | null>(null);
-  const [selectedExamId,     setSelectedExamId]      = useState<number | null>(null);
-  const [bulkExamId,         setBulkExamId]          = useState<number | null>(null);
-  const [selectedBulkIds,    setSelectedBulkIds]     = useState<Set<number>>(new Set());
-  const [bulkDownloading,    setBulkDownloading]     = useState(false);
-  const [bulkProgress,       setBulkProgress]        = useState(0);
-  const [tab,                setTab]                 = useState<"report"|"rankings">("report");
+  /* ── state ── */
+  const [selectedStudentId, setSelectedStudentId] = useState<number | null>(null);
+  const [selectedExamId,    setSelectedExamId]    = useState<number | null>(null);
+  const [bulkExamId,        setBulkExamId]        = useState<number | null>(null);
+  const [bulkGradeId,       setBulkGradeId]       = useState<number | null>(null);
+  const [selectedBulkIds,   setSelectedBulkIds]   = useState<Set<number>>(new Set());
+  const [bulkDownloading,   setBulkDownloading]   = useState(false);
+  const [bulkProgress,      setBulkProgress]      = useState(0);
+  const [tab,               setTab]               = useState<"report" | "rankings">("report");
 
-  /* ── School ── */
+  /* ── school — website column does NOT exist, excluded ── */
   const { data: schoolsData } = useData<any>(
     `school-${user?.school_id}`, "schools",
-    { select: "id,name,logo_url,motto,address,phone,email,website", filters: { id: user?.school_id }, single: true },
+    { select: "id,name,logo_url,motto,address,phone,email", filters: { id: user?.school_id }, single: true },
     !!user?.school_id
   );
   const school = Array.isArray(schoolsData) ? schoolsData[0] ?? null : schoolsData ?? null;
 
-  /* ── Students ── */
+  /* ── students ── */
   const { data: studentsRaw = [] } = useData<any>(
     "students-report", "students",
     { select: "id,name,admission_number,gender,grade_id,grades:grade_id(grade_name)", orderBy: { column: "name", ascending: true } },
     !!user?.school_id
   );
 
-  /* ── Exams ── */
+  /* ── grades ── */
+  const { data: gradesRaw = [] } = useData<any>(
+    "grades-report", "grades",
+    { select: "id,grade_name", filters: { school_id: user?.school_id }, orderBy: { column: "grade_name", ascending: true } },
+    !!user?.school_id
+  );
+
+  /* ── exams ── */
   const { data: examsRaw = [] } = useData<any>(
     "exams-report", "exams",
     { select: "id,exam_name,term,year,grade_id,is_school_wide", orderBy: { column: "year", ascending: false } },
     !!user?.school_id
   );
 
-  /* ── Subjects ── */
+  /* ── subjects ── */
   const { data: subjectsRaw = [] } = useData<any>(
     "subjects-report", "subjects",
     { select: "id,subject_name,subject_code" },
     !!user?.school_id
   );
 
-  /* ── Selected exam object ── */
-  const selectedExam  = useMemo(() => examsRaw.find((e: any) => e.id === selectedExamId)  ?? null, [examsRaw, selectedExamId]);
-  const bulkExam      = useMemo(() => examsRaw.find((e: any) => e.id === bulkExamId)       ?? null, [examsRaw, bulkExamId]);
+  /* ── derived objects ── */
+  const selectedExam    = useMemo(() => examsRaw.find((e: any) => e.id === selectedExamId)  ?? null, [examsRaw, selectedExamId]);
+  const bulkExam        = useMemo(() => examsRaw.find((e: any) => e.id === bulkExamId)       ?? null, [examsRaw, bulkExamId]);
   const selectedStudent = useMemo(() => studentsRaw.find((s: any) => s.id === selectedStudentId) ?? null, [studentsRaw, selectedStudentId]);
 
-  /* ── Results for selected student's exam (matched by term+year) ── */
+  /* ── results for selected student+exam ── */
   const { data: resultsRaw = [] } = useData<any>(
     `results-${selectedStudentId}-${selectedExam?.term}-${selectedExam?.year}`,
     "results",
@@ -528,7 +644,7 @@ const Reports = () => {
     !!selectedStudentId && !!selectedExam
   );
 
-  /* ── ALL results for this exam (term+year) for rankings ── */
+  /* ── all results for exam (rankings, subject stats) ── */
   const { data: allResultsRaw = [] } = useData<any>(
     `all-results-${selectedExam?.term}-${selectedExam?.year}`,
     "results",
@@ -543,16 +659,14 @@ const Reports = () => {
     !!selectedExam
   );
 
-  /* ── Previous exam results for "most improved" ── */
+  /* ── previous exam (for Most Improved) ── */
   const sortedExams: any[] = useMemo(() =>
-    [...examsRaw].sort((a, b) =>
-      a.year !== b.year ? a.year - b.year : a.term - b.term
-    ), [examsRaw]);
-
-  const selectedExamIndex = useMemo(() =>
+    [...examsRaw].sort((a, b) => a.year !== b.year ? a.year - b.year : a.term - b.term),
+    [examsRaw]
+  );
+  const selectedExamIdx = useMemo(() =>
     sortedExams.findIndex(e => e.id === selectedExamId), [sortedExams, selectedExamId]);
-
-  const prevExam: any | null = selectedExamIndex > 0 ? sortedExams[selectedExamIndex - 1] : null;
+  const prevExam: any | null = selectedExamIdx > 0 ? sortedExams[selectedExamIdx - 1] : null;
 
   const { data: prevResultsRaw = [] } = useData<any>(
     `prev-results-${prevExam?.term}-${prevExam?.year}`,
@@ -568,34 +682,35 @@ const Reports = () => {
     !!prevExam
   );
 
-  /* ── Subject lookup map ── */
+  /* ── subject map ── */
   const subjectMap = useMemo(() => {
     const m = new Map<number, string>();
     subjectsRaw.forEach((s: any) => m.set(s.id, s.subject_name));
     return m;
   }, [subjectsRaw]);
 
-  /* ── Per-subject report rows (sorted best→least) ── */
-  const reportResults: ReportRow[] = useMemo(() => {
-    const rows = resultsRaw.map((r: any) => {
-      const marks   = Number(r.marks) ?? 0;
-      const grade   = cbcGrade(marks);
-      const points  = cbcPoints(marks);
-      const band    = bandFromScore(marks);
-      const remark  = band === "EE"
-        ? "Excellent mastery of concepts. Keep up the impressive work."
-        : band === "ME"
-        ? "Good grasp of the work. Maintain the steady effort and revise often."
-        : band === "AE"
-        ? "Fair effort shown. More practice and consistent revision are needed."
-        : "Requires extra support and remedial work. Please seek help promptly.";
-      return { subject_name: subjectMap.get(r.subject_id) ?? "Unknown", marks, grade, points, remark };
-    });
-    // Sort best → least
-    return rows.sort((a: ReportRow, b: ReportRow) => b.marks - a.marks);
-  }, [resultsRaw, subjectMap]);
+  /* ── report rows (best → least) ── */
+  const reportResults: ReportRow[] = useMemo(() =>
+    resultsRaw
+      .map((r: any) => {
+        const marks = Number(r.marks);
+        const b = bandFromScore(marks);
+        return {
+          subject_name: subjectMap.get(r.subject_id) ?? "Unknown",
+          marks,
+          grade:  cbcGrade(marks),
+          points: cbcPoints(marks),
+          remark: b === "EE" ? "Excellent mastery of concepts. Keep up the impressive work."
+                : b === "ME" ? "Good grasp of the work. Maintain steady effort and revise often."
+                : b === "AE" ? "Fair effort shown. More practice and revision needed."
+                : "Requires extra support. Please seek help promptly.",
+        };
+      })
+      .sort((a: ReportRow, b: ReportRow) => b.marks - a.marks),
+    [resultsRaw, subjectMap]
+  );
 
-  /* ── Summary stats ── */
+  /* ── summary ── */
   const totalMarks    = useMemo(() => reportResults.reduce((s, r) => s + r.marks, 0), [reportResults]);
   const subjectCount  = reportResults.length || 1;
   const percentage    = useMemo(() => Math.round((totalMarks / (subjectCount * 100)) * 100), [totalMarks, subjectCount]);
@@ -605,7 +720,7 @@ const Reports = () => {
   const teacherRemark   = CLASS_TEACHER_REMARKS[band];
   const principalRemark = PRINCIPAL_REMARKS[band];
 
-  /* ── Rankings ── */
+  /* ── rankings ── */
   const rankings: RankingRow[] = useMemo(() => {
     const totals: Record<number, { sum: number; count: number }> = {};
     allResultsRaw.forEach((r: any) => {
@@ -618,20 +733,20 @@ const Reports = () => {
         const st  = studentsRaw.find((s: any) => s.id === Number(sid));
         const avg = v.count ? Math.round(v.sum / v.count) : 0;
         return {
-          student_id:      Number(sid),
-          student_name:    st?.name ?? "—",
-          admission_number:st?.admission_number ?? "—",
-          total_marks:     Math.round(v.sum),
-          average:         avg,
-          grade:           cbcGrade(avg),
-          points:          cbcPoints(avg),
+          student_id:       Number(sid),
+          student_name:     st?.name ?? "—",
+          admission_number: st?.admission_number ?? "—",
+          total_marks:      Math.round(v.sum),
+          average: avg,
+          grade:   cbcGrade(avg),
+          points:  cbcPoints(avg),
         };
       })
       .sort((a, b) => b.total_marks - a.total_marks)
       .map((r, i) => ({ ...r, rank: i + 1 }));
   }, [allResultsRaw, studentsRaw]);
 
-  /* ── Subject rankings (best → least) ── */
+  /* ── subject rankings (best → least) ── */
   const subjectRankings: SubjectRankRow[] = useMemo(() => {
     const map: Record<number, { sum: number; count: number; highest: number; lowest: number }> = {};
     allResultsRaw.forEach((r: any) => {
@@ -654,144 +769,161 @@ const Reports = () => {
       .sort((a, b) => b.avg - a.avg);
   }, [allResultsRaw, subjectMap]);
 
-  /* ── Most Improved ── */
+  /* ── most improved ── */
   const mostImproved: MostImprovedRow | null = useMemo(() => {
-    if (!prevExam || prevResultsRaw.length === 0 || allResultsRaw.length === 0) return null;
-
-    const avgFor = (rows: any[], sid: number): number => {
-      const studentRows = rows.filter((r: any) => r.student_id === sid);
-      if (!studentRows.length) return 0;
-      return studentRows.reduce((s: number, r: any) => s + Number(r.marks), 0) / studentRows.length;
+    if (!prevExam || !prevResultsRaw.length || !allResultsRaw.length) return null;
+    const avgFor = (rows: any[], sid: number) => {
+      const s = rows.filter((r: any) => r.student_id === sid);
+      return s.length ? s.reduce((t: number, r: any) => t + Number(r.marks), 0) / s.length : 0;
     };
-
-    const studentIds = [...new Set(allResultsRaw.map((r: any) => r.student_id as number))];
+    const ids = [...new Set(allResultsRaw.map((r: any) => r.student_id as number))];
     let best: MostImprovedRow | null = null;
-
-    studentIds.forEach(sid => {
+    ids.forEach(sid => {
       const prev = avgFor(prevResultsRaw, sid);
       const curr = avgFor(allResultsRaw,  sid);
       if (prev === 0) return;
-      const improvement = curr - prev;
-      if (!best || improvement > best.improvement) {
+      const imp = curr - prev;
+      if (!best || imp > best.improvement) {
         const st = studentsRaw.find((s: any) => s.id === sid);
         best = {
-          student_id:      sid,
-          student_name:    st?.name ?? "—",
-          admission_number:st?.admission_number ?? "—",
-          prev_avg:        parseFloat(prev.toFixed(1)),
-          curr_avg:        parseFloat(curr.toFixed(1)),
-          improvement:     parseFloat(improvement.toFixed(1)),
+          student_id: sid,
+          student_name: st?.name ?? "—",
+          admission_number: st?.admission_number ?? "—",
+          prev_avg:    parseFloat(prev.toFixed(1)),
+          curr_avg:    parseFloat(curr.toFixed(1)),
+          improvement: parseFloat(imp.toFixed(1)),
         };
       }
     });
-
     return best;
   }, [prevExam, prevResultsRaw, allResultsRaw, studentsRaw]);
 
   const totalStudents = rankings.length;
   const studentRank   = rankings.find(r => r.student_id === selectedStudentId)?.rank ?? "—";
   const formattedDate = new Date().toLocaleDateString();
+  const showReport    = !!selectedStudentId && !!selectedExamId && reportResults.length > 0;
 
-  /* ── Bulk download ── */
+  /* ── single PDF ── */
+  const handleDownloadPDF = () => {
+    if (!showReport) return;
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    drawReportPage(doc, {
+      school, student: selectedStudent, exam: selectedExam,
+      rows: reportResults, totalMarks, pct: percentage,
+      grade: overallGrade, points: overallPoints,
+      rank: studentRank, total: totalStudents,
+      teacherRemark, principalRemark, date: formattedDate,
+    });
+    doc.save(`${(selectedStudent?.name ?? "report").replace(/\s+/g, "_")}_T${selectedExam?.term}_${selectedExam?.year}.pdf`);
+  };
+
+  /* ── bulk PDF (by grade or selection) ── */
   const handleBulkDownload = useCallback(async () => {
     if (!bulkExam || selectedBulkIds.size === 0) return;
     setBulkDownloading(true);
     setBulkProgress(0);
 
-    const ids = [...selectedBulkIds];
-    const { data: bulkResults } = await import("../lib/supabase").then(async ({ supabase }) => {
-      return supabase
+    try {
+      const { data: bulkResults, error } = await supabase
         .from("results")
         .select("id,student_id,subject_id,marks,term,year")
         .eq("term",      String(bulkExam.term))
         .eq("year",      bulkExam.year)
         .eq("school_id", user?.school_id);
-    });
 
-    const mergedDoc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-    let isFirst = true;
-
-    for (let i = 0; i < ids.length; i++) {
-      const sid = ids[i];
-      const student = studentsRaw.find((s: any) => s.id === sid);
-      const studentResults = (bulkResults ?? []).filter((r: any) => r.student_id === sid);
-
-      const rows: ReportRow[] = studentResults
-        .map((r: any) => {
-          const marks  = Number(r.marks);
-          const grade  = cbcGrade(marks);
-          const points = cbcPoints(marks);
-          const b      = bandFromScore(marks);
-          return {
-            subject_name: subjectMap.get(r.subject_id) ?? "Unknown",
-            marks, grade, points,
-            remark: b === "EE" ? "Excellent mastery of concepts." : b === "ME" ? "Good grasp of the work." : b === "AE" ? "Fair effort shown." : "Requires extra support.",
-          };
-        })
-        .sort((a, b) => b.marks - a.marks);
-
-      const tot  = rows.reduce((s, r) => s + r.marks, 0);
-      const cnt  = rows.length || 1;
-      const pct  = Math.round((tot / (cnt * 100)) * 100);
-      const bd   = bandFromScore(pct);
-      const rank = rankings.find(r => r.student_id === sid)?.rank ?? "—";
-
-      if (!isFirst) mergedDoc.addPage();
-      isFirst = false;
-
-      const singleDoc = generateReportPDF({
-        school, student, exam: bulkExam,
-        reportRows: rows, totalMarks: tot,
-        percentage: pct, overallGrade: cbcGrade(pct),
-        overallPoints: Math.round(rows.reduce((s, r) => s + r.points, 0) / cnt),
-        studentRank: rank, totalStudents,
-        teacherRemark:   CLASS_TEACHER_REMARKS[bd],
-        principalRemark: PRINCIPAL_REMARKS[bd],
-        formattedDate,
-      });
-
-      // Copy pages from singleDoc into mergedDoc
-      const pageCount = singleDoc.internal.getNumberOfPages();
-      for (let p = 1; p <= pageCount; p++) {
-        if (!(isFirst && p === 1)) {
-          // pages already added via addPage above for first student
-        }
-        const pageData = singleDoc.internal.pages[p];
-        if (pageData && p > 1) {
-          mergedDoc.addPage();
-        }
+      if (error) {
+        console.error("[EduNexa] bulk fetch:", error.message);
+        return;
       }
 
-      setBulkProgress(Math.round(((i + 1) / ids.length) * 100));
+      const ids = [...selectedBulkIds];
+      const mergedDoc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      let firstPage = true;
+
+      /* Build rankings for this exam on-the-fly so rank numbers are correct */
+      const bulkTotals: Record<number, { sum: number; count: number }> = {};
+      (bulkResults ?? []).forEach((r: any) => {
+        if (!bulkTotals[r.student_id]) bulkTotals[r.student_id] = { sum: 0, count: 0 };
+        bulkTotals[r.student_id].sum   += Number(r.marks);
+        bulkTotals[r.student_id].count += 1;
+      });
+      const bulkRankMap: Record<number, number> = {};
+      Object.entries(bulkTotals)
+        .sort(([, a], [, b]) => b.sum - a.sum)
+        .forEach(([sid], i) => { bulkRankMap[Number(sid)] = i + 1; });
+      const bulkTotal = Object.keys(bulkTotals).length;
+
+      for (let i = 0; i < ids.length; i++) {
+        const sid     = ids[i];
+        const student = studentsRaw.find((s: any) => s.id === sid);
+        if (!student) continue;
+
+        const sr = (bulkResults ?? []).filter((r: any) => r.student_id === sid);
+        if (!sr.length) continue;
+
+        const rows: ReportRow[] = sr
+          .map((r: any) => {
+            const marks = Number(r.marks);
+            const b = bandFromScore(marks);
+            return {
+              subject_name: subjectMap.get(r.subject_id) ?? "Unknown",
+              marks,
+              grade:  cbcGrade(marks),
+              points: cbcPoints(marks),
+              remark: b === "EE" ? "Excellent mastery of concepts. Keep up the impressive work."
+                    : b === "ME" ? "Good grasp of the work. Maintain steady effort and revise often."
+                    : b === "AE" ? "Fair effort shown. More practice and revision needed."
+                    : "Requires extra support. Please seek help promptly.",
+            };
+          })
+          .sort((a: ReportRow, b: ReportRow) => b.marks - a.marks);
+
+        const tot    = rows.reduce((s, r) => s + r.marks, 0);
+        const cnt    = rows.length || 1;
+        const pct    = Math.round((tot / (cnt * 100)) * 100);
+        const bd     = bandFromScore(pct);
+        const rnk    = bulkRankMap[sid] ?? "—";
+
+        if (!firstPage) mergedDoc.addPage();
+        firstPage = false;
+
+        drawReportPage(mergedDoc, {
+          school, student, exam: bulkExam,
+          rows, totalMarks: tot, pct,
+          grade:  cbcGrade(pct),
+          points: Math.round(rows.reduce((s, r) => s + r.points, 0) / cnt),
+          rank: rnk, total: bulkTotal,
+          teacherRemark:   CLASS_TEACHER_REMARKS[bd],
+          principalRemark: PRINCIPAL_REMARKS[bd],
+          date: formattedDate,
+        });
+
+        setBulkProgress(Math.round(((i + 1) / ids.length) * 100));
+      }
+
+      const gradeSuffix = bulkGradeId
+        ? `_${(gradesRaw.find((g: any) => g.id === bulkGradeId)?.grade_name ?? "").replace(/\s+/g, "_")}`
+        : "";
+
+      mergedDoc.save(
+        `${(school?.name ?? "school").replace(/\s+/g, "_")}_reports_T${bulkExam.term}_${bulkExam.year}${gradeSuffix}.pdf`
+      );
+    } catch (err) {
+      console.error("[EduNexa] bulk download:", err);
+    } finally {
+      setBulkDownloading(false);
+      setBulkProgress(0);
     }
-
-    mergedDoc.save(
-      `${(school?.name ?? "school").replace(/\s+/g, "_")}_bulk_reports_T${bulkExam.term}_${bulkExam.year}.pdf`
-    );
-
-    setBulkDownloading(false);
-    setBulkProgress(0);
-  }, [bulkExam, selectedBulkIds, studentsRaw, subjectMap, rankings, totalStudents, school, user?.school_id, formattedDate]);
-
-  /* ── Individual PDF download ── */
-  const handleDownloadPDF = () => {
-    if (!showReport) return;
-    const doc = generateReportPDF({
-      school, student: selectedStudent, exam: selectedExam,
-      reportRows: reportResults, totalMarks, percentage,
-      overallGrade, overallPoints, studentRank,
-      totalStudents, teacherRemark, principalRemark, formattedDate,
-    });
-    doc.save(`${selectedStudent?.name?.replace(/\s+/g, "_") ?? "report"}_T${selectedExam?.term}_${selectedExam?.year}.pdf`);
-  };
-
-  const showReport = !!selectedStudentId && !!selectedExamId && reportResults.length > 0;
+  }, [
+    bulkExam, selectedBulkIds, studentsRaw, subjectMap,
+    school, user?.school_id, formattedDate, gradesRaw, bulkGradeId,
+  ]);
 
   /* ══════════════════════════════════════════════════════════
      RENDER
   ══════════════════════════════════════════════════════════ */
   return (
-    <div className="bg-slate-100 min-h-screen p-4 md:p-6">
+    <div className="bg-slate-50 min-h-screen p-4 md:p-6">
       <style>{`
         @media print {
           body { background: white !important; }
@@ -801,34 +933,37 @@ const Reports = () => {
         }
       `}</style>
 
-      {/* ── TOP CONTROLS ── */}
-      <div className="no-print max-w-7xl mx-auto mb-6 space-y-4">
-
-        {/* Tab selector */}
-        <div className="flex items-center gap-2 bg-white rounded-2xl p-1 w-fit shadow-sm border border-slate-100">
+      {/* ── TAB BAR ── */}
+      <div className="no-print max-w-7xl mx-auto mb-5 space-y-4">
+        <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-1 w-fit shadow-sm">
           {(["report", "rankings"] as const).map(t => (
             <button key={t} onClick={() => setTab(t)}
-              className={`px-5 py-2 rounded-xl text-sm font-semibold capitalize transition-all
-                ${tab === t ? "bg-blue-950 text-white shadow" : "text-slate-500 hover:text-slate-800"}`}>
-              {t === "report" ? "📄 Report Cards" : "🏆 Class Analysis"}
+              className={`px-5 py-2 rounded-lg text-sm font-medium transition-all
+                ${tab === t
+                  ? "bg-slate-800 text-white shadow-sm"
+                  : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"}`}>
+              {t === "report" ? "Report Cards" : "Class Analysis"}
             </button>
           ))}
         </div>
 
+        {/* ── REPORT CARD CONTROLS ── */}
         {tab === "report" && (
-          <div className="flex flex-col sm:flex-row gap-3">
-            <select className="flex-1 border border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-white shadow-sm"
+          <div className="flex flex-col sm:flex-row gap-2">
+            <select
+              className="flex-1 border border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
               value={selectedStudentId ?? ""}
               onChange={e => setSelectedStudentId(e.target.value ? Number(e.target.value) : null)}>
-              <option value="">— Select Student —</option>
+              <option value="">Select student…</option>
               {studentsRaw.map((s: any) => (
-                <option key={s.id} value={s.id}>{s.name} ({s.admission_number})</option>
+                <option key={s.id} value={s.id}>{s.name} — {s.admission_number}</option>
               ))}
             </select>
-            <select className="flex-1 border border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-white shadow-sm"
+            <select
+              className="flex-1 border border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
               value={selectedExamId ?? ""}
               onChange={e => setSelectedExamId(e.target.value ? Number(e.target.value) : null)}>
-              <option value="">— Select Exam —</option>
+              <option value="">Select exam…</option>
               {examsRaw.map((e: any) => (
                 <option key={e.id} value={e.id}>{e.exam_name} — Term {e.term}, {e.year}</option>
               ))}
@@ -836,24 +971,26 @@ const Reports = () => {
             {showReport && (
               <div className="flex gap-2">
                 <button onClick={() => window.print()}
-                  className="flex items-center gap-2 bg-blue-950 hover:bg-blue-900 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition-all">
+                  className="flex items-center gap-2 bg-slate-700 hover:bg-slate-800 text-white px-4 py-2.5 rounded-xl text-sm font-medium transition-all">
                   <Printer className="w-4 h-4" /> Print
                 </button>
                 <button onClick={handleDownloadPDF}
-                  className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition-all">
-                  <FileText className="w-4 h-4" /> PDF
+                  className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2.5 rounded-xl text-sm font-medium transition-all">
+                  <FileText className="w-4 h-4" /> Download PDF
                 </button>
               </div>
             )}
           </div>
         )}
 
+        {/* ── CLASS ANALYSIS CONTROLS ── */}
         {tab === "rankings" && (
-          <div className="flex flex-col sm:flex-row gap-3">
-            <select className="flex-1 border border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-white shadow-sm"
+          <div className="flex flex-col sm:flex-row gap-2">
+            <select
+              className="flex-1 border border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
               value={selectedExamId ?? ""}
               onChange={e => setSelectedExamId(e.target.value ? Number(e.target.value) : null)}>
-              <option value="">— Select Exam for Analysis —</option>
+              <option value="">Select exam for analysis…</option>
               {examsRaw.map((e: any) => (
                 <option key={e.id} value={e.id}>{e.exam_name} — Term {e.term}, {e.year}</option>
               ))}
@@ -862,12 +999,12 @@ const Reports = () => {
               <div className="flex gap-2">
                 <button
                   onClick={() => exportRankingsExcel({ school, exam: selectedExam, rankings, subjectRankings, mostImproved })}
-                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition-all">
+                  className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-2.5 rounded-xl text-sm font-medium transition-all">
                   <FileSpreadsheet className="w-4 h-4" /> Excel
                 </button>
                 <button
                   onClick={() => exportRankingsPDF({ school, exam: selectedExam, rankings, subjectRankings, mostImproved })}
-                  className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition-all">
+                  className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2.5 rounded-xl text-sm font-medium transition-all">
                   <FileText className="w-4 h-4" /> PDF
                 </button>
               </div>
@@ -876,116 +1013,164 @@ const Reports = () => {
         )}
       </div>
 
-      {/* ═══════════════ TAB: REPORT CARD ═══════════════ */}
+      {/* ══════════ TAB: REPORT CARD (screen preview) ══════════ */}
       {tab === "report" && (
         <>
           {!showReport && (
-            <div className="text-center py-24 text-slate-400 text-sm">
+            <div className="text-center py-28 text-slate-400 text-sm">
               {!selectedStudentId || !selectedExamId
-                ? "Select a student and exam above to generate the report."
+                ? "Select a student and exam above to preview the report card."
                 : "No results found for this student and exam."}
             </div>
           )}
 
           {showReport && (
-            <div className="print-container max-w-7xl mx-auto bg-white rounded-3xl overflow-hidden shadow-2xl">
+            <div className="print-container max-w-4xl mx-auto bg-white rounded-2xl overflow-hidden shadow-lg border border-slate-200">
 
-              {/* LETTERHEAD */}
-              <div className="bg-gradient-to-r from-blue-950 via-blue-900 to-blue-950 rounded-t-3xl overflow-hidden text-white relative">
-                <div className="absolute inset-0 opacity-10 bg-[radial-gradient(circle_at_top_right,white,transparent)]" />
-                <div className="relative z-10 px-6 py-8">
-                  <div className="flex flex-col md:flex-row items-center gap-5">
-                    <div className="bg-white rounded-2xl p-3 shadow-xl">
-                      <img src={school?.logo_url || "/placeholder.svg"} alt="School Logo" className="w-24 h-24 object-contain" />
-                    </div>
-                    <div className="flex-1 text-center md:text-left">
-                      <h1 className="text-3xl md:text-5xl font-black uppercase tracking-wide">{school?.name}</h1>
-                      <div className="w-40 h-1 bg-yellow-400 rounded-full my-3 mx-auto md:mx-0" />
-                      <p className="text-yellow-300 text-lg italic font-semibold">
-                        Motto: {school?.motto || "Excellence Through Education"}
-                      </p>
-                    </div>
+              {/* ── LETTERHEAD ── */}
+              <div className="bg-slate-800 text-white px-8 py-7">
+                <div className="flex items-center gap-6">
+                  <div className="bg-white rounded-xl p-2 shadow flex-shrink-0">
+                    <img
+                      src={school?.logo_url || "/placeholder.svg"}
+                      alt="School"
+                      className="w-16 h-16 object-contain"
+                    />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h1 className="text-2xl font-bold tracking-wide text-white">
+                      {school?.name ?? "School Name"}
+                    </h1>
+                    <div className="w-24 h-px bg-amber-400/70 my-2" />
+                    <p className="text-slate-300 text-sm italic">
+                      {school?.motto ? `"${school.motto}"` : "Excellence Through Education"}
+                    </p>
+                    <p className="text-slate-400 text-xs mt-1">
+                      {[school?.address, school?.phone, school?.email].filter(Boolean).join("   ·   ")}
+                    </p>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className="text-xs text-slate-400 uppercase tracking-widest font-medium">Progress Report</p>
+                    <p className="text-xs text-slate-400 mt-1">{formattedDate}</p>
                   </div>
                 </div>
               </div>
 
-              <div className="bg-white px-6 pt-6">
+              {/* ── THIN ACCENT LINE ── */}
+              <div className="h-0.5 bg-gradient-to-r from-amber-400 via-amber-300 to-transparent" />
+
+              <div className="px-8 py-6 space-y-6">
 
                 {/* TITLE */}
-                <div className="flex items-center justify-center gap-4 mb-8">
-                  <div className="h-[2px] bg-yellow-500 flex-1 max-w-[120px]" />
-                  <h2 className="text-2xl md:text-4xl font-black uppercase text-blue-950 text-center">Student Progress Report</h2>
-                  <div className="h-[2px] bg-yellow-500 flex-1 max-w-[120px]" />
+                <div className="text-center">
+                  <h2 className="text-lg font-semibold text-slate-700 tracking-widest uppercase text-sm">
+                    Student Academic Progress Report
+                  </h2>
+                  <div className="w-12 h-px bg-amber-400 mx-auto mt-2" />
                 </div>
 
                 {/* STUDENT INFO */}
-                <div className="border rounded-3xl p-6 grid md:grid-cols-3 gap-6 shadow-sm mb-8">
-                  <InfoCard icon={<User />}         label="Student Name"    value={selectedStudent?.name} />
-                  <InfoCard icon={<Hash />}         label="Admission No."   value={selectedStudent?.admission_number} />
-                  <InfoCard icon={<Users />}        label="Gender"          value={selectedStudent?.gender} />
-                  <InfoCard icon={<GraduationCap />}label="Grade / Class"   value={(selectedStudent?.grades as any)?.grade_name} />
-                  <InfoCard icon={<ClipboardList />}label="Exam"            value={selectedExam?.exam_name} />
-                  <InfoCard icon={<CalendarDays />} label="Term & Year"     value={`Term ${selectedExam?.term}, ${selectedExam?.year}`} />
-                  <InfoCard icon={<Trophy />}       label="Position"        value={`${studentRank} out of ${totalStudents}`} />
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {[
+                    { icon: <User className="w-4 h-4" />,          label: "Student Name",  value: selectedStudent?.name },
+                    { icon: <Hash className="w-4 h-4" />,          label: "Admission No.", value: selectedStudent?.admission_number },
+                    { icon: <Users className="w-4 h-4" />,         label: "Gender",        value: selectedStudent?.gender },
+                    { icon: <GraduationCap className="w-4 h-4" />, label: "Grade",         value: (selectedStudent?.grades as any)?.grade_name },
+                    { icon: <ClipboardList className="w-4 h-4" />, label: "Exam",          value: selectedExam?.exam_name },
+                    { icon: <CalendarDays className="w-4 h-4" />,  label: "Term & Year",   value: `Term ${selectedExam?.term}, ${selectedExam?.year}` },
+                    { icon: <Trophy className="w-4 h-4" />,        label: "Position",      value: `${studentRank} of ${totalStudents}` },
+                  ].map(f => (
+                    <div key={f.label} className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                      <div className="flex items-center gap-1.5 text-slate-400 mb-1">
+                        {f.icon}
+                        <span className="text-[10px] font-semibold uppercase tracking-widest">{f.label}</span>
+                      </div>
+                      <p className="text-sm font-semibold text-slate-800">{f.value ?? "—"}</p>
+                    </div>
+                  ))}
                 </div>
 
                 {/* RESULTS TABLE — sorted best → least */}
-                <div className="overflow-x-auto border rounded-3xl shadow-sm mb-8">
-                  <table className="w-full">
-                    <thead className="bg-blue-950 text-white">
-                      <tr>
-                        <th className="p-4 text-left">Learning Area</th>
-                        <th className="p-4 text-center">Marks</th>
-                        <th className="p-4 text-center">Grade</th>
-                        <th className="p-4 text-center">Points</th>
-                        <th className="p-4 text-left">Teacher's Remark</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {reportResults.map((subject, index) => (
-                        <tr key={index} className={`border-b ${index % 2 === 0 ? "bg-white" : "bg-slate-50"}`}>
-                          <td className="p-4 font-semibold">
-                            <div className="flex items-center gap-3">
-                              <BookOpen className="w-5 h-5 text-blue-900" />
-                              {subject.subject_name}
-                            </div>
-                          </td>
-                          <td className="p-4 text-center font-bold">{subject.marks}</td>
-                          <td className="p-4 text-center">{subject.grade}</td>
-                          <td className="p-4 text-center">{subject.points}</td>
-                          <td className="p-4 text-sm text-slate-600">{subject.remark}</td>
+                <div>
+                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Academic Results</h3>
+                  <div className="overflow-x-auto rounded-xl border border-slate-200">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-slate-800 text-white">
+                          <th className="px-4 py-3 text-left font-medium text-xs tracking-wide">Learning Area</th>
+                          <th className="px-4 py-3 text-center font-medium text-xs tracking-wide">Marks</th>
+                          <th className="px-4 py-3 text-center font-medium text-xs tracking-wide">Grade</th>
+                          <th className="px-4 py-3 text-center font-medium text-xs tracking-wide">Points</th>
+                          <th className="px-4 py-3 text-left font-medium text-xs tracking-wide">Teacher's Remark</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {reportResults.map((r, i) => (
+                          <tr key={i} className={`border-t border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50/60"}`}>
+                            <td className="px-4 py-3 font-medium text-slate-800">
+                              <div className="flex items-center gap-2">
+                                <BookOpen className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                                {r.subject_name}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-center font-bold text-slate-900">{r.marks}</td>
+                            <td className="px-4 py-3 text-center">
+                              <span className="inline-block px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-700">
+                                {r.grade}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-center font-semibold text-slate-700">{r.points}</td>
+                            <td className="px-4 py-3 text-xs text-slate-500">{r.remark}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
 
-                {/* SUMMARY */}
-                <div className="grid md:grid-cols-4 gap-4 mb-8">
-                  <SummaryCard title="Total Marks"   value={`${totalMarks}`}    icon={<Award />} />
-                  <SummaryCard title="Percentage"    value={`${percentage}%`}   icon={<Star />} />
-                  <SummaryCard title="Overall Grade" value={overallGrade}        icon={<GraduationCap />} />
-                  <SummaryCard title="Points"        value={`${overallPoints}`} icon={<Trophy />} />
+                {/* SUMMARY STRIP */}
+                <div className="grid grid-cols-4 gap-3">
+                  {[
+                    { label: "Total Marks",   value: totalMarks,    icon: <Award className="w-4 h-4" /> },
+                    { label: "Percentage",    value: `${percentage}%`, icon: <Star className="w-4 h-4" /> },
+                    { label: "Overall Grade", value: overallGrade,  icon: <GraduationCap className="w-4 h-4" /> },
+                    { label: "Points",        value: overallPoints, icon: <Trophy className="w-4 h-4" /> },
+                  ].map(s => (
+                    <div key={s.label} className="bg-slate-800 text-white rounded-xl p-4 flex items-center gap-3">
+                      <div className="text-amber-400">{s.icon}</div>
+                      <div>
+                        <p className="text-xs text-slate-400 font-medium">{s.label}</p>
+                        <p className="text-xl font-bold tabular-nums">{s.value}</p>
+                      </div>
+                    </div>
+                  ))}
                 </div>
 
                 {/* GRADING SCALE */}
-                <div className="border rounded-3xl p-5 mb-8">
-                  <h3 className="text-blue-950 font-black text-lg mb-4">GRADING SCALE</h3>
-                  <div className="flex flex-wrap gap-4 text-sm font-semibold text-slate-700">
-                    {["EE1 (90–100%)", "EE2 (75–89%)", "ME1 (58–74%)", "ME2 (41–57%)", "AE1 (31–40%)", "AE2 (21–30%)", "BE1 (11–20%)", "BE2 (0–10%)"].map(g => (
-                      <span key={g}>{g}</span>
+                <div className="bg-slate-50 rounded-xl border border-slate-200 p-4">
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">CBC Grading Scale</p>
+                  <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-600">
+                    {["EE1 ≥ 90%", "EE2 75–89%", "ME1 58–74%", "ME2 41–57%",
+                      "AE1 31–40%", "AE2 21–30%", "BE1 11–20%", "BE2 0–10%"].map(g => (
+                      <span key={g} className="font-medium">{g}</span>
                     ))}
                   </div>
                 </div>
 
                 {/* REMARKS */}
-                <div className="grid md:grid-cols-2 gap-6 mb-10">
-                  {[["Class Teacher's Remarks", teacherRemark, "Teacher Signature"], ["Principal's Remarks", principalRemark, "Principal Signature"]].map(([title, remark, sig]) => (
-                    <div key={title} className="border rounded-3xl p-6">
-                      <h3 className="font-black text-blue-950 text-lg mb-4">{title}</h3>
-                      <p className="text-lg mb-10">{remark}</p>
-                      <div className="border-b border-dashed mb-2 w-52" />
-                      <div className="flex justify-between text-sm text-slate-500">
+                <div className="grid md:grid-cols-2 gap-4">
+                  {([
+                    ["Class Teacher's Remarks", teacherRemark,   "Class Teacher Signature"],
+                    ["Principal's Remarks",     principalRemark, "Principal / Head Teacher"],
+                  ] as [string, string, string][]).map(([title, remark, sig]) => (
+                    <div key={title} className="border border-slate-200 rounded-xl p-5 bg-slate-50">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-1 h-4 rounded-full bg-amber-400" />
+                        <h4 className="text-xs font-bold text-slate-600 uppercase tracking-widest">{title}</h4>
+                      </div>
+                      <p className="text-sm text-slate-700 leading-relaxed mb-6">{remark}</p>
+                      <div className="border-b border-dashed border-slate-300 w-40 mb-1" />
+                      <div className="flex justify-between text-xs text-slate-400">
                         <span>{sig}</span>
                         <span>{formattedDate}</span>
                       </div>
@@ -995,14 +1180,14 @@ const Reports = () => {
               </div>
 
               {/* FOOTER */}
-              <div className="bg-blue-950 text-white px-6 py-5 rounded-b-3xl">
-                <div className="grid md:grid-cols-4 gap-4 text-sm">
-                  {[{ icon: <MapPin className="w-4 h-4" />, val: school?.address },
-                    { icon: <Phone className="w-4 h-4" />,  val: school?.phone },
-                    { icon: <Mail className="w-4 h-4" />,   val: school?.email },
-                    { icon: <Globe className="w-4 h-4" />,  val: school?.website }].map((f, i) => (
-                    <div key={i} className="flex items-center gap-2"><span>{f.icon}</span><span>{f.val}</span></div>
-                  ))}
+              <div className="bg-slate-800 text-slate-300 px-8 py-4 text-xs">
+                <div className="flex flex-wrap items-center gap-4 justify-between">
+                  <div className="flex items-center gap-4">
+                    {school?.address && <span className="flex items-center gap-1.5"><MapPin className="w-3 h-3" />{school.address}</span>}
+                    {school?.phone   && <span className="flex items-center gap-1.5"><Phone className="w-3 h-3" />{school.phone}</span>}
+                    {school?.email   && <span className="flex items-center gap-1.5"><Mail className="w-3 h-3" />{school.email}</span>}
+                  </div>
+                  <span className="text-slate-500">Confidential — For parent/guardian only</span>
                 </div>
               </div>
             </div>
@@ -1010,154 +1195,160 @@ const Reports = () => {
         </>
       )}
 
-      {/* ═══════════════ TAB: CLASS ANALYSIS ═══════════════ */}
+      {/* ══════════ TAB: CLASS ANALYSIS ══════════ */}
       {tab === "rankings" && (
-        <div className="max-w-7xl mx-auto space-y-6">
+        <div className="max-w-7xl mx-auto space-y-5">
 
           {!selectedExam && (
-            <div className="text-center py-24 text-slate-400 text-sm">Select an exam above to view class analysis.</div>
+            <div className="text-center py-28 text-slate-400 text-sm">
+              Select an exam above to view class analysis.
+            </div>
           )}
 
           {selectedExam && (
-            <>
-              {/* ── School letterhead ── */}
-              <div className="bg-white rounded-3xl overflow-hidden shadow-2xl">
-                <div className="bg-gradient-to-r from-blue-950 via-blue-900 to-blue-950 px-6 py-6 flex items-center gap-5">
-                  <div className="bg-white rounded-2xl p-2 shadow-xl">
-                    <img src={school?.logo_url || "/placeholder.svg"} alt="Logo" className="w-16 h-16 object-contain" />
-                  </div>
-                  <div>
-                    <h1 className="text-2xl font-black text-white uppercase tracking-wide">{school?.name}</h1>
-                    <div className="w-32 h-0.5 bg-yellow-400 my-1.5" />
-                    <p className="text-yellow-300 text-sm italic font-semibold">Motto: {school?.motto || "Excellence Through Education"}</p>
-                  </div>
-                  <div className="ml-auto text-right text-blue-200 text-sm space-y-0.5">
-                    <p>{selectedExam.exam_name}</p>
-                    <p>Term {selectedExam.term}, {selectedExam.year}</p>
-                    <p className="text-xs text-blue-300">{formattedDate}</p>
-                  </div>
-                </div>
+            <div className="bg-white rounded-2xl overflow-hidden shadow-lg border border-slate-200">
 
-                {/* ── Most Improved banner ── */}
+              {/* Letterhead */}
+              <div className="bg-slate-800 text-white px-8 py-6 flex items-center gap-5">
+                <div className="bg-white rounded-xl p-2 shadow flex-shrink-0">
+                  <img src={school?.logo_url || "/placeholder.svg"} alt="Logo" className="w-12 h-12 object-contain" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold tracking-wide">{school?.name ?? "School"}</h1>
+                  <div className="w-16 h-px bg-amber-400/70 my-1.5" />
+                  <p className="text-slate-300 text-xs italic">
+                    {school?.motto ? `"${school.motto}"` : ""}
+                  </p>
+                </div>
+                <div className="ml-auto text-right">
+                  <p className="text-xs text-slate-400 uppercase tracking-widest">Class Analysis</p>
+                  <p className="text-sm font-medium text-white mt-1">{selectedExam.exam_name}</p>
+                  <p className="text-xs text-slate-400">Term {selectedExam.term}, {selectedExam.year}</p>
+                </div>
+              </div>
+              <div className="h-0.5 bg-gradient-to-r from-amber-400 via-amber-300 to-transparent" />
+
+              <div className="px-8 py-6 space-y-8">
+
+                {/* Most Improved */}
                 {mostImproved && (
-                  <div className="mx-6 mt-5 bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-2xl px-6 py-4 flex items-center gap-4">
-                    <span className="text-3xl">🏅</span>
+                  <div className="flex items-center gap-5 bg-slate-50 border border-slate-200 rounded-xl px-6 py-4">
+                    <div className="w-10 h-10 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center text-lg flex-shrink-0">🏅</div>
                     <div>
-                      <p className="text-xs font-bold text-emerald-600 uppercase tracking-widest mb-1">Most Improved Student</p>
-                      <p className="text-xl font-black text-emerald-900">{mostImproved.student_name}
-                        <span className="text-sm font-normal text-emerald-600 ml-2">({mostImproved.admission_number})</span>
+                      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-0.5">Most Improved Student</p>
+                      <p className="text-base font-bold text-slate-800">
+                        {mostImproved.student_name}
+                        <span className="text-sm font-normal text-slate-500 ml-2">({mostImproved.admission_number})</span>
                       </p>
-                      <p className="text-sm text-emerald-700 mt-0.5">
+                      <p className="text-sm text-slate-600 mt-0.5">
                         {mostImproved.prev_avg}% → {mostImproved.curr_avg}%
-                        <span className="ml-2 font-black text-emerald-600">+{mostImproved.improvement}% improvement</span>
+                        <span className="ml-2 font-semibold text-emerald-700">+{mostImproved.improvement}%</span>
+                        <span className="text-xs text-slate-400 ml-2">vs {prevExam?.exam_name} (T{prevExam?.term} {prevExam?.year})</span>
                       </p>
-                    </div>
-                    <div className="ml-auto text-right">
-                      <p className="text-xs text-emerald-500">vs {prevExam?.exam_name}</p>
-                      <p className="text-xs text-emerald-500">Term {prevExam?.term}, {prevExam?.year}</p>
                     </div>
                   </div>
                 )}
 
                 {!mostImproved && prevExam === null && rankings.length > 0 && (
-                  <div className="mx-6 mt-5 bg-amber-50 border border-amber-200 rounded-2xl px-6 py-3 flex items-center gap-3 text-amber-700 text-sm">
+                  <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-5 py-3 text-amber-700 text-sm">
                     <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-                    Most Improved requires at least two exams with recorded results. Only one exam found.
+                    Most Improved requires at least two exams with recorded results.
                   </div>
                 )}
 
-                <div className="px-6 pb-6 mt-6 space-y-8">
-
-                  {/* ── Student Rankings table ── */}
-                  <div>
-                    <div className="flex items-center justify-center gap-4 mb-5">
-                      <div className="h-[2px] bg-yellow-500 flex-1 max-w-[100px]" />
-                      <h2 className="text-xl font-black uppercase text-blue-950">Student Rankings</h2>
-                      <div className="h-[2px] bg-yellow-500 flex-1 max-w-[100px]" />
-                    </div>
-                    <div className="overflow-x-auto border rounded-3xl shadow-sm">
-                      <table className="w-full">
-                        <thead className="bg-blue-950 text-white">
-                          <tr>
-                            {["Rank", "Student Name", "Admission No.", "Total Marks", "Average", "Grade", "Points"].map(h => (
-                              <th key={h} className="p-4 text-left text-sm font-semibold">{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {rankings.map((item, index) => (
-                            <tr key={index}
-                              className={`border-b transition-all hover:bg-slate-50
-                                ${item.rank === 1 ? "bg-yellow-100" : item.rank === 2 ? "bg-slate-100" : item.rank === 3 ? "bg-orange-50" : "bg-white"}`}>
-                              <td className="p-4 font-black text-blue-950">#{item.rank}</td>
-                              <td className="p-4 font-semibold">{item.student_name}</td>
-                              <td className="p-4 text-slate-500 text-sm">{item.admission_number}</td>
-                              <td className="p-4 text-center font-bold">{item.total_marks}</td>
-                              <td className="p-4 text-center">{item.average}%</td>
-                              <td className="p-4 text-center font-bold">{item.grade}</td>
-                              <td className="p-4 text-center">{item.points}</td>
-                            </tr>
+                {/* Student Rankings */}
+                <div>
+                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Student Rankings</h3>
+                  <div className="overflow-x-auto rounded-xl border border-slate-200">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-slate-800 text-white">
+                          {["Rank", "Student Name", "Admission No.", "Total Marks", "Average", "Grade", "Points"].map(h => (
+                            <th key={h} className="px-4 py-3 text-left text-xs font-medium tracking-wide">{h}</th>
                           ))}
-                        </tbody>
-                      </table>
-                    </div>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rankings.map((item, i) => (
+                          <tr key={i}
+                            className={`border-t border-slate-100 transition-colors hover:bg-slate-50
+                              ${item.rank === 1 ? "bg-amber-50" : item.rank === 2 ? "bg-slate-50" : item.rank === 3 ? "bg-orange-50/50" : "bg-white"}`}>
+                            <td className="px-4 py-3 font-bold text-slate-700">#{item.rank}</td>
+                            <td className="px-4 py-3 font-medium text-slate-800">{item.student_name}</td>
+                            <td className="px-4 py-3 text-slate-500 text-xs">{item.admission_number}</td>
+                            <td className="px-4 py-3 text-center font-bold text-slate-900">{item.total_marks}</td>
+                            <td className="px-4 py-3 text-center text-slate-700">{item.average}%</td>
+                            <td className="px-4 py-3 text-center">
+                              <span className="inline-block px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-700">{item.grade}</span>
+                            </td>
+                            <td className="px-4 py-3 text-center font-semibold text-slate-700">{item.points}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
+                </div>
 
-                  {/* ── Subject Rankings table (best → least) ── */}
-                  <div>
-                    <div className="flex items-center justify-center gap-4 mb-5">
-                      <div className="h-[2px] bg-yellow-500 flex-1 max-w-[100px]" />
-                      <h2 className="text-xl font-black uppercase text-blue-950">Subject Rankings</h2>
-                      <div className="h-[2px] bg-yellow-500 flex-1 max-w-[100px]" />
-                    </div>
-                    <div className="overflow-x-auto border rounded-3xl shadow-sm">
-                      <table className="w-full">
-                        <thead className="bg-blue-950 text-white">
-                          <tr>
-                            {["Rank", "Subject", "Class Average", "Highest Score", "Lowest Score", "No. of Students"].map(h => (
-                              <th key={h} className="p-4 text-left text-sm font-semibold">{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {subjectRankings.map((s, i) => (
-                            <tr key={i} className={`border-b hover:bg-slate-50 ${i % 2 === 0 ? "bg-white" : "bg-slate-50"}`}>
-                              <td className="p-4 font-black text-blue-950">#{i + 1}</td>
-                              <td className="p-4 font-semibold flex items-center gap-2">
-                                <TrendingUp className={`w-4 h-4 ${i === 0 ? "text-emerald-500" : i === subjectRankings.length - 1 ? "text-rose-400" : "text-slate-400"}`} />
-                                {s.subject_name}
-                              </td>
-                              <td className="p-4">
-                                <div className="flex items-center gap-2">
-                                  <div className="flex-1 max-w-[100px] h-2 bg-slate-100 rounded-full overflow-hidden">
-                                    <div className="h-full rounded-full bg-blue-500" style={{ width: `${s.avg}%` }} />
-                                  </div>
-                                  <span className="font-bold text-slate-800">{s.avg.toFixed(1)}%</span>
-                                </div>
-                              </td>
-                              <td className="p-4 text-center font-semibold text-emerald-600">{s.highest}</td>
-                              <td className="p-4 text-center font-semibold text-rose-500">{s.lowest}</td>
-                              <td className="p-4 text-center text-slate-600">{s.count}</td>
-                            </tr>
+                {/* Subject Rankings */}
+                <div>
+                  <div className="flex items-center justify-center gap-4 mb-5">
+                    <div className="h-[2px] bg-yellow-500 flex-1 max-w-[100px]" />
+                    <h2 className="text-xl font-black uppercase text-blue-950">Subject Rankings</h2>
+                    <div className="h-[2px] bg-yellow-500 flex-1 max-w-[100px]" />
+                  </div>
+                  <div className="overflow-x-auto border rounded-3xl shadow-sm">
+                    <table className="w-full">
+                      <thead className="bg-blue-950 text-white">
+                        <tr>
+                          {["Rank", "Subject", "Class Average", "Highest Score", "Lowest Score", "No. of Students"].map(h => (
+                            <th key={h} className="p-4 text-left text-sm font-semibold">{h}</th>
                           ))}
-                        </tbody>
-                      </table>
-                    </div>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {subjectRankings.map((s, i) => (
+                          <tr key={i} className={`border-b hover:bg-slate-50 ${i % 2 === 0 ? "bg-white" : "bg-slate-50"}`}>
+                            <td className="p-4 font-black text-blue-950">#{i + 1}</td>
+                            <td className="p-4 font-semibold flex items-center gap-2">
+                              <TrendingUp className={`w-4 h-4 ${i === 0 ? "text-emerald-500" : i === subjectRankings.length - 1 ? "text-rose-400" : "text-slate-300"}`} />
+                              {s.subject_name}
+                            </td>
+                            <td className="p-4">
+                              <div className="flex items-center gap-2">
+                                <div className="w-24 h-2 bg-slate-100 rounded-full overflow-hidden">
+                                  <div className="h-full rounded-full bg-blue-500" style={{ width: `${s.avg}%` }} />
+                                </div>
+                                <span className="font-bold text-slate-800">{s.avg.toFixed(1)}%</span>
+                              </div>
+                            </td>
+                            <td className="p-4 text-center font-semibold text-emerald-600">{s.highest}</td>
+                            <td className="p-4 text-center font-semibold text-rose-500">{s.lowest}</td>
+                            <td className="p-4 text-center text-slate-600">{s.count}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               </div>
-            </>
+            </div>
           )}
 
           {/* ── BULK DOWNLOAD ── */}
           <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6">
             <h3 className="text-lg font-black text-blue-950 mb-1">Bulk Download Report Cards</h3>
-            <p className="text-sm text-slate-500 mb-4">Select an exam, choose students, and download all report cards as a single PDF.</p>
+            <p className="text-sm text-slate-500 mb-4">
+              Select an exam, choose students, and download all report cards as a single PDF.
+            </p>
 
             <div className="flex flex-col sm:flex-row gap-3 mb-4">
-              <select className="flex-1 border border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-white"
+              <select
+                className="flex-1 border border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-white"
                 value={bulkExamId ?? ""}
-                onChange={e => { setBulkExamId(e.target.value ? Number(e.target.value) : null); setSelectedBulkIds(new Set()); }}>
+                onChange={e => {
+                  setBulkExamId(e.target.value ? Number(e.target.value) : null);
+                  setSelectedBulkIds(new Set());
+                }}>
                 <option value="">— Select Exam for Bulk Download —</option>
                 {examsRaw.map((e: any) => (
                   <option key={e.id} value={e.id}>{e.exam_name} — Term {e.term}, {e.year}</option>
@@ -1165,11 +1356,13 @@ const Reports = () => {
               </select>
               {bulkExamId && (
                 <div className="flex gap-2">
-                  <button onClick={() => setSelectedBulkIds(new Set(studentsRaw.map((s: any) => s.id)))}
+                  <button
+                    onClick={() => setSelectedBulkIds(new Set(studentsRaw.map((s: any) => s.id)))}
                     className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-all">
                     <CheckSquare className="w-4 h-4" /> Select All
                   </button>
-                  <button onClick={() => setSelectedBulkIds(new Set())}
+                  <button
+                    onClick={() => setSelectedBulkIds(new Set())}
                     className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-all">
                     <Square className="w-4 h-4" /> Clear
                   </button>
@@ -1212,11 +1405,14 @@ const Reports = () => {
             {bulkDownloading && (
               <div className="mt-4">
                 <div className="flex items-center justify-between text-xs text-slate-500 mb-1.5">
-                  <span>Generating PDFs…</span>
+                  <span>Generating report cards…</span>
                   <span>{bulkProgress}%</span>
                 </div>
                 <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-blue-600 rounded-full transition-all duration-300" style={{ width: `${bulkProgress}%` }} />
+                  <div
+                    className="h-full bg-blue-600 rounded-full transition-all duration-300"
+                    style={{ width: `${bulkProgress}%` }}
+                  />
                 </div>
               </div>
             )}

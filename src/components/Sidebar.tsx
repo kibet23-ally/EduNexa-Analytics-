@@ -76,6 +76,7 @@ const Sidebar = () => {
   const rawRole = (user?.role || '').toLowerCase();
   const isSuperAdminRole = rawRole === 'superadmin' || rawRole === 'super_admin' || rawRole.includes('super');
   const isSchoolAdmin = rawRole === 'admin' || rawRole === 'school_admin' || rawRole === 'principal' || rawRole === 'schooladmin';
+  const isTeacher = rawRole === 'teacher';
 
   const superAdminNav: NavItem[] = [
     { to: '/super-admin', icon: LayoutDashboard, label: 'Dashboard' },
@@ -91,14 +92,15 @@ const Sidebar = () => {
     { to: '/school-admin', icon: LayoutDashboard, label: 'Dashboard' },
     { to: '/students', icon: Users, label: 'Students' },
     {
-      icon: GraduationCap,
-      label: 'Academics',
-      subItems: [
-        { to: '/grades', label: 'Grades' },
-        { to: '/subjects', label: 'Subjects' },
-        { to: '/promotion', label: 'Promotion' },
-      ]
-    },
+      {
+  icon: GraduationCap,
+  label: 'Academics',
+  subItems: [
+    { to: '/grades', label: 'Grades' },
+    { to: '/subjects', label: 'Subjects' },
+    ...(!isTeacher ? [{ to: '/promotion', label: 'Promotion' }] : []),
+  ]
+},
     {
       icon: ClipboardList,
       label: 'Examinations',

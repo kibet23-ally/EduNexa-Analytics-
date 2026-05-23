@@ -1,30 +1,17 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error(
-    '[EduNexa] Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY environment variables.'
-  );
-}
-
-// ── Single client instance, module-level singleton ──────────────────────────
-// createClient is safe to call once at module load. All imports share this
-// same instance so there is never more than one GoTrue client running.
+// Single shared client — explicitly configured so we know exactly
+// what storage key prefix Supabase uses (sb-<project-ref>-auth-token).
+// autoRefreshToken + persistSession are true by default but stated
+// explicitly here so the behaviour is never ambiguous.
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    // Persist the session in localStorage so hard-refreshes survive
     persistSession: true,
-    // Let Supabase silently refresh the access token before it expires
     autoRefreshToken: true,
-    // Pick up the session from the URL hash after OAuth / magic-link redirects
     detectSessionInUrl: true,
-    // Use localStorage explicitly (default, but stated for clarity)
-    storage: window.localStorage,
-    // Storage key prefix — keeps EduNexa tokens isolated from other apps
-    storageKey: 'edunexa_supabase_auth',
-    // Flow type: 'pkce' is more secure for SPAs
-    flowType: 'pkce',
+    storageKey: 'edunexa-auth',   // predictable key we can target in purge
   },
 });

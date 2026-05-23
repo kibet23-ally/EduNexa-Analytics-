@@ -145,8 +145,8 @@ const Schools = () => {
     await supabase.from('attendance').delete().eq('school_id', id);
     await supabase.from('results').delete().eq('school_id', id);
     await supabase.from('exams').delete().eq('school_id', id);
-    await supabase.from('subscriptions').delete().eq('school_id', id);
-
+    await supabase.from('subscription_plans').delete().eq('school_id', id);
+    await supabase.from('marks').delete().eq('school_id', id);
     const { error: deleteError } = await supabase
       .from('schools')
       .delete()

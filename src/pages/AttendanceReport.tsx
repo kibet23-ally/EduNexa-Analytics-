@@ -104,8 +104,9 @@ const AttendanceReport = () => {
 
   const [selectedGrade, setSelectedGrade] = useState('');
   const [selectedSubject, setSelectedSubject] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const today = new Date().toISOString().slice(0, 10);
+  const [startDate, setStartDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
   const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState<'summary' | 'logs'>('summary');
 
@@ -275,12 +276,28 @@ const AttendanceReport = () => {
       .sort((a, b) => b.percentage - a.percentage);
   }, [attendance, searchTerm]);
 
-  const totals = useMemo(() => ({
-    present: studentSummaries.reduce((a, s) => a + s.present, 0),
-    absent:  studentSummaries.reduce((a, s) => a + s.absent, 0),
-    late:    studentSummaries.reduce((a, s) => a + s.late, 0),
-    excused: studentSummaries.reduce((a, s) => a + s.excused, 0),
-  }), [studentSummaries]);
+  // Count distinct dates in the filtered window
+  const distinctDates = useMemo(() =>
+    new Set(attendance.map(r => r.date)).size || 1,
+  [attendance]);
+
+  const totals = useMemo(() => {
+    // When a single date is selected (or defaulted to today),
+    // present/absent/late/excused = count of DISTINCT students with that status
+    // on the most recent date in the filtered set. This prevents multi-day
+    // accumulation making present > total students.
+    const dates = Array.from(new Set(attendance.map(r => r.date))).sort();
+    const latestDate = dates[dates.length - 1];
+    const scopedRecords = latestDate
+      ? attendance.filter(r => r.date === latestDate)
+      : attendance;
+    return {
+      present: scopedRecords.filter(r => r.status === 'present').length,
+      absent: scopedRecords.filter(r => r.status === 'absent').length,
+      late: scopedRecords.filter(r => r.status === 'late').length,
+      excused: scopedRecords.filter(r => r.status === 'excused').length,
+    };
+  }, [attendance]);
 
   const totalSessions = totals.present + totals.absent + totals.late + totals.excused;
   const overallRate = totalSessions ? (totals.present / totalSessions) * 100 : 0;
@@ -541,7 +558,22 @@ const AttendanceReport = () => {
                                     {s[k]}
                                   </span>
                                 ))}
-                                <span className="text-[10px] font-bold text-slate-400 ml-1">of {s.total}</span>
+                                <td className="px-6 py-5">
+  <div className="flex flex-wrap gap-1.5">
+    {(['present', 'absent', 'late', 'excused'] as const).map(k => s[k] > 0 && (
+      <span key={k} className={cn(
+        'inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black ring-1',
+        STATUS_STYLE[k].chip,
+      )}>
+        <span className={cn('w-1.5 h-1.5 rounded-full', STATUS_STYLE[k].dot)} />
+        {s[k]}
+      </span>
+    ))}
+    {s.total > 0 && (
+      <span className="text-[10px] font-bold text-slate-400 ml-1">of {s.total} session{s.total !== 1 ? 's' : ''}</span>
+    )}
+  </div>
+</td>
                               </div>
                             </td>
                             <td className="px-6 py-5">

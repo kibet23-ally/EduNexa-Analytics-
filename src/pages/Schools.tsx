@@ -129,24 +129,41 @@ const Schools = () => {
   };
 
   const handleDeleteSchool = async (id: number | null) => {
-    if (!id) return;
-    const schoolToDelete = schools.find(s => s.id === id);
-    if (!schoolToDelete) return;
-    setLoadingAction(true);
-    setError(null);
-    try {
-      setConfirmDeleteId(null);
-      await writeWithProxy('schools', 'delete', null, { id });
-      setSchools(current => current.filter(s => s.id !== id));
-      setSuccess(`"${schoolToDelete.name}" successfully removed`);
-      setTimeout(() => { fetchSchools(true); setSuccess(null); }, 3000);
-    } catch (err: unknown) {
-      alert('Delete operation failed.');
-      fetchSchools();
-    } finally {
-      setLoadingAction(false);
-    }
-  };
+  if (!id) return;
+  const schoolToDelete = schools.find(s => s.id === id);
+  if (!schoolToDelete) return;
+  setLoadingAction(true);
+  setError(null);
+  setConfirmDeleteId(null);
+  try {
+    // Delete child records first to avoid FK constraint errors
+    await supabase.from('users').delete().eq('school_id', id);
+    await supabase.from('teachers').delete().eq('school_id', id);
+    await supabase.from('students').delete().eq('school_id', id);
+    await supabase.from('grades').delete().eq('school_id', id);
+    await supabase.from('subjects').delete().eq('school_id', id);
+    await supabase.from('attendance').delete().eq('school_id', id);
+    await supabase.from('results').delete().eq('school_id', id);
+    await supabase.from('exams').delete().eq('school_id', id);
+    await supabase.from('subscriptions').delete().eq('school_id', id);
+
+    const { error: deleteError } = await supabase
+      .from('schools')
+      .delete()
+      .eq('id', id);
+
+    if (deleteError) throw deleteError;
+
+    setSchools(current => current.filter(s => s.id !== id));
+    setSuccess(`"${schoolToDelete.name}" successfully removed`);
+    setTimeout(() => setSuccess(null), 3000);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Delete operation failed';
+    setError(`Delete failed: ${msg}`);
+  } finally {
+    setLoadingAction(false);
+  }
+};
 
   const openStats = async (school: SchoolWithStatus) => {
     setLoadingAction(true);

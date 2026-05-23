@@ -201,15 +201,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Step 1: eagerly restore existing session
     (async () => {
+      // Safety net — if session resolution hangs for any reason
+      // (network timeout, stale token, Supabase outage), unblock
+      // the UI after 8 seconds rather than spinning forever.
+      const timeout = setTimeout(() => {
+        if (cancelled) return;
+        console.warn('[EduNexa] Session restore timed out — clearing auth state');
+        purgeAuthStorage();
+        setUser(null);
+        setToken(null);
+        lastLoadedUid.current = null;
+        setSessionReady(true);
+      }, 8000);
+
       try {
-        // refreshSession() re-validates the token with Supabase rather than
-        // just reading from storage — catches expired/revoked tokens immediately
         const { data, error } = await supabase.auth.refreshSession();
 
+        clearTimeout(timeout);
         if (cancelled) return;
 
         if (error || !data.session) {
-          // No valid session — clear any stale storage
           purgeAuthStorage();
           setUser(null);
           setToken(null);
@@ -220,6 +231,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         await resolveSession(data.session);
       } catch (err) {
+        clearTimeout(timeout);
         if (cancelled) return;
         console.error('[EduNexa] Session restore error:', err);
         purgeAuthStorage();

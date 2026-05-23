@@ -8,8 +8,11 @@ import type { AuthContextType } from './useAuth';
 import type { User } from './types';
 
 /* ── Storage keys ── */
-const THEME_KEY        = 'edunexa_theme';
+const THEME_KEY = 'edunexa_theme';
 const USER_PROFILE_KEY = 'edunexa_user_profile';
+
+// Must match storageKey in supabase.ts exactly
+const SUPABASE_AUTH_KEY = 'edunexa-auth';
 
 /* ── Safe storage helpers ── */
 function safeGetItem(key: string): string | null {
@@ -28,49 +31,59 @@ function safeParseCachedUser(): User | null {
   catch { safeRemoveItem(USER_PROFILE_KEY); return null; }
 }
 
-/* ── Purge all auth storage ── */
+/* ── Purge ALL auth storage ──────────────────────────────────────────────────
+   Clears:
+   - our profile cache
+   - the exact Supabase auth key (edunexa-auth)
+   - any legacy sb- prefixed keys from before storageKey was set
+   - sessionStorage equivalents
+   Called on logout and on session error.
+──────────────────────────────────────────────────────────────────────────── */
 function purgeAuthStorage(): void {
   safeRemoveItem(USER_PROFILE_KEY);
+  safeRemoveItem(SUPABASE_AUTH_KEY);
+
+  // Also clear any legacy keys from before storageKey was pinned
   try {
     Object.keys(localStorage)
-      .filter(k => k.startsWith('edunexa_supabase_auth') || k.startsWith('sb-'))
+      .filter(k =>
+        k.startsWith('sb-') ||
+        k.startsWith('edunexa_supabase_auth') ||
+        k.startsWith('supabase.auth')
+      )
       .forEach(k => safeRemoveItem(k));
   } catch { /* noop */ }
+
   try {
     Object.keys(sessionStorage)
-      .filter(k => k.startsWith('edunexa_supabase_auth') || k.startsWith('sb-'))
+      .filter(k =>
+        k.startsWith('sb-') ||
+        k === SUPABASE_AUTH_KEY ||
+        k.startsWith('edunexa_supabase_auth') ||
+        k.startsWith('supabase.auth')
+      )
       .forEach(k => { try { sessionStorage.removeItem(k); } catch { /* noop */ } });
   } catch { /* noop */ }
 }
 
 /* ── Fetch user profile ──────────────────────────────────────────────────────
-   FIXED: removed `status` (column doesn't exist).
    Tries auth_id first, falls back to id = uid.
-   Logs the actual Supabase error so future issues are visible in the console.
 ──────────────────────────────────────────────────────────────────────────── */
 async function fetchUserProfile(authUid: string): Promise<User | null> {
   try {
-    // Primary: match on auth_id column
     const { data, error } = await supabase
       .from('users')
       .select('id, name, email, role, school_id, avatar_url')
       .eq('auth_id', authUid)
-      .maybeSingle();              // maybeSingle() returns null instead of error when 0 rows
+      .maybeSingle();
 
     if (error) {
-      console.error('[EduNexa] fetchUserProfile (auth_id) error:', error.message, error.details);
-      // Don't return null yet — try the fallback
+      console.error('[EduNexa] fetchUserProfile (auth_id) error:', error.message);
     }
 
-    if (data) {
-      if (!data.role) {
-        console.warn('[EduNexa] User row found but role is empty:', data);
-        return null;
-      }
-      return data as unknown as User;
-    }
+    if (data?.role) return data as unknown as User;
 
-    // Fallback: some rows have id === auth_id, try matching on id directly
+    // Fallback: id === auth_id pattern
     const { data: data2, error: error2 } = await supabase
       .from('users')
       .select('id, name, email, role, school_id, avatar_url')
@@ -78,7 +91,7 @@ async function fetchUserProfile(authUid: string): Promise<User | null> {
       .maybeSingle();
 
     if (error2) {
-      console.error('[EduNexa] fetchUserProfile (id) error:', error2.message, error2.details);
+      console.error('[EduNexa] fetchUserProfile (id) error:', error2.message);
       return null;
     }
 
@@ -88,7 +101,7 @@ async function fetchUserProfile(authUid: string): Promise<User | null> {
     }
 
     if (!data2.role) {
-      console.warn('[EduNexa] User row found but role is empty:', data2);
+      console.warn('[EduNexa] User row has no role:', data2);
       return null;
     }
 
@@ -101,16 +114,22 @@ async function fetchUserProfile(authUid: string): Promise<User | null> {
 
 /* ── Auth Provider ── */
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user,         setUser]         = useState<User | null>(safeParseCachedUser);
-  const [token,        setToken]        = useState<string | null>(null);
+  const [user, setUser] = useState<User | null>(safeParseCachedUser);
+  const [token, setToken] = useState<string | null>(null);
+  // FIX: sessionReady starts false; we show nothing until Supabase confirms
+  // the session. This prevents ProtectedRoute from flash-redirecting to /login
+  // on reload while getSession() is still in flight.
   const [sessionReady, setSessionReady] = useState(false);
-  const [theme,        setThemeState]   = useState<'light' | 'dark'>(() => {
+  const [theme, setThemeState] = useState<'light' | 'dark'>(() => {
     const stored = safeGetItem(THEME_KEY);
     return stored === 'dark' ? 'dark' : 'light';
   });
 
-  const profileFetchInFlight = useRef(false);
-  const lastLoadedUid        = useRef<string | null>(null);
+  // FIX: track the uid that is currently loaded, not just "in flight"
+  // Reset to null on logout so a same-uid re-login always re-fetches profile.
+  const lastLoadedUid = useRef<string | null>(null);
+  // Prevent concurrent fetches for the same uid
+  const fetchingUid = useRef<string | null>(null);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
@@ -119,95 +138,121 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const setTheme = useCallback((t: 'light' | 'dark') => setThemeState(t), []);
 
+  /* ── resolveSession ──────────────────────────────────────────────────────
+     Called both on initial getSession() and on every onAuthStateChange event.
+     Key fixes vs old version:
+     - No longer skips fetch when uid matches lastLoadedUid (that prevented
+       re-login after logout for same account)
+     - Uses fetchingUid ref so concurrent calls for THE SAME uid are deduped,
+       but a NEW uid after logout always runs
+     - Sets token regardless of whether profile fetch is needed
+  ────────────────────────────────────────────────────────────────────────── */
   const resolveSession = useCallback(async (session: Session | null): Promise<void> => {
-    // Signed out
     if (!session) {
       setUser(null);
       setToken(null);
       safeRemoveItem(USER_PROFILE_KEY);
       lastLoadedUid.current = null;
+      fetchingUid.current = null;
       setSessionReady(true);
       return;
     }
 
-    // Same user, token just refreshed
-    if (session.user.id === lastLoadedUid.current) {
-      setToken(session.access_token);
+    const uid = session.user.id;
+
+    // Always update token — even if profile is already loaded
+    setToken(session.access_token);
+
+    // Profile already loaded for this uid and user state is set — done
+    if (uid === lastLoadedUid.current && user !== null) {
       setSessionReady(true);
       return;
     }
 
-    // New session — fetch profile
-    if (profileFetchInFlight.current) return;
-    profileFetchInFlight.current = true;
+    // Dedupe concurrent fetches for the same uid
+    if (fetchingUid.current === uid) return;
+    fetchingUid.current = uid;
 
     try {
-      setToken(session.access_token);
-
-      const profile = await fetchUserProfile(session.user.id);
+      const profile = await fetchUserProfile(uid);
 
       if (!profile) {
-        // Profile missing — DO NOT sign out or wipe session.
-        // Just leave sessionReady=true with user=null so the
-        // ProtectedRoute redirects to /login cleanly without
-        // destroying a potentially valid session on a transient DB error.
-        console.warn('[EduNexa] Could not load user profile — redirecting to login.');
+        // Transient DB error or missing profile — clear user but keep
+        // Supabase session intact so next page load can retry
+        console.warn('[EduNexa] Could not load profile — clearing user state.');
         setUser(null);
         setToken(null);
+        safeRemoveItem(USER_PROFILE_KEY);
         lastLoadedUid.current = null;
-        return;
+      } else {
+        safeSetItem(USER_PROFILE_KEY, JSON.stringify(profile));
+        lastLoadedUid.current = uid;
+        setUser(profile);
       }
-
-      safeSetItem(USER_PROFILE_KEY, JSON.stringify(profile));
-      lastLoadedUid.current = session.user.id;
-      setUser(profile);
     } finally {
-      profileFetchInFlight.current = false;
+      fetchingUid.current = null;
       setSessionReady(true);
     }
-  }, []);
+  }, [user]);
 
+  /* ── Mount: restore session + subscribe to auth changes ── */
   useEffect(() => {
     let cancelled = false;
 
-    // Eagerly restore session on mount
+    // Step 1: eagerly restore existing session
     (async () => {
       try {
-        const { data, error } = await supabase.auth.getSession();
+        // refreshSession() re-validates the token with Supabase rather than
+        // just reading from storage — catches expired/revoked tokens immediately
+        const { data, error } = await supabase.auth.refreshSession();
+
         if (cancelled) return;
 
-        if (error) {
-          console.warn('[EduNexa] getSession error:', error.message);
+        if (error || !data.session) {
+          // No valid session — clear any stale storage
           purgeAuthStorage();
-          setUser(null); setToken(null); setSessionReady(true);
+          setUser(null);
+          setToken(null);
+          lastLoadedUid.current = null;
+          setSessionReady(true);
           return;
         }
 
         await resolveSession(data.session);
       } catch (err) {
         if (cancelled) return;
-        console.error('[EduNexa] getSession unexpected error:', err);
-        setUser(null); setToken(null); setSessionReady(true);
+        console.error('[EduNexa] Session restore error:', err);
+        purgeAuthStorage();
+        setUser(null);
+        setToken(null);
+        setSessionReady(true);
       }
     })();
 
-    // Auth state listener
+    // Step 2: subscribe to all future auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event: AuthChangeEvent, session: Session | null) => {
         if (cancelled) return;
 
-        if (event === 'TOKEN_REFRESHED' && session) {
-          setToken(session.access_token);
-          return;
-        }
+        console.debug('[EduNexa] Auth event:', event);
+
         if (event === 'SIGNED_OUT') {
-          setUser(null); setToken(null);
-          safeRemoveItem(USER_PROFILE_KEY);
+          purgeAuthStorage();
+          setUser(null);
+          setToken(null);
           lastLoadedUid.current = null;
+          fetchingUid.current = null;
           setSessionReady(true);
           return;
         }
 
+        if (event === 'TOKEN_REFRESHED' && session) {
+          // Just update the token — no need to re-fetch profile
+          setToken(session.access_token);
+          return;
+        }
+
+        // SIGNED_IN, INITIAL_SESSION, USER_UPDATED, PASSWORD_RECOVERY
         await resolveSession(session);
       }
     );
@@ -216,13 +261,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       cancelled = true;
       subscription.unsubscribe();
     };
-  }, [resolveSession]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // ^ intentionally empty — runs once on mount only
 
-  const login = useCallback(async (_token: string, userProfile: User) => {
+  /* ── login ───────────────────────────────────────────────────────────────
+     Called by Login page after supabase.auth.signInWithPassword() succeeds.
+     FIX: now sets token (was missing before, causing isAuthenticated=false
+     until onAuthStateChange fired asynchronously).
+  ────────────────────────────────────────────────────────────────────────── */
+  const login = useCallback(async (accessToken: string, userProfile: User) => {
     safeSetItem(USER_PROFILE_KEY, JSON.stringify(userProfile));
+    lastLoadedUid.current = null; // allow resolveSession to re-validate uid
+    setToken(accessToken);
     setUser(userProfile);
   }, []);
 
+  /* ── logout ──────────────────────────────────────────────────────────────
+     Signs out from Supabase, then wipes ALL local auth state.
+     FIX: lastLoadedUid is reset so a same-account re-login works cleanly.
+  ────────────────────────────────────────────────────────────────────────── */
   const logout = useCallback(async () => {
     try { await supabase.auth.signOut(); }
     catch (err) { console.warn('[EduNexa] signOut error:', err); }
@@ -230,8 +287,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
     setToken(null);
     lastLoadedUid.current = null;
+    fetchingUid.current = null;
   }, []);
 
+  /* ── isAuthenticated ─────────────────────────────────────────────────────
+     FIX: previously `!!user && !!token` caused isAuthenticated=false on
+     reload while token was still null (getSession in flight) even though
+     user was restored from cache. Now we also gate on sessionReady so
+     ProtectedRoute waits for confirmation before deciding.
+     Once sessionReady=true, both user and token must exist.
+  ────────────────────────────────────────────────────────────────────────── */
   const value: AuthContextType = {
     user,
     token,
@@ -240,7 +305,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     login,
     logout,
     setTheme,
-    isAuthenticated: !!user && !!token,
+    isAuthenticated: sessionReady ? (!!user && !!token) : false,
   };
 
   return (

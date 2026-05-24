@@ -1,8 +1,4 @@
 import React, { useState, useMemo, useCallback } from "react";
-import { motion } from "framer-motion";
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-} from "recharts";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
@@ -23,10 +19,9 @@ export default function AssessmentHub() {
   const [selectedYear, setSelectedYear] = useState<string>(String(new Date().getFullYear()));
   const [selectedTerm, setSelectedTerm] = useState<string>("Term 1");
   const [selectedGrade, setSelectedGrade] = useState<string>("");
-  const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [loadingExport, setLoadingExport] = useState(false);
 
-  // Data Fetching
+  // ─── Data Fetching ─────────────────────────────────────────────────────
   const { 
     data: schools = [], 
     loading: schoolLoading, 
@@ -35,7 +30,8 @@ export default function AssessmentHub() {
 
   const school = schools[0];
 
-  const { data: grades = [], loading: gradesLoading } = useData<Grade>(
+  // Grades, Subjects, Students, Results - only fetch after school is loaded
+  const { data: grades = [] } = useData<Grade>(
     `grades-${school?.id}`, "grades",
     { filters: school ? [{ column: "school_id", value: school.id }] : [] },
     !!school?.id
@@ -54,7 +50,7 @@ export default function AssessmentHub() {
   );
 
   const { data: results = [] } = useData<Result>(
-    `results-\( {school?.id}- \){selectedYear}`, "results",
+    `results-\( {school?.id}- \){selectedYear}-${selectedTerm}`, "results",
     {
       filters: [
         ...(school ? [{ column: "school_id", value: school.id }] : []),
@@ -65,15 +61,17 @@ export default function AssessmentHub() {
     !!school?.id
   );
 
-  // Computed Data
+  // ─── Computed Data ─────────────────────────────────────────────────────
   const filteredStudents = useMemo(() => {
     return selectedGrade 
-      ? students.filter(s => s.grade_id === selectedGrade) 
+      ? students.filter((s: Student) => s.grade_id === selectedGrade) 
       : students;
   }, [students, selectedGrade]);
 
   const filteredResults = useMemo(() => {
-    return results.filter(r => filteredStudents.some(s => s.id === r.student_id));
+    return results.filter((r: Result) => 
+      filteredStudents.some((s: Student) => s.id === r.student_id)
+    );
   }, [results, filteredStudents]);
 
   const kpiData = useMemo(() => {
@@ -85,16 +83,8 @@ export default function AssessmentHub() {
     return { avg, passRate, top };
   }, [filteredResults]);
 
-  const subjectPerformance = useMemo(() => {
-    return subjects.map(sub => {
-      const subjRes = filteredResults.filter(r => r.subject_id === sub.id);
-      const avg = subjRes.length ? Math.round(subjRes.reduce((a, b) => a + b.marks, 0) / subjRes.length) : 0;
-      return { name: sub.subject_name, avg, count: subjRes.length };
-    }).filter(s => s.count > 0).sort((a, b) => b.avg - a.avg);
-  }, [subjects, filteredResults]);
-
   const studentRankings = useMemo(() => {
-    const map: any = {};
+    const map: Record<string, any> = {};
     filteredResults.forEach(r => {
       if (!map[r.student_id]) {
         const stu = filteredStudents.find(s => s.id === r.student_id);
@@ -110,14 +100,7 @@ export default function AssessmentHub() {
       .map((s: any, i: number) => ({ ...s, rank: i + 1 }));
   }, [filteredResults, filteredStudents]);
 
-  // Safe error display
-  const getErrorMessage = (err: any): string => {
-    if (!err) return "";
-    if (typeof err === "string") return err;
-    return err.message || err.details || err.hint || "An unknown error occurred";
-  };
-
-  // PDF Generation
+  // ─── PDF Generation ───────────────────────────────────────────────────
   const generateReportCard = useCallback(async (student: Student) => {
     setLoadingExport(true);
     try {
@@ -128,15 +111,11 @@ export default function AssessmentHub() {
       doc.rect(0, 0, width, 50, "F");
       doc.setTextColor(245, 158, 11);
       doc.setFontSize(18);
-      doc.text(school?.name?.toUpperCase() || "MARUMBASI COMPREHENSIVE SCHOOL", width / 2, 25, { align: "center" });
-
-      doc.setTextColor(0);
-      doc.setFontSize(12);
-      doc.text(`Student Report - ${selectedYear} ${selectedTerm}`, width / 2, 40, { align: "center" });
+      doc.text(school?.name?.toUpperCase() || "SCHOOL", width / 2, 25, { align: "center" });
 
       autoTable(doc, {
         startY: 70,
-        head: [["Subject", "Marks", "Grade"]],
+        head: [["Subject", "Marks", "Status"]],
         body: subjects.map(sub => {
           const res = filteredResults.find(r => r.student_id === student.id && r.subject_id === sub.id);
           const marks = res?.marks || 0;
@@ -146,13 +125,13 @@ export default function AssessmentHub() {
 
       doc.save(`Report_${student.name.replace(/ /g, "_")}.pdf`);
     } catch (e) {
-      console.error(e);
+      console.error("PDF Error:", e);
     } finally {
       setLoadingExport(false);
     }
-  }, [school, subjects, filteredResults, selectedYear, selectedTerm]);
+  }, [school, subjects, filteredResults]);
 
-  // Loading State
+  // ─── Loading & Error States ───────────────────────────────────────────
   if (schoolLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -164,15 +143,16 @@ export default function AssessmentHub() {
     );
   }
 
-  // Error State
   if (schoolError || !school) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
         <div className="max-w-md text-center">
           <div className="text-red-500 text-5xl mb-4">⚠️</div>
           <h2 className="text-xl font-semibold text-slate-900 mb-2">Failed to Load Data</h2>
-          <p className="text-slate-600">{getErrorMessage(schoolError)}</p>
-          <p className="text-sm text-slate-500 mt-4">Please check your internet connection or contact support.</p>
+          <p className="text-slate-600 mb-4">
+            {schoolError ? String(schoolError) : "No school data found for your account."}
+          </p>
+          <p className="text-sm text-slate-500">Please contact your administrator.</p>
         </div>
       </div>
     );
@@ -221,7 +201,9 @@ export default function AssessmentHub() {
                 className="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:border-blue-500"
               >
                 <option value="">All Grades</option>
-                {grades.map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
+                {grades.map((g: Grade) => (
+                  <option key={g.id} value={g.id}>{g.grade_name}</option>
+                ))}
               </select>
             </div>
 
@@ -250,7 +232,7 @@ export default function AssessmentHub() {
           ))}
         </div>
 
-        {/* Overview Content */}
+        {/* Overview */}
         {activeTab === "Overview" && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-white rounded-3xl p-8 shadow border border-slate-100">
@@ -267,8 +249,6 @@ export default function AssessmentHub() {
             </div>
           </div>
         )}
-
-        {/* Add more tabs as needed */}
       </div>
     </div>
   );

@@ -25,13 +25,14 @@ export default function AssessmentHub() {
   const [selectedGrade, setSelectedGrade] = useState<string>("");
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [loadingExport, setLoadingExport] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string>("");
 
-  // Data Fetching - More defensive
-  const { data: schools = [], loading: schoolLoading, error: schoolError } = useData<School>(
-    "schools", "schools", {}, true
-  );
-  
+  // Data Fetching
+  const { 
+    data: schools = [], 
+    loading: schoolLoading, 
+    error: schoolError 
+  } = useData<School>("schools", "schools", {}, true);
+
   const school = schools[0];
 
   const { data: grades = [], loading: gradesLoading } = useData<Grade>(
@@ -104,10 +105,17 @@ export default function AssessmentHub() {
     });
 
     return Object.values(map)
-      .map((s: any) => ({ ...s, avg: Math.round(s.total / s.count) }))
+      .map((s: any) => ({ ...s, avg: s.count ? Math.round(s.total / s.count) : 0 }))
       .sort((a: any, b: any) => b.avg - a.avg)
       .map((s: any, i: number) => ({ ...s, rank: i + 1 }));
   }, [filteredResults, filteredStudents]);
+
+  // Safe error display
+  const getErrorMessage = (err: any): string => {
+    if (!err) return "";
+    if (typeof err === "string") return err;
+    return err.message || err.details || err.hint || "An unknown error occurred";
+  };
 
   // PDF Generation
   const generateReportCard = useCallback(async (student: Student) => {
@@ -138,20 +146,33 @@ export default function AssessmentHub() {
 
       doc.save(`Report_${student.name.replace(/ /g, "_")}.pdf`);
     } catch (e) {
-      setErrorMsg("Failed to generate PDF");
+      console.error(e);
     } finally {
       setLoadingExport(false);
     }
   }, [school, subjects, filteredResults, selectedYear, selectedTerm]);
 
-  // Show loading or error
-  if (schoolLoading || !school) {
+  // Loading State
+  if (schoolLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin h-8 w-8 mx-auto border-4 border-blue-600 border-t-transparent rounded-full mb-4"></div>
           <p className="text-slate-600">Loading school data...</p>
-          {schoolError && <p className="text-red-500 text-sm mt-2">{schoolError}</p>}
+        </div>
+      </div>
+    );
+  }
+
+  // Error State
+  if (schoolError || !school) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+        <div className="max-w-md text-center">
+          <div className="text-red-500 text-5xl mb-4">⚠️</div>
+          <h2 className="text-xl font-semibold text-slate-900 mb-2">Failed to Load Data</h2>
+          <p className="text-slate-600">{getErrorMessage(schoolError)}</p>
+          <p className="text-sm text-slate-500 mt-4">Please check your internet connection or contact support.</p>
         </div>
       </div>
     );
@@ -172,34 +193,40 @@ export default function AssessmentHub() {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
               <label className="block text-xs font-medium text-slate-500 mb-1.5">ACADEMIC YEAR</label>
-              <select value={selectedYear} onChange={e => setSelectedYear(e.target.value)}
-                className="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:border-blue-500">
+              <select 
+                value={selectedYear} 
+                onChange={e => setSelectedYear(e.target.value)}
+                className="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:border-blue-500"
+              >
                 {[2025, 2026].map(y => <option key={y} value={y}>{y}</option>)}
               </select>
             </div>
 
             <div>
               <label className="block text-xs font-medium text-slate-500 mb-1.5">TERM</label>
-              <select value={selectedTerm} onChange={e => setSelectedTerm(e.target.value)}
-                className="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:border-blue-500">
+              <select 
+                value={selectedTerm} 
+                onChange={e => setSelectedTerm(e.target.value)}
+                className="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:border-blue-500"
+              >
                 {["Term 1", "Term 2", "Term 3"].map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
 
             <div>
               <label className="block text-xs font-medium text-slate-500 mb-1.5">GRADE / CLASS</label>
-              <select value={selectedGrade} onChange={e => setSelectedGrade(e.target.value)}
-                className="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:border-blue-500">
+              <select 
+                value={selectedGrade} 
+                onChange={e => setSelectedGrade(e.target.value)}
+                className="w-full border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:border-blue-500"
+              >
                 <option value="">All Grades</option>
                 {grades.map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
               </select>
             </div>
 
             <div className="flex items-end">
-              <button
-                onClick={() => {/* Export logic */}}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3.5 rounded-2xl transition"
-              >
+              <button className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3.5 rounded-2xl transition">
                 Export Report
               </button>
             </div>
@@ -223,7 +250,7 @@ export default function AssessmentHub() {
           ))}
         </div>
 
-        {/* Overview Tab */}
+        {/* Overview Content */}
         {activeTab === "Overview" && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-white rounded-3xl p-8 shadow border border-slate-100">
@@ -241,7 +268,7 @@ export default function AssessmentHub() {
           </div>
         )}
 
-        {/* You can expand other tabs similarly */}
+        {/* Add more tabs as needed */}
       </div>
     </div>
   );

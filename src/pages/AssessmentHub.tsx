@@ -22,7 +22,14 @@ import {
 } from 'lucide-react';
 
 import { motion } from 'framer-motion';
-import { useData } from '@/hooks/useData';
+
+/**
+ * IMPORTANT:
+ * Correct relative import path
+ * since AssessmentHub.tsx is inside src/pages
+ * and useData.ts is inside src/hooks
+ */
+import { useData } from '../hooks/useData';
 
 const tabs = [
   { id: 'overview', label: 'Overview', icon: LayoutGrid },
@@ -39,31 +46,39 @@ const AssessmentHub = () => {
   const [search, setSearch] = useState('');
 
   /**
-   * Replace these with your actual useData returns
-   * based on your existing architecture.
+   * SAFER DATA EXTRACTION
+   * Prevents undefined crashes
    */
-  const {
-    assessments = [],
-    students = [],
-    subjects = [],
-    analytics = {},
-    rankings = [],
-    loading,
-  } = useData();
+  const data = useData?.() || {};
+
+  const assessments = Array.isArray(data.assessments)
+    ? data.assessments
+    : [];
+
+  const students = Array.isArray(data.students)
+    ? data.students
+    : [];
+
+  const rankings = Array.isArray(data.rankings)
+    ? data.rankings
+    : [];
+
+  const analytics = data.analytics || {};
+  const loading = data.loading || false;
 
   /**
-   * Dynamic KPI Calculations
+   * KPI calculations
    */
   const kpis = useMemo(() => {
     const publishedAssessments = assessments.filter(
-      (item: any) => item.status === 'published'
+      (item: any) => item?.status === 'published'
     );
 
-    const totalMean =
-      assessments.reduce(
-        (acc: number, item: any) => acc + (item.mean_score || 0),
-        0
-      ) || 0;
+    const totalMean = assessments.reduce(
+      (acc: number, item: any) =>
+        acc + Number(item?.mean_score || 0),
+      0
+    );
 
     const averageScore =
       assessments.length > 0
@@ -95,11 +110,13 @@ const AssessmentHub = () => {
   }, [assessments, students]);
 
   /**
-   * Filtered assessments
+   * Search filtering
    */
   const filteredAssessments = useMemo(() => {
     return assessments.filter((assessment: any) =>
-      assessment.name?.toLowerCase().includes(search.toLowerCase())
+      String(assessment?.name || '')
+        .toLowerCase()
+        .includes(search.toLowerCase())
     );
   }, [assessments, search]);
 
@@ -113,6 +130,7 @@ const AssessmentHub = () => {
       {/* Background */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-0 left-0 w-96 h-96 bg-indigo-500/20 blur-3xl rounded-full" />
+
         <div className="absolute bottom-0 right-0 w-96 h-96 bg-cyan-500/20 blur-3xl rounded-full" />
       </div>
 
@@ -217,9 +235,10 @@ const AssessmentHub = () => {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-3 overflow-x-auto mb-8 scrollbar-hide">
+        <div className="flex gap-3 overflow-x-auto mb-8">
           {tabs.map((tab) => {
             const Icon = tab.icon;
+
             const active = activeTab === tab.id;
 
             return (
@@ -233,15 +252,16 @@ const AssessmentHub = () => {
                 }`}
               >
                 <Icon className="w-4 h-4" />
+
                 {tab.label}
               </button>
             );
           })}
         </div>
 
-        {/* Content */}
+        {/* Main Layout */}
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
-          {/* Main */}
+          {/* Main Content */}
           <div className="xl:col-span-3">
             <motion.div
               key={activeTab}
@@ -259,13 +279,13 @@ const AssessmentHub = () => {
                       </h2>
 
                       <p className="text-slate-400 mt-1">
-                        Live assessment analytics and insights
+                        Live assessment analytics
                       </p>
                     </div>
                   </div>
 
                   {loading ? (
-                    <div className="py-20 text-center text-slate-400">
+                    <div className="py-20 text-center text-slate-500">
                       Loading analytics...
                     </div>
                   ) : (
@@ -279,9 +299,8 @@ const AssessmentHub = () => {
                           <BarChart3 className="w-5 h-5 text-indigo-300" />
                         </div>
 
-                        {/* Insert your charts here */}
                         <div className="flex items-center justify-center h-56 text-slate-500">
-                          Integrate Recharts analytics here
+                          Integrate charts here
                         </div>
                       </div>
 
@@ -295,7 +314,8 @@ const AssessmentHub = () => {
                         </div>
 
                         <div className="space-y-4">
-                          {analytics?.insights?.length ? (
+                          {Array.isArray(analytics?.insights) &&
+                          analytics.insights.length > 0 ? (
                             analytics.insights.map(
                               (insight: any, index: number) => (
                                 <div
@@ -303,7 +323,8 @@ const AssessmentHub = () => {
                                   className="p-4 rounded-2xl bg-indigo-500/10 border border-indigo-500/20"
                                 >
                                   <p className="text-sm text-slate-300">
-                                    {insight.message}
+                                    {insight?.message ||
+                                      'No insight message'}
                                   </p>
                                 </div>
                               )
@@ -330,7 +351,7 @@ const AssessmentHub = () => {
                       </h2>
 
                       <p className="text-slate-400 mt-1">
-                        Manage and monitor all assessments
+                        Manage assessments
                       </p>
                     </div>
                   </div>
@@ -339,11 +360,25 @@ const AssessmentHub = () => {
                     <table className="w-full">
                       <thead>
                         <tr className="border-b border-slate-800 text-slate-400 text-sm">
-                          <th className="text-left py-4">Assessment</th>
-                          <th className="text-left py-4">Subject</th>
-                          <th className="text-left py-4">Class</th>
-                          <th className="text-left py-4">Date</th>
-                          <th className="text-left py-4">Status</th>
+                          <th className="text-left py-4">
+                            Assessment
+                          </th>
+
+                          <th className="text-left py-4">
+                            Subject
+                          </th>
+
+                          <th className="text-left py-4">
+                            Class
+                          </th>
+
+                          <th className="text-left py-4">
+                            Date
+                          </th>
+
+                          <th className="text-left py-4">
+                            Status
+                          </th>
                         </tr>
                       </thead>
 
@@ -361,28 +396,28 @@ const AssessmentHub = () => {
                           filteredAssessments.map(
                             (assessment: any) => (
                               <tr
-                                key={assessment.id}
+                                key={assessment?.id}
                                 className="border-b border-slate-900 hover:bg-slate-800/30 transition"
                               >
                                 <td className="py-5 font-medium">
-                                  {assessment.name}
+                                  {assessment?.name || '-'}
                                 </td>
 
                                 <td className="py-5 text-slate-300">
-                                  {assessment.subject_name || '-'}
+                                  {assessment?.subject_name || '-'}
                                 </td>
 
                                 <td className="py-5 text-slate-300">
-                                  {assessment.class_name || '-'}
+                                  {assessment?.class_name || '-'}
                                 </td>
 
                                 <td className="py-5 text-slate-300">
-                                  {assessment.date || '-'}
+                                  {assessment?.date || '-'}
                                 </td>
 
                                 <td className="py-5">
                                   <span className="px-3 py-1 rounded-full text-xs bg-slate-800">
-                                    {assessment.status || 'draft'}
+                                    {assessment?.status || 'draft'}
                                   </span>
                                 </td>
                               </tr>
@@ -412,7 +447,7 @@ const AssessmentHub = () => {
                   </h2>
 
                   <p className="text-slate-400 mb-6">
-                    Live student performance rankings
+                    Live student rankings
                   </p>
 
                   <div className="space-y-4">
@@ -424,7 +459,7 @@ const AssessmentHub = () => {
                       rankings.map(
                         (student: any, index: number) => (
                           <div
-                            key={student.student_id}
+                            key={student?.student_id || index}
                             className="flex items-center justify-between p-5 rounded-2xl border border-slate-800 bg-slate-950/40"
                           >
                             <div className="flex items-center gap-4">
@@ -434,18 +469,18 @@ const AssessmentHub = () => {
 
                               <div>
                                 <h3 className="font-semibold">
-                                  {student.student_name}
+                                  {student?.student_name || '-'}
                                 </h3>
 
                                 <p className="text-sm text-slate-400">
-                                  {student.class_name}
+                                  {student?.class_name || '-'}
                                 </p>
                               </div>
                             </div>
 
                             <div className="text-right">
                               <h3 className="font-bold text-xl">
-                                {student.score || 0}%
+                                {student?.score || 0}%
                               </h3>
                             </div>
                           </div>
@@ -476,8 +511,8 @@ const AssessmentHub = () => {
                   </h2>
 
                   <p className="text-slate-400 max-w-md">
-                    This module is ready for integration with
-                    your live academic data infrastructure.
+                    Ready for live integration with your
+                    academic infrastructure.
                   </p>
                 </div>
               )}
@@ -503,16 +538,16 @@ const AssessmentHub = () => {
                 <div className="space-y-4">
                   {assessments.slice(0, 3).map((item: any) => (
                     <div
-                      key={item.id}
+                      key={item?.id}
                       className="flex items-center justify-between p-3 rounded-2xl bg-slate-950/50 border border-slate-800"
                     >
                       <div>
                         <p className="font-medium text-sm">
-                          {item.name}
+                          {item?.name || '-'}
                         </p>
 
                         <p className="text-xs text-slate-400 mt-1">
-                          {item.date || 'No date'}
+                          {item?.date || 'No date'}
                         </p>
                       </div>
 

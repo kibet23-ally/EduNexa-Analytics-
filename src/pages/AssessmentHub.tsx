@@ -327,30 +327,6 @@ export default function AssessmentHub() {
     return urlToDataURL(school.logo_url);
   }, [school?.logo_url]);
 
-  // ── PDF: Student Report Card ──
-  const generateReportCardPDF = useCallback(async (student: Student) => {
-    const doc = new jsPDF();
-    const sw = doc.internal.pageSize.width;
-    const logo = await loadLogo();
-
-    drawLetterhead(doc, school, logo, "Student Report Card");
-
-    // Student info panel
-    doc.setFillColor(241, 245, 249);
-    doc.roundedRect(14, 58, sw - 28, 30, 3, 3, "F");
-    doc.setTextColor(15, 23, 42);
-    doc.setFontSize(12);
-    doc.setFont("helvetica", "bold");
-    doc.text(student.name, 20, 70);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(71, 85, 105);
-    doc.text(`Adm No: ${student.admission_number}`, 20, 78);
-    doc.text(`Gender: ${student.gender}`, 80, 78);
-    const grade = grades.find(g => g.id === student.grade_id);
-    doc.text(`Class: ${grade?.grade_name || "-"}`, 130, 78);
-    doc.text(`Year: ${year}    Term: ${term || "All"}`, 20, 84);
-
     // Subjects table
     const subjectData = subjects.map(subj => {
       const res = filteredResults.find(r => r.student_id === student.id && r.subject_id === subj.id);

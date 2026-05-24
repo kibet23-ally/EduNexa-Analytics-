@@ -136,17 +136,6 @@ const Schools = () => {
   setError(null);
   setConfirmDeleteId(null);
   try {
-    // Delete child records first to avoid FK constraint errors
-    await supabase.from('users').delete().eq('school_id', id);
-    await supabase.from('teachers').delete().eq('school_id', id);
-    await supabase.from('students').delete().eq('school_id', id);
-    await supabase.from('grades').delete().eq('school_id', id);
-    await supabase.from('subjects').delete().eq('school_id', id);
-    await supabase.from('attendance').delete().eq('school_id', id);
-    await supabase.from('results').delete().eq('school_id', id);
-    await supabase.from('exams').delete().eq('school_id', id);
-    await supabase.from('subscription_plans').delete().eq('school_id', id);
-    await supabase.from('marks').delete().eq('school_id', id);
     const { error: deleteError } = await supabase
       .from('schools')
       .delete()

@@ -21,7 +21,7 @@ export default function AssessmentHub() {
   const [selectedGrade, setSelectedGrade] = useState<string>("");
   const [loadingExport, setLoadingExport] = useState(false);
 
-  // ─── Data Fetching ─────────────────────────────────────────────────────
+  // Data Fetching
   const { 
     data: schools = [], 
     loading: schoolLoading, 
@@ -30,7 +30,6 @@ export default function AssessmentHub() {
 
   const school = schools[0];
 
-  // Grades, Subjects, Students, Results - only fetch after school is loaded
   const { data: grades = [] } = useData<Grade>(
     `grades-${school?.id}`, "grades",
     { filters: school ? [{ column: "school_id", value: school.id }] : [] },
@@ -50,88 +49,37 @@ export default function AssessmentHub() {
   );
 
   const { data: results = [] } = useData<Result>(
-    `results-\( {school?.id}- \){selectedYear}-${selectedTerm}`, "results",
+    `results-\( {school?.id}- \){selectedYear}`, "results",
     {
-      filters: [
-        ...(school ? [{ column: "school_id", value: school.id }] : []),
+      filters: school ? [
+        { column: "school_id", value: school.id },
         { column: "year", value: Number(selectedYear) },
         ...(selectedTerm ? [{ column: "term", value: selectedTerm }] : []),
-      ],
+      ] : [],
     },
     !!school?.id
   );
 
-  // ─── Computed Data ─────────────────────────────────────────────────────
-  const filteredStudents = useMemo(() => {
-    return selectedGrade 
-      ? students.filter((s: Student) => s.grade_id === selectedGrade) 
-      : students;
-  }, [students, selectedGrade]);
+  // Computed Data (Safe)
+  const filteredStudents = useMemo(() => selectedGrade 
+    ? students.filter((s: any) => s.grade_id === selectedGrade) 
+    : students, [students, selectedGrade]);
 
-  const filteredResults = useMemo(() => {
-    return results.filter((r: Result) => 
-      filteredStudents.some((s: Student) => s.id === r.student_id)
-    );
-  }, [results, filteredStudents]);
+  const filteredResults = useMemo(() => 
+    results.filter((r: any) => filteredStudents.some((s: any) => s.id === r.student_id)),
+    [results, filteredStudents]
+  );
 
   const kpiData = useMemo(() => {
     if (!filteredResults.length) return { avg: 0, passRate: 0, top: 0 };
-    const total = filteredResults.reduce((sum, r) => sum + r.marks, 0);
+    const total = filteredResults.reduce((sum: number, r: any) => sum + r.marks, 0);
     const avg = Math.round((total / filteredResults.length) * 10) / 10;
-    const passRate = Math.round((filteredResults.filter(r => r.marks >= 50).length / filteredResults.length) * 100);
-    const top = Math.round((filteredResults.filter(r => r.marks >= 80).length / filteredResults.length) * 100);
+    const passRate = Math.round((filteredResults.filter((r: any) => r.marks >= 50).length / filteredResults.length) * 100);
+    const top = Math.round((filteredResults.filter((r: any) => r.marks >= 80).length / filteredResults.length) * 100);
     return { avg, passRate, top };
   }, [filteredResults]);
 
-  const studentRankings = useMemo(() => {
-    const map: Record<string, any> = {};
-    filteredResults.forEach(r => {
-      if (!map[r.student_id]) {
-        const stu = filteredStudents.find(s => s.id === r.student_id);
-        map[r.student_id] = { ...stu, total: 0, count: 0 };
-      }
-      map[r.student_id].total += r.marks;
-      map[r.student_id].count++;
-    });
-
-    return Object.values(map)
-      .map((s: any) => ({ ...s, avg: s.count ? Math.round(s.total / s.count) : 0 }))
-      .sort((a: any, b: any) => b.avg - a.avg)
-      .map((s: any, i: number) => ({ ...s, rank: i + 1 }));
-  }, [filteredResults, filteredStudents]);
-
-  // ─── PDF Generation ───────────────────────────────────────────────────
-  const generateReportCard = useCallback(async (student: Student) => {
-    setLoadingExport(true);
-    try {
-      const doc = new jsPDF();
-      const width = doc.internal.pageSize.getWidth();
-
-      doc.setFillColor(15, 23, 42);
-      doc.rect(0, 0, width, 50, "F");
-      doc.setTextColor(245, 158, 11);
-      doc.setFontSize(18);
-      doc.text(school?.name?.toUpperCase() || "SCHOOL", width / 2, 25, { align: "center" });
-
-      autoTable(doc, {
-        startY: 70,
-        head: [["Subject", "Marks", "Status"]],
-        body: subjects.map(sub => {
-          const res = filteredResults.find(r => r.student_id === student.id && r.subject_id === sub.id);
-          const marks = res?.marks || 0;
-          return [sub.subject_name, marks, marks >= 50 ? "Pass" : "Fail"];
-        }),
-      });
-
-      doc.save(`Report_${student.name.replace(/ /g, "_")}.pdf`);
-    } catch (e) {
-      console.error("PDF Error:", e);
-    } finally {
-      setLoadingExport(false);
-    }
-  }, [school, subjects, filteredResults]);
-
-  // ─── Loading & Error States ───────────────────────────────────────────
+  // Loading & Error States
   if (schoolLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -143,16 +91,23 @@ export default function AssessmentHub() {
     );
   }
 
-  if (schoolError || !school) {
+  if (!school) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
         <div className="max-w-md text-center">
-          <div className="text-red-500 text-5xl mb-4">⚠️</div>
-          <h2 className="text-xl font-semibold text-slate-900 mb-2">Failed to Load Data</h2>
-          <p className="text-slate-600 mb-4">
-            {schoolError ? String(schoolError) : "No school data found for your account."}
+          <div className="text-amber-500 text-6xl mb-6">🏫</div>
+          <h2 className="text-2xl font-semibold text-slate-900 mb-3">School Not Configured</h2>
+          <p className="text-slate-600 mb-8">
+            No school data was found for your account. This is required for Assessment Hub to work.
           </p>
-          <p className="text-sm text-slate-500">Please contact your administrator.</p>
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 text-left text-sm">
+            <p className="font-medium mb-2">Possible Solutions:</p>
+            <ul className="list-disc pl-5 space-y-1 text-slate-600">
+              <li>Make sure you are logged in as a school admin</li>
+              <li>Ensure your user profile has a linked school</li>
+              <li>Contact your system administrator to link your account to a school</li>
+            </ul>
+          </div>
         </div>
       </div>
     );
@@ -164,7 +119,7 @@ export default function AssessmentHub() {
         <div className="flex justify-between items-start mb-8">
           <div>
             <h1 className="text-3xl font-semibold text-slate-900">Assessment Hub</h1>
-            <p className="text-slate-600">Track, analyze and report student performance</p>
+            <p className="text-slate-600">Track, analyze and report student performance • {school.name}</p>
           </div>
         </div>
 

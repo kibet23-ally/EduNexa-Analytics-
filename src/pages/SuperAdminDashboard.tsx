@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Users,
   GraduationCap,
@@ -9,9 +10,6 @@ import {
   Bell,
   ShieldCheck,
   Sparkles,
-  CheckCircle2,
-  Activity,
-  Plus,
   UserPlus,
   School,
   Award,
@@ -81,9 +79,30 @@ const KpiCard: React.FC<KpiProps> = ({ title, value, icon: Icon, accent, loading
   </GlassCard>
 );
 
+/* Notification dot color */
+const dotColor = (type: string) => {
+  if (type === 'success' || type === 'onboarding') return 'bg-emerald-500';
+  if (type === 'warning' || type === 'renewal') return 'bg-amber-500';
+  if (type === 'info' || type === 'system') return 'bg-blue-500';
+  if (type === 'error') return 'bg-red-500';
+  return 'bg-slate-400';
+};
+
+const timeAgo = (dateStr: string) => {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins} minute${mins !== 1 ? 's' : ''} ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hour${hrs !== 1 ? 's' : ''} ago`;
+  const days = Math.floor(hrs / 24);
+  if (days === 1) return 'Yesterday';
+  return `${days} days ago`;
+};
+
 /* ================= SUPER ADMIN DASHBOARD ================= */
 const SuperAdminDashboard: React.FC = () => {
   const { user, sessionReady } = useAuth();
+  const navigate = useNavigate();
   const enabled = sessionReady && !!user;
 
   // Fetch all data without school_id filter (Super Admin)
@@ -91,11 +110,17 @@ const SuperAdminDashboard: React.FC = () => {
   const studentsQuery = useData('super-students', 'students', {}, enabled);
   const teachersQuery = useData('super-teachers', 'teachers', {}, enabled);
   const subscriptionsQuery = useData('super-subscriptions', 'subscriptions', {}, enabled);
+  const notificationsQuery = useData(
+    'super-notifications', 'notifications',
+    { order: { column: 'created_at', ascending: false }, limit: 10 },
+    enabled,
+  );
 
   const schools = schoolsQuery.data || [];
   const students = studentsQuery.data || [];
   const teachers = teachersQuery.data || [];
   const subscriptions = subscriptionsQuery.data || [];
+  const notifications: any[] = notificationsQuery.data || [];
 
   const totalRevenue = subscriptions.reduce((sum: number, s: any) => sum + (Number(s.amount) || 0), 0);
 
@@ -124,7 +149,11 @@ const SuperAdminDashboard: React.FC = () => {
         <div className="flex items-center gap-3">
           <button className="w-12 h-12 rounded-2xl bg-white dark:bg-slate-900 border flex items-center justify-center relative">
             <Bell size={18} />
-            <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center">3</span>
+            {notifications.filter((n: any) => !n.read).length > 0 && (
+              <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center">
+                {notifications.filter((n: any) => !n.read).length}
+              </span>
+            )}
           </button>
           <div className="h-12 px-5 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white flex items-center gap-2 font-medium">
             <ShieldCheck size={18} />
@@ -164,19 +193,31 @@ const SuperAdminDashboard: React.FC = () => {
         <GlassCard className="p-6">
           <SectionTitle title="Quick Actions" />
           <div className="grid grid-cols-2 gap-4">
-            <button className="flex flex-col items-center justify-center p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-2xl hover:border-blue-300 transition-all active:scale-95">
+            <button
+              onClick={() => navigate('/super/schools')}
+              className="flex flex-col items-center justify-center p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-2xl hover:border-blue-300 transition-all active:scale-95"
+            >
               <School className="w-8 h-8 text-blue-600 mb-3" />
               <span className="font-medium">Add New School</span>
             </button>
-            <button className="flex flex-col items-center justify-center p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-2xl hover:border-violet-300 transition-all active:scale-95">
+            <button
+              onClick={() => navigate('/super/users')}
+              className="flex flex-col items-center justify-center p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-2xl hover:border-violet-300 transition-all active:scale-95"
+            >
               <UserPlus className="w-8 h-8 text-violet-600 mb-3" />
               <span className="font-medium">Add Admin User</span>
             </button>
-            <button className="flex flex-col items-center justify-center p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-2xl hover:border-emerald-300 transition-all active:scale-95">
+            <button
+              onClick={() => navigate('/super/announcements')}
+              className="flex flex-col items-center justify-center p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-2xl hover:border-emerald-300 transition-all active:scale-95"
+            >
               <Award className="w-8 h-8 text-emerald-600 mb-3" />
               <span className="font-medium">Send Announcement</span>
             </button>
-            <button className="flex flex-col items-center justify-center p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-2xl hover:border-amber-300 transition-all active:scale-95">
+            <button
+              onClick={() => navigate('/assessment-hub')}
+              className="flex flex-col items-center justify-center p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-2xl hover:border-amber-300 transition-all active:scale-95"
+            >
               <TrendingUp className="w-8 h-8 text-amber-600 mb-3" />
               <span className="font-medium">View Reports</span>
             </button>
@@ -186,40 +227,31 @@ const SuperAdminDashboard: React.FC = () => {
         {/* Recent Notifications */}
         <GlassCard className="p-6">
           <SectionTitle title="Recent Notifications" />
-          <div className="space-y-4">
-            <div className="flex gap-4 p-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-white/10">
-              <div className="w-2 h-2 mt-2 bg-emerald-500 rounded-full flex-shrink-0" />
-              <div>
-                <p className="text-sm">New school <strong>Starlight Academy</strong> onboarded successfully</p>
-                <p className="text-xs text-slate-500 mt-1">2 hours ago</p>
-              </div>
+          {notificationsQuery.isLoading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="h-16 bg-slate-100 dark:bg-slate-800 rounded-2xl animate-pulse" />
+              ))}
             </div>
-
-            <div className="flex gap-4 p-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-white/10">
-              <div className="w-2 h-2 mt-2 bg-amber-500 rounded-full flex-shrink-0" />
-              <div>
-                <p className="text-sm">Subscription renewal due for <strong>3 schools</strong></p>
-                <p className="text-xs text-slate-500 mt-1">Yesterday</p>
-              </div>
+          ) : notifications.length > 0 ? (
+            <div className="space-y-4">
+              {notifications.slice(0, 5).map((n: any) => (
+                <div key={n.id} className="flex gap-4 p-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-white/10">
+                  <div className={`w-2 h-2 mt-2 rounded-full flex-shrink-0 ${dotColor(n.type)}`} />
+                  <div>
+                    <p className="text-sm">{n.message || n.title || n.body || 'Notification'}</p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {n.created_at ? timeAgo(n.created_at) : ''}
+                    </p>
+                  </div>
+                </div>
+              ))}
             </div>
-
-            <div className="flex gap-4 p-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-white/10">
-              <div className="w-2 h-2 mt-2 bg-blue-500 rounded-full flex-shrink-0" />
-              <div>
-                <p className="text-sm">System backup completed successfully</p>
-                <p className="text-xs text-slate-500 mt-1">3 days ago</p>
-              </div>
-            </div>
-          </div>
+          ) : (
+            <div className="text-center py-8 text-slate-400 text-sm">No notifications yet</div>
+          )}
         </GlassCard>
       </div>
-
-      {/* Debug Info (Remove in production) */}
-      {schoolsQuery.data && (
-        <div className="mt-8 text-xs text-slate-500 bg-slate-100 dark:bg-slate-900 p-4 rounded-2xl">
-          Debug: {schools.length} schools loaded | Students: {students.length}
-        </div>
-      )}
     </div>
   );
 };

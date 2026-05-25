@@ -12,7 +12,7 @@ import {
   Sparkles,
   UserPlus,
   School,
-  Award,
+  CreditCard,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAuth } from '../useAuth';
@@ -208,14 +208,14 @@ const SuperAdminDashboard: React.FC = () => {
               <span className="font-medium">Add Admin User</span>
             </button>
             <button
-              onClick={() => navigate('/super/announcements')}
+              onClick={() => navigate('/super/subscriptions')}
               className="flex flex-col items-center justify-center p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-2xl hover:border-emerald-300 transition-all active:scale-95"
             >
-              <Award className="w-8 h-8 text-emerald-600 mb-3" />
-              <span className="font-medium">Send Announcement</span>
+              <CreditCard className="w-8 h-8 text-emerald-600 mb-3" />
+              <span className="font-medium">Subscriptions</span>
             </button>
             <button
-              onClick={() => navigate('/assessment-hub')}
+              onClick={() => navigate('/super/analytics')}
               className="flex flex-col items-center justify-center p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-2xl hover:border-amber-300 transition-all active:scale-95"
             >
               <TrendingUp className="w-8 h-8 text-amber-600 mb-3" />

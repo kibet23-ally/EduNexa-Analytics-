@@ -210,12 +210,16 @@ const MarksEntry = () => {
     if (isReadOnly) return;
     if (!selectedExam || !selectedSubject) return;
     try {
+      // For teachers, pass their user id as teacher_id.
+      // For school_admin/principal, pass null — teacher_id is nullable.
+      const isTeacher = user?.role === 'Teacher' || user?.role === 'teacher';
       const payload = Object.entries(marks).map(([studentId, score]) => ({
         student_id: parseInt(studentId),
         score,
         exam_id: parseInt(selectedExam),
         subject_id: parseInt(selectedSubject),
         school_id: user?.school_id,
+        teacher_id: isTeacher ? user?.id : null,
       }));
       await marksMutation.mutateAsync({
         operation: 'upsert',

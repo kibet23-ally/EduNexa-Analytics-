@@ -348,7 +348,139 @@ export default function InsightsCenter() {
   }, [filteredResults, filteredStudents]);
 
   /* ── Filtered + paginated table data ── */
+  const tableData = useMemo(() => {
+    let rows: any[] = [];
+    if (reportType === 'Rankings') rows = studentRankings;
+    else if (reportType === 'Class Analysis') rows = gradeBreakdown;
+    else if (reportType === 'Subject Report') rows = subjectAverages;
+    else if (reportType === 'Report Cards') rows = filteredStudents;
+    else if (reportType === 'Attendance Report') {
+      rows = filteredStudents.map(s => {
+        const sa = attendance.filter(a => a.student_id === s.id && new Date(a.date).getFullYear() === Number(year));
+        const rate = sa.length ? Math.round(sa.filter(a => a.status === 'present').length / sa.length * 100) : 0;
+        return { ...s, sessions: sa.length, present: sa.filter(a => a.status === 'present').length, absent: sa.filter(a => a.status === 'absent').length, rate };
+      });
+    }
+    if (search) rows = rows.filter(r => JSON.stringify(r).toLowerCase().includes(search.toLowerCase()));
+    return rows;
+  }, [reportType, studentRankings, gradeBreakdown, subjectAverages, filteredStudents, attendance, year, search]);
+
+  const totalPages = Math.ceil(tableData.length / PAGE_SIZE);
+  const pagedData = tableData.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  useEffect(() => { setPage(1); }, [reportType, search, gradeId, term, year]);
+
+  /* ── Logo cache ── */
+  const [logo, setLogo] = useState<{ data: string; fmt: 'PNG' | 'JPEG' } | null>(null);
+  useEffect(() => {
+    if (school?.logo_url) toDataURL(school.logo_url).then(l => setLogo(l || null));
+  }, [school?.logo_url]);
+
+  /* ── PDF: Report Card ── */
+  const genReportCard = useCallback(async (student: any) => {
+    const doc = new jsPDF(); const W = doc.internal.pageSize.width;
+    pdfHeader(doc, school, logo, 'Student Report Card');
+
+    // Watermark
+    if (logo) {
+      try {
+        doc.saveGraphicsState?.();
+        (doc as any).setGState?.(new (doc as any).GState({ opacity: 0.04 }));
+        doc.addImage(logo.data, logo.fmt, W / 2 - 50, 80, 100, 100);
+        doc.restoreGraphicsState?.();
+      } catch { /* noop */ }
+    }
+
+    // Student info
+    doc.setFillColor(241, 245, 249); doc.roundedRect(12, 62, W - 24, 28, 3, 3, 'F');
+    doc.setTextColor(15, 23, 42); doc.setFontSize(12); doc.setFont('helvetica', 'bold');
+    doc.text(student.name, 18, 73);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(71, 85, 105);
+    doc.text(`Adm: ${student.admission_number}  |  Gender: ${student.gender}  |  Class: ${grades.find(g => g.id === student.grade_id)?.grade_name || '-'}`, 18, 80);
+    doc.text(`Year: ${year}  |  Term: ${term || 'All Terms'}  |  Rank: #${student.rank || '-'}`, 18, 86);
+
+    // Results
+    const sData = subjects.map(subj => {
+      const res = filteredResults.find(r => r.student_id === student.id && r.subject_id === subj.id);
+      const m = res?.marks; const g = m !== undefined ? gradeFromMarks(m) : null;
+      return [subj.subject_name, subj.subject_code, m !== undefined ? String(m) : '-', g?.letter || '-', m !== undefined ? (m >= 50 ? 'Pass' : 'Fail') : '-'];
+    }).filter(r => r[2] !== '-');
+
+    if (sData.length) {
       autoTable(doc, {
+        startY: 98, head: [['Subject', 'Code', 'Marks', 'Grade', 'Status']],
+        body: sData, theme: 'grid',
+        styles: { fontSize: 8.5, cellPadding: 2.8 },
+        headStyles: { fillColor: [10, 14, 26], textColor: [99, 102, 241], fontStyle: 'bold' },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        columnStyles: { 2: { halign: 'center' }, 3: { halign: 'center' }, 4: { halign: 'center' } },
+      });
+
+      const fy = (doc as any).lastAutoTable.finalY + 8;
+      const avg = sData.reduce((a, r) => a + (Number(r[2]) || 0), 0) / sData.length;
+      const g = gradeFromMarks(avg);
+
+      doc.setFillColor(10, 14, 26); doc.roundedRect(12, fy, W - 24, 20, 3, 3, 'F');
+      doc.setTextColor(99, 102, 241); doc.setFontSize(9.5); doc.setFont('helvetica', 'bold');
+      doc.text(`Mean Score: ${avg.toFixed(1)}%  |  Grade: ${g.letter}  |  Subjects Sat: ${sData.length}`, W / 2, fy + 12, { align: 'center' });
+
+      // Attendance summary
+      const sa = attendance.filter(a => a.student_id === student.id && new Date(a.date).getFullYear() === Number(year));
+      const attRate = sa.length ? Math.round(sa.filter(a => a.status === 'present').length / sa.length * 100) : 0;
+      const ry = fy + 28;
+      doc.setFillColor(245, 248, 255); doc.roundedRect(12, ry, W - 24, 18, 3, 3, 'F');
+      doc.setTextColor(15, 23, 42); doc.setFontSize(8.5); doc.setFont('helvetica', 'normal');
+      doc.text(`Attendance: ${attRate}%  (${sa.filter(a => a.status === 'present').length} present / ${sa.filter(a => a.status === 'absent').length} absent out of ${sa.length} sessions)`, 18, ry + 11);
+
+      // Remarks
+      const cy = ry + 28;
+      doc.setFont('helvetica', 'bold'); doc.setTextColor(15, 23, 42); doc.setFontSize(9);
+      doc.text("Class Teacher's Remarks:", 12, cy);
+      doc.setFont('helvetica', 'italic'); doc.setTextColor(51, 65, 85); doc.setFontSize(8.5);
+      doc.text(remark(avg), 12, cy + 6, { maxWidth: W - 24 });
+
+      doc.setFont('helvetica', 'bold'); doc.setTextColor(15, 23, 42);
+      doc.text("Principal's Remarks:", 12, cy + 18);
+      doc.setFont('helvetica', 'italic'); doc.setTextColor(51, 65, 85);
+      doc.text(avg >= 50 ? 'Approved and endorsed. Keep up the commendable effort.' : 'Noted. Remedial action has been discussed with parent/guardian.', 12, cy + 24, { maxWidth: W - 24 });
+
+      // Signatures
+      const sy = cy + 40;
+      doc.setDrawColor(180, 190, 210); doc.setLineWidth(0.4);
+      doc.line(12, sy, 65, sy); doc.line(80, sy, 133, sy); doc.line(148, sy, W - 12, sy);
+      doc.setTextColor(100, 115, 145); doc.setFontSize(7.5); doc.setFont('helvetica', 'normal');
+      doc.text('Class Teacher', 38, sy + 5, { align: 'center' });
+      doc.text('Principal/Head Teacher', 106, sy + 5, { align: 'center' });
+      doc.text("Parent's Signature", W - 24, sy + 5, { align: 'center' });
+    }
+
+    pdfFooter(doc, school);
+    doc.save(`ReportCard_${student.name.replace(/\s+/g, '_')}.pdf`);
+  }, [school, logo, grades, subjects, filteredResults, attendance, year, term]);
+
+  /* ── PDF: Class Analysis ── */
+  const genClassAnalysis = useCallback(async () => {
+    const doc = new jsPDF(); const W = doc.internal.pageSize.width;
+    const gName = grades.find(g => g.id === gradeId)?.grade_name || 'All Grades';
+    pdfHeader(doc, school, logo, `Class Performance Analysis — ${gName}`);
+
+    doc.setFillColor(241, 245, 249); doc.roundedRect(12, 62, W - 24, 18, 3, 3, 'F');
+    doc.setTextColor(15, 23, 42); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+    doc.text(`${gName}  •  Year ${year}  •  ${term || 'All Terms'}  •  Mean: ${kpis.avg}%  •  Pass Rate: ${kpis.pass}%`, W / 2, 73, { align: 'center' });
+
+    autoTable(doc, {
+      startY: 88, head: [['#', 'Subject', 'Code', 'Average', 'Grade', 'Entries']],
+      body: subjectAverages.map((s, i) => [i + 1, s.full, s.name, `${s.avg}%`, gradeFromMarks(s.avg).letter, s.count]),
+      theme: 'grid', styles: { fontSize: 9, cellPadding: 3 },
+      headStyles: { fillColor: [10, 14, 26], textColor: [99, 102, 241], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      columnStyles: { 0: { halign: 'center' }, 3: { halign: 'center' }, 4: { halign: 'center' }, 5: { halign: 'center' } },
+    });
+
+    const y2 = (doc as any).lastAutoTable.finalY + 10;
+    doc.setFont('helvetica', 'bold'); doc.setTextColor(15, 23, 42); doc.setFontSize(10);
+    doc.text('Grade Distribution', 12, y2);
+    autoTable(doc, {
       startY: y2 + 4, head: [['Grade', 'Students']],
       body: gradeDistribution.map(d => [d.name, d.value]),
       theme: 'striped', styles: { fontSize: 9, cellPadding: 3 },
@@ -1093,4 +1225,3 @@ export default function InsightsCenter() {
     </div>
   );
 }
-                          

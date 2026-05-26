@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../useAuth';
-import { 
-  LayoutDashboard, 
-  Users, 
-  GraduationCap, 
-  BarChart3, 
+import {
+  LayoutDashboard,
+  Users,
+  GraduationCap,
   LogOut,
   ClipboardList,
   ChevronLeft,
@@ -17,7 +16,7 @@ import {
   PieChart,
   Settings,
   UserCheck,
-  BookOpen,
+  Lightbulb,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -91,15 +90,15 @@ const Sidebar = () => {
   const schoolAdminNav: NavItem[] = [
     { to: '/school-admin', icon: LayoutDashboard, label: 'Dashboard' },
     { to: '/students', icon: Users, label: 'Students' },
-      {
-        icon: GraduationCap,
-        label: 'Academics',
-        subItems: [
-          { to: '/grades', label: 'Grades' },
-          { to: '/subjects', label: 'Subjects' },
-          ...(!isTeacher ? [{ to: '/promotion', label: 'Promotion' }] : []),
-        ]
-      },
+    {
+      icon: GraduationCap,
+      label: 'Academics',
+      subItems: [
+        { to: '/grades', label: 'Grades' },
+        { to: '/subjects', label: 'Subjects' },
+        ...(!isTeacher ? [{ to: '/promotion', label: 'Promotion' }] : []),
+      ]
+    },
     {
       icon: ClipboardList,
       label: 'Examinations',
@@ -115,11 +114,11 @@ const Sidebar = () => {
         { to: '/attendance', label: 'Take Attendance' },
         { to: '/attendance/report', label: 'Attendance Report' },
       ]
- },
-      { to: '/assessment-hub', icon: BarChart3, label: 'Assessment Hub' },
-    ];
+    },
+    { to: '/insights', icon: Lightbulb, label: 'Insights Center' },
+  ];
 
-  // Add Teachers and Subscription for school admins
+  // Add Teachers and Subscription for school admins only
   if (isSchoolAdmin) {
     schoolAdminNav.push(
       { to: '/teachers', icon: Users2, label: 'Teachers' },
@@ -202,7 +201,6 @@ const Sidebar = () => {
                     </div>
                   )}
                 </button>
-
                 <AnimatePresence>
                   {isSubMenuOpen && !isCollapsed && (
                     <motion.div

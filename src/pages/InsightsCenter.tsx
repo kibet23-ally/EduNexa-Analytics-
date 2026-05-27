@@ -93,15 +93,7 @@ function drawPDFLetterhead(
   doc.setFillColor(234, 179, 8);
   doc.rect(0, 32, W, 2.5, 'F');
 
-  // Logo — left
-  if (logo) {
-    try { doc.addImage(logo.data, logo.fmt, M, 4, 24, 24); } catch { /* noop */ }
-  } else {
-    doc.setFillColor(255, 255, 255);
-    doc.roundedRect(M, 4, 24, 24, 3, 3, 'F');
-    doc.setTextColor(0, 32, 96); doc.setFontSize(13); doc.setFont('helvetica', 'bold');
-    doc.text((school?.name || 'S')[0].toUpperCase(), M + 12, 20, { align: 'center' });
-  }
+  // Logo removed intentionally
 
   // School name
   doc.setTextColor(255, 255, 255);
@@ -111,13 +103,13 @@ function drawPDFLetterhead(
   const sPhone   = (school?.phone   || '+254 700 000000').trim();
   const sEmail   = (school?.email   || 'admin@marumbasi.com').trim();
   const sMotto   = (school?.motto   || 'Together we Succeed').trim();
-  doc.text(sName.toUpperCase(), W / 2, 11, { align: 'center' });
+  doc.text(sName.toUpperCase(), W / 2, 14, { align: 'center' });
 
   // Contacts
   doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(180, 200, 230);
-  doc.text(`${sAddr}  |  ${sPhone}  |  ${sEmail}`, W / 2, 17, { align: 'center' });
+  doc.text(`${sAddr}  |  ${sPhone}  |  ${sEmail}`, W / 2, 20, { align: 'center' });
   doc.setFontSize(7.5); doc.setFont('helvetica', 'italic'); doc.setTextColor(253, 224, 71);
-  doc.text(`"${sMotto}"`, W / 2, 23, { align: 'center' });
+  doc.text(`"${sMotto}"`, W / 2, 26, { align: 'center' });
 
   // Title ribbon
   doc.setFillColor(245, 248, 255);

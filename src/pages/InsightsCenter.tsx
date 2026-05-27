@@ -801,46 +801,26 @@ export default function InsightsCenter() {
 
   // ── Fetchers ──
   useEffect(() => {
-    if (!sid && !user?.id) return;
-    const COLS = 'id,name,logo_url,motto,address,phone,email,website';
-    const numSid = Number(sid);
-    const strSid = String(sid ?? '');
+    if (!sid) return;
     const fetchSchool = async () => {
-      let found: School | null = null;
-      // Try integer id first (users.school_id is bigint 23)
-      if (!isNaN(numSid) && numSid > 0) {
-        const { data } = await supabase.from('schools').select(COLS).eq('id', numSid).maybeSingle();
-        if (data?.name) found = data;
+      let { data } = await supabase
+        .from('schools')
+        .select('id,name,logo_url,motto,address,phone,email,website')
+        .eq('id', sid).maybeSingle();
+      if (!data) {
+        const { data: d2 } = await supabase
+          .from('schools')
+          .select('id,name,logo_url,motto,address,phone,email,website')
+          .eq('id', Number(sid)).maybeSingle();
+        data = d2;
       }
-      // Try string id
-      if (!found && strSid) {
-        const { data } = await supabase.from('schools').select(COLS).eq('id', strSid).maybeSingle();
-        if (data?.name) found = data;
-      }
-      // Re-read school_id from users table as fallback
-      if (!found && user?.id) {
-        const { data: userRow } = await supabase.from('users').select('school_id').eq('id', user.id).maybeSingle();
-        if (userRow?.school_id) {
-          const n = Number(userRow.school_id);
-          const { data } = await supabase.from('schools').select(COLS).eq('id', !isNaN(n) && n > 0 ? n : userRow.school_id).maybeSingle();
-          if (data?.name) found = data;
-        }
-      }
-      // Single-school fallback
-      if (!found) {
-        const { data: all } = await supabase.from('schools').select(COLS).limit(5);
-        if (all?.length === 1 && all[0].name) found = all[0];
-        else if (all?.length) found = all.find(s => Number(s.id) === numSid || String(s.id) === strSid) ?? null;
-      }
-      if (found) setSchool(found);
+      if (data) setSchool(data);
     };
     fetchSchool();
-  }, [sid, user?.id]);
+  }, [sid]);
 
   useEffect(() => {
-    if (school?.logo_url && school.logo_url.trim()) {
-      fetchLogo(school.logo_url.trim()).then(l => setLogo(l));
-    }
+    if (school?.logo_url) fetchLogo(school.logo_url).then(l => setLogo(l));
   }, [school?.logo_url]);
 
   useEffect(() => {

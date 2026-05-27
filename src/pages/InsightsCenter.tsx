@@ -1549,3 +1549,4 @@ export default function InsightsCenter() {
     </div>
   );
 }
+fix: hardcode school letterhead fallback, remove rubric from rankings PDF

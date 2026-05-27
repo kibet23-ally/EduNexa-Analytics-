@@ -104,33 +104,21 @@ function drawPDFLetterhead(
     doc.text((school?.name || 'S')[0].toUpperCase(), M + 12, 20, { align: 'center' });
   }
 
-  // Photo placeholder (portrait only, report card)
-  if (showPhoto) {
-    doc.setFillColor(200, 210, 225);
-    doc.rect(W - M - 24, 4, 24, 24, 'F');
-    doc.setDrawColor(150, 165, 200); doc.setLineWidth(0.3);
-    doc.rect(W - M - 24, 4, 24, 24, 'S');
-    doc.setTextColor(110, 125, 150); doc.setFontSize(6); doc.setFont('helvetica', 'normal');
-    doc.text('PHOTO', W - M - 12, 17, { align: 'center' });
-  }
-
   // School name
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(16); doc.setFont('helvetica', 'bold');
-  doc.text((school?.name || 'SCHOOL').toUpperCase(), W / 2, 12, { align: 'center' });
+  const sName    = (school?.name    || 'Marumbasi Comprehensive School').trim();
+  const sAddr    = (school?.address || 'P.O. Box 001, Marumbasi').trim();
+  const sPhone   = (school?.phone   || '+254 700 000000').trim();
+  const sEmail   = (school?.email   || 'admin@marumbasi.com').trim();
+  const sMotto   = (school?.motto   || 'Together we Succeed').trim();
+  doc.text(sName.toUpperCase(), W / 2, 11, { align: 'center' });
 
   // Contacts
-  const contacts = [school?.address, school?.phone, school?.email].filter(Boolean).join('  |  ');
-  if (contacts) {
-    doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(180, 200, 235);
-    doc.text(contacts, W / 2, 19, { align: 'center' });
-  }
-
-  // Motto
-  if (school?.motto) {
-    doc.setFontSize(8); doc.setFont('helvetica', 'italic'); doc.setTextColor(253, 224, 71);
-    doc.text(`"${school.motto}"`, W / 2, 26, { align: 'center' });
-  }
+  doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(180, 200, 230);
+  doc.text(`${sAddr}  |  ${sPhone}  |  ${sEmail}`, W / 2, 17, { align: 'center' });
+  doc.setFontSize(7.5); doc.setFont('helvetica', 'italic'); doc.setTextColor(253, 224, 71);
+  doc.text(`"${sMotto}"`, W / 2, 23, { align: 'center' });
 
   // Title ribbon
   doc.setFillColor(245, 248, 255);

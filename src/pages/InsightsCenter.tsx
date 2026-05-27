@@ -18,8 +18,7 @@ const RUBRIC = [
   { min: 0,  max: 10,  code: 'BE2', label: 'Below Expectations 2',     pts: 1, color: '#991b1b', bg: '#fecaca', text: '#7f1d1d' },
 ];
 
-const getRubric = (score: number) =>
-  RUBRIC.find(r => score >= r.min && score <= r.max) || RUBRIC[RUBRIC.length - 1];
+const getRubric = (score: number) => { const s = Math.round(score); return RUBRIC.find(r => s >= r.min && s <= r.max) || RUBRIC[RUBRIC.length - 1]; };
 
 /* ─── Humanized remarks per performance band ─────────────────────────────── */
 const getRemarks = (avg: number): { teacher: string; principal: string } => {

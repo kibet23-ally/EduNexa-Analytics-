@@ -234,34 +234,6 @@ async function generateRankingsPDF(params: {
     },
   });
 
-  // Rubric key at bottom of page 1
-  const ry = (doc as any).lastAutoTable.finalY + 6;
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(0, 32, 96);
-  doc.text('CBC GRADING RUBRIC KEY', M, ry);
-  autoTable(doc, {
-    startY: ry + 2,
-    head: [['Code', 'Performance Level', 'Score Range', 'Rubric Points']],
-    body: RUBRIC.map(r => [r.code, r.label, `${r.min} – ${r.max}`, r.pts]),
-    theme: 'grid',
-    styles: { fontSize: 7, cellPadding: 1.5, lineColor: [200, 210, 230], lineWidth: 0.15 },
-    headStyles: { fillColor: [0, 32, 96], textColor: [253, 224, 71], fontStyle: 'bold', fontSize: 7 },
-    alternateRowStyles: { fillColor: [250, 251, 255] },
-    tableWidth: (W - M * 2) / 2,
-    columnStyles: {
-      0: { cellWidth: 18, halign: 'center', fontStyle: 'bold' },
-      1: { cellWidth: 65 },
-      2: { cellWidth: 28, halign: 'center' },
-      3: { cellWidth: 22, halign: 'center' },
-    },
-    didParseCell: (data) => {
-      if (data.section === 'body' && data.column.index === 0) {
-        const code = String(data.cell.text[0]);
-        const r = RUBRIC.find(r => r.code === code);
-        if (r) data.cell.styles.textColor = r.color as any;
-      }
-    },
-  });
-
   drawPDFFooter(doc, school);
 
   /* ── PAGE 2: Full Student Rankings ── */

@@ -909,8 +909,8 @@ export default function InsightsCenter() {
     await generateReportCard({
       school, logo,
       student: { ...student, rank: rank?.rank, totalStudents: rankings.length },
-      grade: grades.find(g => g.id === student.grade_id),
-      exam:  exams.find(e => e.id === examId),
+      grade: grades.find(g => String(g.id) === String(student.grade_id)),
+      exam:  exams.find(e => String(e.id) === String(examId)),
       year, term,
       subjectMarks: getStudentMarks(student.id),
       att: getStudentAtt(student.id),
@@ -921,9 +921,9 @@ export default function InsightsCenter() {
   const handleGenRankingsPDF = useCallback(async () => {
     if (!gradeId) { alert('Please select a grade first.'); return; }
     await generateRankingsPDF({
-      school, logo,
-      gradeName: grades.find(g => g.id === gradeId)?.grade_name || 'Class',
-      examName:  exams.find(e => e.id === examId)?.exam_name    || 'All Exams',
+      school: liveSchool, logo: liveLogo,
+      gradeName: grades.find(g => String(g.id) === String(gradeId))?.grade_name || 'Class',
+      examName:  exams.find(e => String(e.id) === String(examId))?.exam_name    || 'All Exams',
       year, term, rankings, subjects, marks,
       prevMarks:     prevExamId ? prevMarks : undefined,
       prevExamName:  prevExamId ? exams.find(e => e.id === prevExamId)?.exam_name : undefined,

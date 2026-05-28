@@ -920,15 +920,32 @@ export default function InsightsCenter() {
 
   const handleGenRankingsPDF = useCallback(async () => {
     if (!gradeId) { alert('Please select a grade first.'); return; }
-    await generateRankingsPDF({
-      school: liveSchool, logo: liveLogo,
-      gradeName: grades.find(g => String(g.id) === String(gradeId))?.grade_name || 'Class',
-      examName:  exams.find(e => String(e.id) === String(examId))?.exam_name    || 'All Exams',
-      year, term, rankings, subjects, marks,
-      prevMarks:     prevExamId ? prevMarks : undefined,
-      prevExamName:  prevExamId ? exams.find(e => e.id === prevExamId)?.exam_name : undefined,
-    });
-  }, [school, logo, grades, gradeId, exams, examId, year, term, rankings, subjects, marks, prevMarks, prevExamId]);
+    try {
+      const numSid = Number(sid);
+      let liveSchool = school;
+      if (!liveSchool?.name) {
+        const { data } = await supabase.from('schools')
+          .select('id,name,logo_url,motto,address,phone,email')
+          .eq('id', !isNaN(numSid) && numSid > 0 ? numSid : sid)
+          .maybeSingle();
+        if (data?.name) liveSchool = data;
+      }
+      const liveLogo = liveSchool?.logo_url?.trim()
+        ? await fetchLogo(liveSchool.logo_url.trim())
+        : logo;
+      await generateRankingsPDF({
+        school: liveSchool, logo: liveLogo,
+        gradeName: grades.find(g => String(g.id) === String(gradeId))?.grade_name || 'Class',
+        examName:  exams.find(e => String(e.id) === String(examId))?.exam_name    || 'All Exams',
+        year, term, rankings, subjects, marks,
+        prevMarks:    prevExamId ? prevMarks : undefined,
+        prevExamName: prevExamId ? exams.find(e => String(e.id) === String(prevExamId))?.exam_name : undefined,
+      });
+    } catch (err) {
+      console.error('Rankings PDF error:', err);
+      alert('Failed to generate PDF. Please try again.');
+    }
+  }, [school, logo, sid, grades, gradeId, exams, examId, year, term, rankings, subjects, marks, prevMarks, prevExamId]);
 
   const exportRankingsExcel = useCallback(() => {
     if (!gradeId) { alert('Please select a grade first.'); return; }

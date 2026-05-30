@@ -884,7 +884,8 @@ export default function InsightsCenter() {
         score: m.score,
         teacher_remark: m.teacher_remark,
       };
-    }).filter(Boolean) as { subject_name: string; subject_code: string; score: number; teacher_remark?: string }[],
+    }).filter(Boolean) as { subject_name: string; subject_code: string; score: number; teacher_remark?: string }[]
+  , [marks, subjects]);
 
   const getPrevStudentMarks = useCallback((studentId: string) =>
     subjects.map(subj => {

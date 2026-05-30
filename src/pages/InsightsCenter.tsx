@@ -54,7 +54,7 @@ interface Grade     { id: string; grade_name: string; school_id: any; }
 interface Subject   { id: string; subject_name: string; subject_code: string; school_id: any; }
 interface Exam      { id: string; exam_name: string; term: string; year: number; school_id: any; grade_id?: string; is_school_wide: boolean; }
 interface Student   { id: string; name: string; admission_number: string; gender: string; grade_id: string; school_id: any; }
-interface Mark      { id: string; student_id: string; subject_id: string; exam_id: string; score: number; school_id: any; teacher_remark?: string; grade_id: string; teacher_id?: string; }
+interface Mark      { id: string; student_id: string; subject_id: string; exam_id: string; score: number | null; school_id: any; teacher_remark?: string; grade_id: string; teacher_id?: string; }
 interface AttendanceRecord { id: string; school_id: any; student_id: string; grade_id: string; date: string; status: string; }
 
 /* ─── Logo fetcher ────────────────────────────────────────────────────────── */
@@ -153,7 +153,7 @@ async function generateRankingsPDF(params: {
   /* ── PAGE 1: Letterhead + Exam Info + Subject Analysis ── */
   drawPDFLetterhead(doc, school, logo, `EXAMINATION RESULTS — ${gradeName} • ${examName}`, true);
 
-  const allScores = marks.map(m => m.score);
+  const allScores = marks.map(m => m.score).filter((s): s is number => s !== null && s !== undefined);
   const classAvg  = allScores.length ? allScores.reduce((a, b) => a + b, 0) / allScores.length : 0;
   const passRate  = allScores.length ? allScores.filter(s => s >= 41).length / allScores.length * 100 : 0;
   const classR    = getRubric(classAvg);
@@ -182,7 +182,7 @@ async function generateRankingsPDF(params: {
   doc.text('SUBJECT PERFORMANCE ANALYSIS', M, 65);
 
   const subjRows = subjects.map((subj, i) => {
-    const sm = marks.filter(m => m.subject_id === subj.id);
+    const sm = marks.filter(m => m.subject_id === subj.id && m.score !== null && m.score !== undefined) as (Mark & { score: number })[];
     if (!sm.length) return null;
     const avg = sm.reduce((x, b) => x + b.score, 0) / sm.length;
     const r = getRubric(avg);
@@ -836,6 +836,7 @@ export default function InsightsCenter() {
   const rankings = useMemo(() => {
     const map: Record<string, { total: number; count: number }> = {};
     marks.forEach(m => {
+      if (m.score === null || m.score === undefined) return;
       if (!map[m.student_id]) map[m.student_id] = { total: 0, count: 0 };
       map[m.student_id].total += m.score;
       map[m.student_id].count++;
@@ -876,14 +877,14 @@ export default function InsightsCenter() {
   const getStudentMarks = useCallback((studentId: string) =>
     subjects.map(subj => {
       const m = marks.find(mk => mk.student_id === studentId && mk.subject_id === subj.id);
-      return m ? {
+      if (!m || m.score === null || m.score === undefined) return null;
+      return {
         subject_name: subj.subject_name,
         subject_code: subj.subject_code,
         score: m.score,
         teacher_remark: m.teacher_remark,
-      } : null;
+      };
     }).filter(Boolean) as { subject_name: string; subject_code: string; score: number; teacher_remark?: string }[],
-    [marks, subjects]);
 
   const getPrevStudentMarks = useCallback((studentId: string) =>
     subjects.map(subj => {

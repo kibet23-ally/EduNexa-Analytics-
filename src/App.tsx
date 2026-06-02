@@ -74,8 +74,13 @@ const RoleProtectedRoute: React.FC<{
   const normalizedUserRole = normalize(user.role);
   const normalizedAllowedRoles = allowedRoles.map(r => normalize(r));
   if (!normalizedAllowedRoles.includes(normalizedUserRole)) {
-    return <Navigate to="/school-admin" replace />;
-  }
+  // Redirect to correct dashboard based on actual role
+  const r = user.role?.toLowerCase();
+  if (r === 'teacher') return <Navigate to="/teacher" replace />;
+  if (r === 'school_admin') return <Navigate to="/school-admin" replace />;
+  if (r === 'super_admin') return <Navigate to="/super-admin" replace />;
+  return <Navigate to="/dashboard" replace />;
+}
   return <>{children}</>;
 };
 
@@ -129,8 +134,22 @@ const AppRoutes = () => {
 
       {/* Shared Authenticated Routes */}
       <Route path="/dashboard" element={<ProtectedRoute><Layout>{wrap(<Dashboard />, 'Dashboard')}</Layout></ProtectedRoute>} />
-      <Route path="/school-admin" element={<ProtectedRoute><Layout>{wrap(<Dashboard />, 'Dashboard')}</Layout></ProtectedRoute>} />
-      <Route path="/teacher" element={<ProtectedRoute><Layout>{wrap(<Dashboard />, 'Dashboard')}</Layout></ProtectedRoute>} />
+      <Route
+  path="/school-admin"
+  element={
+    <RoleProtectedRoute allowedRoles={['school_admin', 'Admin', 'admin', 'Principal']}>
+      <Layout>{wrap(<Dashboard />, 'Dashboard')}</Layout>
+    </RoleProtectedRoute>
+  }
+/>
+<Route
+  path="/teacher"
+  element={
+    <RoleProtectedRoute allowedRoles={['teacher', 'Teacher']}>
+      <Layout>{wrap(<Dashboard />, 'Dashboard')}</Layout>
+    </RoleProtectedRoute>
+  }
+/>
 
       {/* School Admin & Teacher Routes */}
       <Route path="/students" element={<ProtectedRoute><Layout>{wrap(<Students />, 'Students')}</Layout></ProtectedRoute>} />

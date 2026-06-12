@@ -151,9 +151,24 @@ function drawPDFLetterhead(
   doc.setFillColor(234, 179, 8);
   doc.rect(0, 32, W, 2.5, 'F');
 
-  // Logo and photo placeholders removed — only shown if actual data exists
+  // Logo — left
   if (logo) {
     try { doc.addImage(logo.data, logo.fmt, M, 4, 24, 24); } catch { /* noop */ }
+  } else {
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(M, 4, 24, 24, 3, 3, 'F');
+    doc.setTextColor(30, 58, 95); doc.setFontSize(13); doc.setFont('helvetica', 'bold');
+    doc.text((school?.name || 'S')[0].toUpperCase(), M + 12, 20, { align: 'center' });
+  }
+
+  // Photo placeholder (portrait only, report card)
+  if (showPhoto) {
+    doc.setFillColor(200, 210, 225);
+    doc.rect(W - M - 24, 4, 24, 24, 'F');
+    doc.setDrawColor(150, 165, 200); doc.setLineWidth(0.3);
+    doc.rect(W - M - 24, 4, 24, 24, 'S');
+    doc.setTextColor(110, 125, 150); doc.setFontSize(6); doc.setFont('helvetica', 'normal');
+    doc.text('PHOTO', W - M - 12, 17, { align: 'center' });
   }
 
   // School name
@@ -302,59 +317,6 @@ async function generateRankingsPDF(params: {
     },
   });
 
-  /* ── Performance Level Distribution (student means) ── */
-  const perfY = (doc as any).lastAutoTable.finalY + 6;
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(0, 32, 96);
-  doc.text('PERFORMANCE LEVEL DISTRIBUTION — BY STUDENT MEAN', M, perfY);
-
-  const allSubjIds = subjects.map(s => s.id);
-  const studentDist = rankings.map(r => {
-    const sum = allSubjIds.reduce((a, sid) => {
-      const m = marks.find(mk => mk.student_id === r.id && mk.subject_id === sid);
-      return a + (m?.score ?? 0);
-    }, 0);
-    return Math.round((sum / (allSubjIds.length || 1)) * 10) / 10;
-  });
-
-  const distRows = RUBRIC.map(r => {
-    const students = rankings.filter((_, i) => {
-      const mean = studentDist[i];
-      return mean >= r.min && mean <= r.max;
-    });
-    const pct = rankings.length ? (students.length / rankings.length * 100).toFixed(1) + '%' : '0%';
-    return [r.code, r.label, r.pts, students.length, pct, students.map(s => s.name).join(', ') || '—'];
-  });
-
-  autoTable(doc, {
-    startY: perfY + 2,
-    head: [['PL', 'Performance Level', 'Pts', 'Students', '%', 'Student Names']],
-    body: distRows,
-    theme: 'grid',
-    styles: { fontSize: 7, cellPadding: 1.8, lineColor: [200, 210, 230], lineWidth: 0.2, overflow: 'ellipsize' },
-    headStyles: { fillColor: [0, 32, 96], textColor: [253, 224, 71], fontStyle: 'bold', fontSize: 7 },
-    alternateRowStyles: { fillColor: [247, 250, 255] },
-    columnStyles: {
-      0: { cellWidth: 14, halign: 'center', fontStyle: 'bold' },
-      1: { cellWidth: 55 },
-      2: { cellWidth: 10, halign: 'center' },
-      3: { cellWidth: 16, halign: 'center', fontStyle: 'bold' },
-      4: { cellWidth: 14, halign: 'center' },
-      5: { cellWidth: 'auto' },
-    },
-    didParseCell: (data) => {
-      if (data.section === 'body' && data.column.index === 0) {
-        const code = String(data.cell.text[0]);
-        const r = RUBRIC.find(r => r.code === code);
-        if (r) { data.cell.styles.textColor = r.color as any; data.cell.styles.fontStyle = 'bold'; }
-      }
-      if (data.section === 'body' && data.column.index === 3) {
-        const val = parseInt(String(data.cell.text[0]));
-        if (val === 0) data.cell.styles.textColor = [200, 200, 200] as any;
-        else data.cell.styles.fontStyle = 'bold';
-      }
-    },
-  });
-
   drawPDFFooter(doc, school);
 
   /* ── PAGE 2: Full Student Rankings ── */
@@ -372,19 +334,20 @@ async function generateRankingsPDF(params: {
     'Total', 'Avg%', 'PL', 'Pts'];
 
   const rankBody = rankings.map(s => {
+    const dns = (s as any).didNotSit;
     const subScores = subjectCols.map(subj => {
       const m = marks.find(mk => mk.student_id === s.id && mk.subject_id === subj.id);
-      return m ? m.score : '-';
+      return m ? m.score : '—';
     });
-    const r = getRubric(s.avg);
+    const r = dns ? { code: 'DNS', pts: 0 } : getRubric(s.avg);
     return [
-      `#${s.rank}`,
+      dns ? 'DNS' : `#${s.rank}`,
       s.name,
       s.admission_number,
       s.gender.charAt(0).toUpperCase(),
-      ...subScores,
-      s.total,
-      s.avg.toFixed(1),
+      ...(dns ? subjectCols.map(() => '—') : subScores),
+      dns ? 0 : s.total,
+      dns ? '0.0' : s.avg.toFixed(1),
       r.code,
       r.pts,
     ];
@@ -964,10 +927,25 @@ export default function InsightsCenter() {
 
   useEffect(() => {
     if (!sid) return;
-    supabase.from('exams')
-      .select('id,exam_name,term,year,school_id,grade_id,is_school_wide')
-      .eq('school_id', sid).eq('year', Number(year))
-      .then(({ data }) => setExams(data || []));
+    // Fetch ALL exams for this school — filter in JS so dropdown is never empty
+    // Try both number and string year to handle schema variations
+    const numSid = Number(sid);
+    const fetchExams = async () => {
+      let { data } = await supabase
+        .from('exams')
+        .select('id,exam_name,term,year,school_id,grade_id,is_school_wide')
+        .eq('school_id', !isNaN(numSid) && numSid > 0 ? numSid : sid)
+        .order('year', { ascending: false })
+        .order('term', { ascending: true });
+      // If year filter needed, apply in JS (avoids type mismatch)
+      if (data && year) {
+        const filtered = data.filter(e => String(e.year) === String(year));
+        // Only apply year filter if it returns results; otherwise show all
+        if (filtered.length > 0) data = filtered;
+      }
+      setExams(data || []);
+    };
+    fetchExams();
   }, [sid, year]);
 
   useEffect(() => {
@@ -1011,26 +989,49 @@ export default function InsightsCenter() {
   // ── Derived ──
   const filteredExams = useMemo(() =>
     exams.filter(e => {
-      // Must match grade (or be school-wide)
-      const gradeMatch = !gradeId || String(e.grade_id) === String(gradeId) || e.is_school_wide;
-      // Must match selected term (if term is selected)
-      const termMatch  = !term || String(e.term) === term.replace('Term ', '');
+      // Grade match: loose string comparison (handles bigint vs string)
+      const gradeMatch = !gradeId ||
+        String(e.grade_id) === String(gradeId) ||
+        e.is_school_wide;
+      // Term match: strip 'Term ' prefix, compare to integer
+      const termMatch = !term ||
+        String(e.term) === term.replace('Term ', '').trim();
       return gradeMatch && termMatch;
     }),
     [exams, gradeId, term]);
 
   const rankings = useMemo(() => {
-    const allSubjectIds = subjects.map(s => s.id);
-    return students
-      .map(s => {
-        const { total, mean, entered } = calcMean(s.id, marks, allSubjectIds);
-        // Only include students with at least 1 mark entered
-        if (entered === 0) return null;
-        return { ...s, avg: mean, total: marks.filter(m => m.student_id === s.id && m.score !== null).reduce((a, m) => a + (m.score ?? 0), 0), subjects: entered };
-      })
-      .filter((s): s is NonNullable<typeof s> => s !== null)
-      .sort((a, b) => b.avg - a.avg)
-      .map((s, i) => ({ ...s, rank: i + 1 }));
+    // ── Reusable ranking logic ─────────────────────────────────────────────
+    // Rules:
+    //   1. ALL students included (even DNS — did not sit)
+    //   2. Mean = sum(entered) / totalSubjectsInGrade  (missing treated as 0)
+    //   3. DNS students ranked at bottom
+    //   4. Tied means share the same rank
+    // ──────────────────────────────────────────────────────────────────────
+    const totalSubjs = subjects.length || 1;
+    const mapped = students.map(s => {
+      const studentMarks = marks.filter(m => m.student_id === s.id);
+      const enteredSum   = studentMarks.reduce((a, m) => a + (m.score ?? 0), 0);
+      const entered      = studentMarks.filter(m => m.score !== null && m.score !== undefined).length;
+      const avg = Math.round((enteredSum / totalSubjs) * 10) / 10;
+      return { ...s, avg, total: enteredSum, subjects: entered, didNotSit: entered === 0 };
+    });
+    // Sort: ranked students first (desc avg), DNS last
+    const sorted = [...mapped].sort((a, b) => {
+      if (a.didNotSit && !b.didNotSit) return 1;
+      if (!a.didNotSit && b.didNotSit) return -1;
+      return b.avg - a.avg;
+    });
+    // Assign ranks with tie handling
+    let currentRank = 1;
+    return sorted.map((s, i) => {
+      if (s.didNotSit) return { ...s, rank: sorted.length };
+      if (i > 0 && !sorted[i-1].didNotSit && sorted[i-1].avg === s.avg) {
+        return { ...s, rank: currentRank };
+      }
+      currentRank = i + 1;
+      return { ...s, rank: currentRank };
+    });
   }, [marks, students, subjects]);
 
   const classStats = useMemo(() => {
@@ -1098,9 +1099,6 @@ export default function InsightsCenter() {
   // ── Export handlers ──
   const handleGenReportCard = useCallback(async (student: Student) => {
     const rank = rankings.find(r => r.id === student.id);
-    const allSubjectIds = subjects.map(s => s.id);
-    const { mean } = calcMean(student.id, marks, allSubjectIds);
-    const allSubjectMarks = getStudentMarks(student.id);
     try {
       const numSid = Number(sid);
       let liveSchool = school;
@@ -1113,15 +1111,14 @@ export default function InsightsCenter() {
       }
       const liveLogo = liveSchool?.logo_url?.trim()
         ? await fetchLogo(liveSchool.logo_url.trim()) : logo;
+      const rankedCount = rankings.filter(r => !(r as any).didNotSit).length;
       await generateReportCard({
         school: liveSchool, logo: liveLogo,
-        student: { ...student, rank: rank?.rank, totalStudents: rankings.length },
+        student: { ...student, rank: rank?.rank, totalStudents: rankedCount },
         grade: grades.find(g => String(g.id) === String(student.grade_id)),
         exam:  exams.find(e => String(e.id) === String(examId)),
         year, term,
-        subjectMarks: allSubjectMarks,
-        calcAvg: mean,
-        totalSubjects: allSubjectIds.length,
+        subjectMarks: getStudentMarks(student.id),
         att: getStudentAtt(student.id),
         prevSubjectMarks: prevExamId ? getPrevStudentMarks(student.id) : undefined,
       });
@@ -1129,7 +1126,7 @@ export default function InsightsCenter() {
       console.error('Report card error:', err);
       alert('Failed to generate report card. Please try again.');
     }
-  }, [school, logo, sid, grades, exams, examId, year, term, rankings, subjects, marks, getStudentMarks, getStudentAtt, getPrevStudentMarks, prevExamId]);
+  }, [school, logo, sid, grades, exams, examId, year, term, rankings, getStudentMarks, getStudentAtt, getPrevStudentMarks, prevExamId]);
 
   const handleGenRankingsPDF = useCallback(async () => {
     if (!gradeId) { alert('Please select a grade first.'); return; }
@@ -1145,13 +1142,19 @@ export default function InsightsCenter() {
       }
       const liveLogo = liveSchool?.logo_url?.trim()
         ? await fetchLogo(liveSchool.logo_url.trim()) : logo;
+      const gradeName = grades.find(g => String(g.id) === String(gradeId))?.grade_name || 'Class';
+      const examName  = examId
+        ? (exams.find(e => String(e.id) === String(examId))?.exam_name || 'All Exams')
+        : 'All Exams';
+      const prevExamName = prevExamId
+        ? exams.find(e => String(e.id) === String(prevExamId))?.exam_name
+        : undefined;
       await generateRankingsPDF({
         school: liveSchool, logo: liveLogo,
-        gradeName: grades.find(g => String(g.id) === String(gradeId))?.grade_name || 'Class',
-        examName:  exams.find(e => String(e.id) === String(examId))?.exam_name    || 'All Exams',
-        year, term, rankings, subjects, marks,
+        gradeName, examName, year, term,
+        rankings, subjects, marks,
         prevMarks:    prevExamId ? prevMarks : undefined,
-        prevExamName: prevExamId ? exams.find(e => String(e.id) === String(prevExamId))?.exam_name : undefined,
+        prevExamName,
       });
     } catch (err) {
       console.error('Rankings PDF error:', err);
@@ -1166,23 +1169,24 @@ export default function InsightsCenter() {
 
     // Sheet 1: Rankings with all subject marks
     const rows = rankings.map(s => {
+      const dns = (s as any).didNotSit;
       const row: Record<string, any> = {
-        Rank: s.rank,
+        Rank: dns ? 'DNS' : s.rank,
         'Student Name': s.name,
         'Adm No': s.admission_number,
         Gender: s.gender,
-        Class: grades.find(g => g.id === s.grade_id)?.grade_name || '',
+        Class: grades.find(g => String(g.id) === String(s.grade_id))?.grade_name || '',
+        Status: dns ? 'Did Not Sit' : 'Sat',
       };
       subjectCols.forEach(subj => {
         const m = marks.find(mk => mk.student_id === s.id && mk.subject_id === subj.id);
-        row[subj.subject_name] = m ? m.score : '';
+        row[subj.subject_name] = (m && m.score !== null) ? m.score : '—';
       });
-      const { mean: excelMean, sum: excelSum } = calcMean(s.id, marks, subjects.map(sub => sub.id));
-      row['Total (Entered)'] = excelSum;
-      row['Average (%)'] = excelMean;
-      row['Grade (PL)'] = getRubric(s.avg).code;
-      row['Performance Level'] = getRubric(s.avg).label;
-      row['Rubric Points'] = getRubric(s.avg).pts;
+      row['Total'] = dns ? 0 : s.total;
+      row['Average (%)'] = dns ? 0 : s.avg;
+      row['Grade (PL)'] = dns ? 'DNS' : getRubric(s.avg).code;
+      row['Performance Level'] = dns ? 'Did Not Sit' : getRubric(s.avg).label;
+      row['Rubric Points'] = dns ? 0 : getRubric(s.avg).pts;
       return row;
     });
     const ws1 = XLSX.utils.json_to_sheet(rows);
@@ -1388,16 +1392,14 @@ export default function InsightsCenter() {
                       )}
                     </div>
 
-                    {/* Rubric distribution — by student mean */}
+                    {/* Rubric distribution */}
                     {marks.length > 0 && (
                       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5">
-                        <h3 className="font-bold text-slate-900 dark:text-white mb-1">Performance Level Distribution</h3>
-                        <p className="text-xs text-slate-400 mb-4">Number of students per CBC performance level based on mean score</p>
+                        <h3 className="font-bold text-slate-900 dark:text-white mb-4">Grade Distribution</h3>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                           {RUBRIC.map(r => {
-                            const studentsInBand = rankings.filter(s => s.avg >= r.min && s.avg <= r.max);
-                            const cnt  = studentsInBand.length;
-                            const pct  = rankings.length ? (cnt / rankings.length * 100) : 0;
+                            const cnt  = marks.filter(m => m.score >= r.min && m.score <= r.max).length;
+                            const pct  = marks.length ? (cnt / marks.length * 100) : 0;
                             return (
                               <div key={r.code} className="rounded-xl p-3 border" style={{ background: r.bg, borderColor: r.color + '40' }}>
                                 <div className="flex items-center justify-between mb-1">
@@ -1406,12 +1408,6 @@ export default function InsightsCenter() {
                                 </div>
                                 <div className="text-lg font-black" style={{ color: r.color }}>{cnt}</div>
                                 <div className="text-[10px]" style={{ color: r.text }}>{pct.toFixed(1)}% · {r.min}–{r.max}</div>
-                                {cnt > 0 && (
-                                  <div className="mt-1 text-[9px] text-slate-400 leading-tight truncate">
-                                    {studentsInBand.slice(0, 3).map(s => s.name.split(' ')[0]).join(', ')}
-                                    {cnt > 3 ? ` +${cnt - 3} more` : ''}
-                                  </div>
-                                )}
                                 <div className="mt-1.5 h-1 rounded-full overflow-hidden bg-white/50">
                                   <div className="h-full rounded-full" style={{ width: `${pct}%`, background: r.color }} />
                                 </div>
@@ -1488,11 +1484,18 @@ export default function InsightsCenter() {
                             return (
                               <tr key={s.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
                                 <td className="px-3 py-2.5 font-black text-sm" style={{
-                                  color: s.rank === 1 ? '#b45309' : s.rank === 2 ? '#64748b' : s.rank === 3 ? '#92400e' : '#94a3b8'
+                                  color: (s as any).didNotSit ? '#94a3b8' : s.rank === 1 ? '#b45309' : s.rank === 2 ? '#64748b' : s.rank === 3 ? '#92400e' : '#94a3b8'
                                 }}>
-                                  {s.rank === 1 ? '🥇' : s.rank === 2 ? '🥈' : s.rank === 3 ? '🥉' : `#${s.rank}`}
+                                  {(s as any).didNotSit ? 'DNS' : s.rank === 1 ? '🥇' : s.rank === 2 ? '🥈' : s.rank === 3 ? '🥉' : `#${s.rank}`}
                                 </td>
-                                <td className="px-3 py-2.5 font-semibold text-slate-800 dark:text-slate-100">{s.name}</td>
+                                <td className="px-3 py-2.5 font-semibold text-slate-800 dark:text-slate-100">
+                                  {s.name}
+                                  {(s as any).didNotSit && (
+                                    <span className="ml-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-400 dark:bg-slate-700">
+                                      Did Not Sit
+                                    </span>
+                                  )}
+                                </td>
                                 <td className="px-3 py-2.5 text-xs text-slate-500">{s.admission_number}</td>
                                 <td className="px-3 py-2.5 text-xs text-slate-500">{s.gender}</td>
                                 {activeSubs.map(subj => {
@@ -1750,3 +1753,5 @@ export default function InsightsCenter() {
     </div>
   );
 }
+                    
+                       

@@ -151,24 +151,9 @@ function drawPDFLetterhead(
   doc.setFillColor(234, 179, 8);
   doc.rect(0, 32, W, 2.5, 'F');
 
-  // Logo — left
+  // Logo and photo placeholders removed — only shown if actual data exists
   if (logo) {
     try { doc.addImage(logo.data, logo.fmt, M, 4, 24, 24); } catch { /* noop */ }
-  } else {
-    doc.setFillColor(255, 255, 255);
-    doc.roundedRect(M, 4, 24, 24, 3, 3, 'F');
-    doc.setTextColor(30, 58, 95); doc.setFontSize(13); doc.setFont('helvetica', 'bold');
-    doc.text((school?.name || 'S')[0].toUpperCase(), M + 12, 20, { align: 'center' });
-  }
-
-  // Photo placeholder (portrait only, report card)
-  if (showPhoto) {
-    doc.setFillColor(200, 210, 225);
-    doc.rect(W - M - 24, 4, 24, 24, 'F');
-    doc.setDrawColor(150, 165, 200); doc.setLineWidth(0.3);
-    doc.rect(W - M - 24, 4, 24, 24, 'S');
-    doc.setTextColor(110, 125, 150); doc.setFontSize(6); doc.setFont('helvetica', 'normal');
-    doc.text('PHOTO', W - M - 12, 17, { align: 'center' });
   }
 
   // School name
@@ -313,6 +298,59 @@ async function generateRankingsPDF(params: {
         const code = String(data.cell.text[0]);
         const r = RUBRIC.find(r => r.code === code);
         if (r) { data.cell.styles.textColor = r.color as any; data.cell.styles.fontStyle = 'bold'; }
+      }
+    },
+  });
+
+  /* ── Performance Level Distribution (student means) ── */
+  const perfY = (doc as any).lastAutoTable.finalY + 6;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(0, 32, 96);
+  doc.text('PERFORMANCE LEVEL DISTRIBUTION — BY STUDENT MEAN', M, perfY);
+
+  const allSubjIds = subjects.map(s => s.id);
+  const studentDist = rankings.map(r => {
+    const sum = allSubjIds.reduce((a, sid) => {
+      const m = marks.find(mk => mk.student_id === r.id && mk.subject_id === sid);
+      return a + (m?.score ?? 0);
+    }, 0);
+    return Math.round((sum / (allSubjIds.length || 1)) * 10) / 10;
+  });
+
+  const distRows = RUBRIC.map(r => {
+    const students = rankings.filter((_, i) => {
+      const mean = studentDist[i];
+      return mean >= r.min && mean <= r.max;
+    });
+    const pct = rankings.length ? (students.length / rankings.length * 100).toFixed(1) + '%' : '0%';
+    return [r.code, r.label, r.pts, students.length, pct, students.map(s => s.name).join(', ') || '—'];
+  });
+
+  autoTable(doc, {
+    startY: perfY + 2,
+    head: [['PL', 'Performance Level', 'Pts', 'Students', '%', 'Student Names']],
+    body: distRows,
+    theme: 'grid',
+    styles: { fontSize: 7, cellPadding: 1.8, lineColor: [200, 210, 230], lineWidth: 0.2, overflow: 'ellipsize' },
+    headStyles: { fillColor: [0, 32, 96], textColor: [253, 224, 71], fontStyle: 'bold', fontSize: 7 },
+    alternateRowStyles: { fillColor: [247, 250, 255] },
+    columnStyles: {
+      0: { cellWidth: 14, halign: 'center', fontStyle: 'bold' },
+      1: { cellWidth: 55 },
+      2: { cellWidth: 10, halign: 'center' },
+      3: { cellWidth: 16, halign: 'center', fontStyle: 'bold' },
+      4: { cellWidth: 14, halign: 'center' },
+      5: { cellWidth: 'auto' },
+    },
+    didParseCell: (data) => {
+      if (data.section === 'body' && data.column.index === 0) {
+        const code = String(data.cell.text[0]);
+        const r = RUBRIC.find(r => r.code === code);
+        if (r) { data.cell.styles.textColor = r.color as any; data.cell.styles.fontStyle = 'bold'; }
+      }
+      if (data.section === 'body' && data.column.index === 3) {
+        const val = parseInt(String(data.cell.text[0]));
+        if (val === 0) data.cell.styles.textColor = [200, 200, 200] as any;
+        else data.cell.styles.fontStyle = 'bold';
       }
     },
   });
@@ -1350,14 +1388,16 @@ export default function InsightsCenter() {
                       )}
                     </div>
 
-                    {/* Rubric distribution */}
+                    {/* Rubric distribution — by student mean */}
                     {marks.length > 0 && (
                       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5">
-                        <h3 className="font-bold text-slate-900 dark:text-white mb-4">Grade Distribution</h3>
+                        <h3 className="font-bold text-slate-900 dark:text-white mb-1">Performance Level Distribution</h3>
+                        <p className="text-xs text-slate-400 mb-4">Number of students per CBC performance level based on mean score</p>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                           {RUBRIC.map(r => {
-                            const cnt  = marks.filter(m => m.score >= r.min && m.score <= r.max).length;
-                            const pct  = marks.length ? (cnt / marks.length * 100) : 0;
+                            const studentsInBand = rankings.filter(s => s.avg >= r.min && s.avg <= r.max);
+                            const cnt  = studentsInBand.length;
+                            const pct  = rankings.length ? (cnt / rankings.length * 100) : 0;
                             return (
                               <div key={r.code} className="rounded-xl p-3 border" style={{ background: r.bg, borderColor: r.color + '40' }}>
                                 <div className="flex items-center justify-between mb-1">
@@ -1366,6 +1406,12 @@ export default function InsightsCenter() {
                                 </div>
                                 <div className="text-lg font-black" style={{ color: r.color }}>{cnt}</div>
                                 <div className="text-[10px]" style={{ color: r.text }}>{pct.toFixed(1)}% · {r.min}–{r.max}</div>
+                                {cnt > 0 && (
+                                  <div className="mt-1 text-[9px] text-slate-400 leading-tight truncate">
+                                    {studentsInBand.slice(0, 3).map(s => s.name.split(' ')[0]).join(', ')}
+                                    {cnt > 3 ? ` +${cnt - 3} more` : ''}
+                                  </div>
+                                )}
                                 <div className="mt-1.5 h-1 rounded-full overflow-hidden bg-white/50">
                                   <div className="h-full rounded-full" style={{ width: `${pct}%`, background: r.color }} />
                                 </div>

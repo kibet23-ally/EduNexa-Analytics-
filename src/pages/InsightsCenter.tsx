@@ -972,8 +972,14 @@ export default function InsightsCenter() {
 
   // ── Derived ──
   const filteredExams = useMemo(() =>
-    exams.filter(e => !gradeId || e.grade_id === gradeId || e.is_school_wide),
-    [exams, gradeId]);
+    exams.filter(e => {
+      // Must match grade (or be school-wide)
+      const gradeMatch = !gradeId || String(e.grade_id) === String(gradeId) || e.is_school_wide;
+      // Must match selected term (if term is selected)
+      const termMatch  = !term || String(e.term) === term.replace('Term ', '');
+      return gradeMatch && termMatch;
+    }),
+    [exams, gradeId, term]);
 
   const rankings = useMemo(() => {
     const allSubjectIds = subjects.map(s => s.id);

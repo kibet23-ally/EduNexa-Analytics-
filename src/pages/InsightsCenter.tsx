@@ -8,17 +8,50 @@ import { useAuth } from '../useAuth';
 
 /* ─── CBC Kenya Grading Rubric (8 levels) ─────────────────────────────────── */
 const RUBRIC = [
-  { min: 90, max: 100, code: 'EE1', label: 'Exceeding Expectations 1', pts: 8, color: '#42b129', bg: '#dcfce7', text: '#166534' },
-  { min: 75, max: 89,  code: 'EE2', label: 'Exceeding Expectations 2', pts: 7, color: '#42b129', bg: '#dcfce7', text: '#166534' },
-  { min: 58, max: 74,  code: 'ME1', label: 'Meeting Expectations 1',   pts: 6, color: '#0ea5e9', bg: '#dbeafe', text: '#1d4ed8' },
-  { min: 41, max: 57,  code: 'ME2', label: 'Meeting Expectations 2',   pts: 5, color: '#0ea5e9', bg: '#dbeafe', text: '#1d4ed8' },
-  { min: 31, max: 40,  code: 'AE1', label: 'Approaching Expectations 1', pts: 4, color: '#f59e0b', bg: '#fef3c7', text: '#92400e' },
-  { min: 21, max: 30,  code: 'AE2', label: 'Approaching Expectations 2', pts: 3, color: '#f59e0b', bg: '#fef3c7', text: '#92400e' },
+  { min: 90, max: 100, code: 'EE1', label: 'Exceeding Expectations 1', pts: 8, color: '#42b129', bg: '#dcfce7', text: '#14532d' },
+  { min: 75, max: 89,  code: 'EE2', label: 'Exceeding Expectations 2', pts: 7, color: '#42b129', bg: '#d1fae5', text: '#065f46' },
+  { min: 58, max: 74,  code: 'ME1', label: 'Meeting Expectations 1',   pts: 6, color: '#2563eb', bg: '#dbeafe', text: '#1e40af' },
+  { min: 41, max: 57,  code: 'ME2', label: 'Meeting Expectations 2',   pts: 5, color: '#0ea5e9', bg: '#e0f2fe', text: '#075985' },
+  { min: 31, max: 40,  code: 'AE1', label: 'Approaching Expectations 1', pts: 4, color: '#d97706', bg: '#fef3c7', text: '#92400e' },
+  { min: 21, max: 30,  code: 'AE2', label: 'Approaching Expectations 2', pts: 3, color: '#f59e0b', bg: '#fffbeb', text: '#78350f' },
   { min: 11, max: 20,  code: 'BE1', label: 'Below Expectations 1',     pts: 2, color: '#dc2626', bg: '#fee2e2', text: '#991b1b' },
-  { min: 0,  max: 10,  code: 'BE2', label: 'Below Expectations 2',     pts: 1, color: '#dc2626', bg: '#fee2e2', text: '#991b1b' },
+  { min: 0,  max: 10,  code: 'BE2', label: 'Below Expectations 2',     pts: 1, color: '#991b1b', bg: '#fecaca', text: '#7f1d1d' },
 ];
 
 const getRubric = (score: number) => { const s = Math.round(score); return RUBRIC.find(r => s >= r.min && s <= r.max) || RUBRIC[RUBRIC.length - 1]; };
+
+/* ─── Reusable mean score utility ─────────────────────────────────────────
+ * ALWAYS divides by totalSubjects (the full grade subject count).
+ * Missing marks are treated as 0 — never skipped.
+ * Formula: mean = sum(entered marks) / totalSubjects
+ * Tests:
+ *   calcMean([70,60,80], 8) = 26.25  ✓  (5 missing = 0)
+ *   calcMean([70,60,80], 3) = 70     ✓  (no missing)
+ *   calcMean([], 8)          = 0     ✓  (all missing)
+ * ─────────────────────────────────────────────────────────────────────── */
+function calcMean(
+  studentId: string,
+  marks: { student_id: string; subject_id: string; score: number | null }[],
+  allSubjectIds: string[],
+): { total: number; mean: number; entered: number; missing: number; sum: number } {
+  const total = allSubjectIds.length;
+  if (total === 0) return { total: 0, mean: 0, entered: 0, missing: 0, sum: 0 };
+  let sum = 0;
+  let entered = 0;
+  allSubjectIds.forEach(sid => {
+    const m = marks.find(mk => mk.student_id === studentId && mk.subject_id === sid);
+    const score = (m && m.score !== null && m.score !== undefined) ? m.score : 0;
+    sum += score;
+    if (m && m.score !== null && m.score !== undefined) entered++;
+  });
+  return {
+    total,
+    sum,
+    mean: Math.round((sum / total) * 10) / 10,
+    entered,
+    missing: total - entered,
+  };
+}
 
 /* ─── Humanized remarks per performance band ─────────────────────────────── */
 const getRemarks = (avg: number): { teacher: string; principal: string } => {
@@ -54,7 +87,7 @@ interface Grade     { id: string; grade_name: string; school_id: any; }
 interface Subject   { id: string; subject_name: string; subject_code: string; school_id: any; }
 interface Exam      { id: string; exam_name: string; term: string; year: number; school_id: any; grade_id?: string; is_school_wide: boolean; }
 interface Student   { id: string; name: string; admission_number: string; gender: string; grade_id: string; school_id: any; }
-interface Mark      { id: string; student_id: string; subject_id: string; exam_id: string; score: number | null; school_id: any; teacher_remark?: string; grade_id: string; teacher_id?: string; }
+interface Mark      { id: string; student_id: string; subject_id: string; exam_id: string; score: number; school_id: any; teacher_remark?: string; grade_id: string; teacher_id?: string; }
 interface AttendanceRecord { id: string; school_id: any; student_id: string; grade_id: string; date: string; status: string; }
 
 /* ─── Logo fetcher ────────────────────────────────────────────────────────── */
@@ -74,6 +107,31 @@ async function fetchLogo(url: string): Promise<{ data: string; fmt: 'PNG' | 'JPE
   } catch { return null; }
 }
 
+/* ─── Standalone school fetcher (used by PDF functions directly) ─────────── */
+async function fetchSchoolDirect(sid: any, userId?: string): Promise<School | null> {
+  const COLS = 'id,name,logo_url,motto,address,phone,email,website';
+  const numSid = Number(sid);
+  // Try integer id (users.school_id is bigint)
+  if (!isNaN(numSid) && numSid > 0) {
+    const { data } = await supabase.from('schools').select(COLS).eq('id', numSid).maybeSingle();
+    if (data?.name) return data;
+  }
+  // Re-read from users table
+  if (userId) {
+    const { data: uRow } = await supabase.from('users').select('school_id').eq('id', userId).maybeSingle();
+    if (uRow?.school_id) {
+      const n = Number(uRow.school_id);
+      const { data } = await supabase.from('schools').select(COLS).eq('id', !isNaN(n) && n > 0 ? n : uRow.school_id).maybeSingle();
+      if (data?.name) return data;
+    }
+  }
+  // Single-school fallback
+  const { data: all } = await supabase.from('schools').select(COLS).limit(5);
+  if (all?.length === 1 && all[0].name) return all[0];
+  if (all?.length) return all.find(s => Number(s.id) === numSid) ?? null;
+  return null;
+}
+
 /* ─── PDF Helpers ─────────────────────────────────────────────────────────── */
 function drawPDFLetterhead(
   doc: jsPDF,
@@ -90,29 +148,49 @@ function drawPDFLetterhead(
   doc.setFillColor(30, 58, 95);
   doc.rect(0, 0, W, 32, 'F');
   // Gold accent stripe
-  doc.setFillColor(66, 177, 41);
+  doc.setFillColor(234, 179, 8);
   doc.rect(0, 32, W, 2.5, 'F');
 
-  // Logo removed intentionally
+  // Logo — left
+  if (logo) {
+    try { doc.addImage(logo.data, logo.fmt, M, 4, 24, 24); } catch { /* noop */ }
+  } else {
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(M, 4, 24, 24, 3, 3, 'F');
+    doc.setTextColor(30, 58, 95); doc.setFontSize(13); doc.setFont('helvetica', 'bold');
+    doc.text((school?.name || 'S')[0].toUpperCase(), M + 12, 20, { align: 'center' });
+  }
+
+  // Photo placeholder (portrait only, report card)
+  if (showPhoto) {
+    doc.setFillColor(200, 210, 225);
+    doc.rect(W - M - 24, 4, 24, 24, 'F');
+    doc.setDrawColor(150, 165, 200); doc.setLineWidth(0.3);
+    doc.rect(W - M - 24, 4, 24, 24, 'S');
+    doc.setTextColor(110, 125, 150); doc.setFontSize(6); doc.setFont('helvetica', 'normal');
+    doc.text('PHOTO', W - M - 12, 17, { align: 'center' });
+  }
 
   // School name
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(16); doc.setFont('helvetica', 'bold');
-  const sName    = (school?.name    || 'Marumbasi Comprehensive School').trim();
-  const sAddr    = (school?.address || 'P.O. Box 001, Marumbasi').trim();
-  const sPhone   = (school?.phone   || '+254 700 000000').trim();
-  const sEmail   = (school?.email   || 'admin@marumbasi.com').trim();
-  const sMotto   = (school?.motto   || 'Together we Succeed').trim();
-  doc.text(sName.toUpperCase(), W / 2, 14, { align: 'center' });
+  doc.text((school?.name || 'SCHOOL').toUpperCase(), W / 2, 12, { align: 'center' });
 
   // Contacts
-  doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(150, 174, 211);
-  doc.text(`${sAddr}  |  ${sPhone}  |  ${sEmail}`, W / 2, 20, { align: 'center' });
-  doc.setFontSize(7.5); doc.setFont('helvetica', 'italic'); doc.setTextColor(255, 255, 255);
-  doc.text(`"${sMotto}"`, W / 2, 26, { align: 'center' });
+  const contacts = [school?.address, school?.phone, school?.email].filter(Boolean).join('  |  ');
+  if (contacts) {
+    doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(180, 200, 235);
+    doc.text(contacts, W / 2, 19, { align: 'center' });
+  }
+
+  // Motto
+  if (school?.motto) {
+    doc.setFontSize(8); doc.setFont('helvetica', 'italic'); doc.setTextColor(253, 224, 71);
+    doc.text(`"${school.motto}"`, W / 2, 26, { align: 'center' });
+  }
 
   // Title ribbon
-  doc.setFillColor(248, 250, 252);
+  doc.setFillColor(240, 244, 251);
   doc.setDrawColor(30, 58, 95); doc.setLineWidth(0.5);
   doc.rect(M, 37, W - M * 2, 9, 'FD');
   doc.setTextColor(30, 58, 95); doc.setFontSize(10); doc.setFont('helvetica', 'bold');
@@ -122,7 +200,7 @@ function drawPDFLetterhead(
 function drawPDFFooter(doc: jsPDF, school: School | undefined) {
   const W = doc.internal.pageSize.width;
   const H = doc.internal.pageSize.height;
-  doc.setDrawColor(66, 177, 41); doc.setLineWidth(0.5);
+  doc.setDrawColor(234, 179, 8); doc.setLineWidth(0.5);
   doc.line(14, H - 10, W - 14, H - 10);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(100, 116, 139);
   doc.text(`${school?.name || ''} • Generated by EduNexa Analytics`, 14, H - 5);
@@ -153,13 +231,18 @@ async function generateRankingsPDF(params: {
   /* ── PAGE 1: Letterhead + Exam Info + Subject Analysis ── */
   drawPDFLetterhead(doc, school, logo, `EXAMINATION RESULTS — ${gradeName} • ${examName}`, true);
 
-  const allScores = marks.map(m => m.score).filter((s): s is number => s !== null && s !== undefined);
-  const classAvg  = allScores.length ? allScores.reduce((a, b) => a + b, 0) / allScores.length : 0;
-  const passRate  = allScores.length ? allScores.filter(s => s >= 41).length / allScores.length * 100 : 0;
-  const classR    = getRubric(classAvg);
+  const allSubjectIds = subjects.map(s => s.id);
+  const studentMeans = rankings.map(s => calcMean(s.id, marks, allSubjectIds));
+  const classAvg = studentMeans.length
+    ? Math.round((studentMeans.reduce((a, b) => a + b.mean, 0) / studentMeans.length) * 10) / 10
+    : 0;
+  const passRate = studentMeans.length
+    ? studentMeans.filter(r => r.mean >= 41).length / studentMeans.length * 100
+    : 0;
+  const classR = getRubric(classAvg);
 
   // Exam summary strip
-  doc.setFillColor(248, 250, 252);
+  doc.setFillColor(237, 242, 250);
   doc.rect(M, 49, W - M * 2, 10, 'F');
   doc.setDrawColor(30, 58, 95); doc.setLineWidth(0.2);
   doc.rect(M, 49, W - M * 2, 10, 'S');
@@ -209,8 +292,8 @@ async function generateRankingsPDF(params: {
     head: [['#', 'Learning Area', 'Code', 'N', 'Mean', 'PL', 'Pts', 'Performance Level', 'Pass%', 'Highest', 'Lowest']],
     body: subjRows as any,
     theme: 'grid',
-    styles: { fontSize: 7.5, cellPadding: 2, lineColor: [226, 232, 240], lineWidth: 0.2 },
-    headStyles: { fillColor: [30, 58, 95], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.5, halign: 'center' },
+    styles: { fontSize: 7.5, cellPadding: 2, lineColor: [150, 174, 211], lineWidth: 0.2 },
+    headStyles: { fillColor: [30, 58, 95], textColor: [253, 224, 71], fontStyle: 'bold', fontSize: 7.5, halign: 'center' },
     alternateRowStyles: { fillColor: [248, 250, 252] },
     columnStyles: {
       0: { cellWidth: 10, halign: 'center' },
@@ -279,8 +362,8 @@ async function generateRankingsPDF(params: {
     head: [rankHead],
     body: rankBody,
     theme: 'grid',
-    styles: { fontSize: 7, cellPadding: 1.8, lineColor: [226, 232, 240], lineWidth: 0.2, overflow: 'ellipsize' },
-    headStyles: { fillColor: [30, 58, 95], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7, halign: 'center' },
+    styles: { fontSize: 7, cellPadding: 1.8, lineColor: [150, 174, 211], lineWidth: 0.2, overflow: 'ellipsize' },
+    headStyles: { fillColor: [30, 58, 95], textColor: [253, 224, 71], fontStyle: 'bold', fontSize: 7, halign: 'center' },
     alternateRowStyles: { fillColor: [248, 250, 252] },
     columnStyles: {
       0:  { cellWidth: 10, halign: 'center', fontStyle: 'bold' },
@@ -298,9 +381,9 @@ async function generateRankingsPDF(params: {
         const plCol = 4 + subjectCols.length + 2;
         if (data.column.index === 0) {
           const rank = parseInt(String(data.cell.text[0]).replace('#', ''));
-          if (rank === 1) data.cell.styles.textColor = [245, 158, 11] as any;
-          else if (rank === 2) data.cell.styles.textColor = [100, 116, 139] as any;
-          else if (rank === 3) data.cell.styles.textColor = [146, 64, 14] as any;
+          if (rank === 1) data.cell.styles.textColor = [160, 100, 0] as any;
+          else if (rank === 2) data.cell.styles.textColor = [80, 90, 100] as any;
+          else if (rank === 3) data.cell.styles.textColor = [140, 70, 0] as any;
         }
         if (data.column.index === plCol) {
           const code = String(data.cell.text[0]);
@@ -323,7 +406,7 @@ async function generateRankingsPDF(params: {
   const fy2 = (doc as any).lastAutoTable.finalY;
   doc.setFillColor(30, 58, 95);
   doc.rect(M, fy2 + 0.5, W - M * 2, 7, 'F');
-  doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
+  doc.setTextColor(253, 224, 71); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
   doc.text(
     `CLASS SUMMARY  •  Students: ${rankings.length}  •  Class Mean: ${classAvg.toFixed(1)}%  •  PL: ${classR.code}  •  Pass Rate: ${passRate.toFixed(1)}%`,
     W / 2, fy2 + 5.5, { align: 'center' }
@@ -370,8 +453,8 @@ async function generateRankingsPDF(params: {
       head: [['#', 'Learning Area', `${prevExamName} Mean`, 'PL', `${examName} Mean`, 'PL', 'Change', 'Trend']],
       body: compRows as any,
       theme: 'grid',
-      styles: { fontSize: 8, cellPadding: 2.2, lineColor: [226, 232, 240], lineWidth: 0.2 },
-      headStyles: { fillColor: [30, 58, 95], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+      styles: { fontSize: 8, cellPadding: 2.2, lineColor: [150, 174, 211], lineWidth: 0.2 },
+      headStyles: { fillColor: [30, 58, 95], textColor: [253, 224, 71], fontStyle: 'bold', fontSize: 8 },
       alternateRowStyles: { fillColor: [248, 250, 252] },
       columnStyles: {
         0: { cellWidth: 12, halign: 'center' },
@@ -401,7 +484,7 @@ async function generateRankingsPDF(params: {
 
     // Overall comparison summary
     const fy3 = (doc as any).lastAutoTable.finalY + 6;
-    doc.setFillColor(248, 250, 252);
+    doc.setFillColor(237, 242, 250);
     doc.rect(M, fy3, W - M * 2, 12, 'F');
     doc.setDrawColor(30, 58, 95); doc.setLineWidth(0.3);
     doc.rect(M, fy3, W - M * 2, 12, 'S');
@@ -431,11 +514,13 @@ async function generateReportCard(params: {
   grade: Grade | undefined;
   exam: Exam | undefined;
   year: string; term: string;
-  subjectMarks: { subject_name: string; subject_code: string; score: number; teacher_remark?: string; teacher_name?: string }[];
+  subjectMarks: { subject_name: string; subject_code: string; score: number | null; teacher_remark?: string; teacher_name?: string; entered?: boolean }[];
+  calcAvg?: number;
+  totalSubjects?: number;
   att: { total: number; present: number; absent: number; late: number; rate: number };
   prevSubjectMarks?: { subject_name: string; score: number }[];
 }) {
-  const { school, logo, student, grade, exam, year, term, subjectMarks, att, prevSubjectMarks } = params;
+  const { school, logo, student, grade, exam, year, term, subjectMarks, calcAvg, totalSubjects, att, prevSubjectMarks } = params;
   const doc = new jsPDF('p', 'mm', 'a4');
   const W = doc.internal.pageSize.width;
   const M = 14;
@@ -444,17 +529,17 @@ async function generateReportCard(params: {
 
   /* ── Student Details Panel ── */
   const panelY = 49;
-  doc.setFillColor(248, 250, 252);
+  doc.setFillColor(237, 242, 250);
   doc.rect(M, panelY, W - M * 2, 26, 'F');
   doc.setFillColor(30, 58, 95);
   doc.rect(M, panelY, W - M * 2, 5.5, 'F');
-  doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.2);
+  doc.setDrawColor(150, 174, 211); doc.setLineWidth(0.2);
   doc.rect(M, panelY, W - M * 2, 26, 'S');
-  doc.setTextColor(255, 255, 255); doc.setFontSize(7.5); doc.setFont('helvetica', 'bold');
+  doc.setTextColor(253, 224, 71); doc.setFontSize(7.5); doc.setFont('helvetica', 'bold');
   doc.text("LEARNER'S OFFICIAL DETAILS", M + 2, panelY + 4);
 
   const c1 = M + 2, c2 = M + 68, c3 = M + 130;
-  doc.setFontSize(7.5); doc.setTextColor(15, 23, 42);
+  doc.setFontSize(7.5); doc.setTextColor(0, 0, 0);
   const lbl = (t: string, x: number, y: number) => { doc.setFont('helvetica', 'bold'); doc.text(t, x, y); };
   const val = (t: string, x: number, y: number) => { doc.setFont('helvetica', 'normal'); doc.text(t, x, y); };
   lbl('NAME:',      c1, panelY + 11); val(student.name.toUpperCase(), c1 + 14, panelY + 11);
@@ -470,21 +555,24 @@ async function generateReportCard(params: {
   const tableY = panelY + 29;
 
   if (subjectMarks.length === 0) {
-    doc.setTextColor(100, 116, 139); doc.setFontSize(9); doc.setFont('helvetica', 'italic');
+    doc.setTextColor(120, 130, 150); doc.setFontSize(9); doc.setFont('helvetica', 'italic');
     doc.text('No marks recorded for this student.', W / 2, tableY + 20, { align: 'center' });
   } else {
     autoTable(doc, {
       startY: tableY,
       head: [['LEARNING AREA', 'MARKS\n(/100)', 'GRADE', 'RUBRIC\nPOINTS', 'PERFORMANCE LEVEL', "TEACHER'S NAME"]],
       body: subjectMarks.map(m => {
+        if (m.score === null || m.score === undefined) {
+          return [m.subject_name, '—', '—', '—', 'Not Entered', m.teacher_name || '—'];
+        }
         const r = getRubric(m.score);
         return [m.subject_name, m.score, r.code, r.pts, r.label, m.teacher_name || '—'];
       }),
       theme: 'grid',
-      styles: { fontSize: 7.5, cellPadding: 2.2, lineColor: [226, 232, 240], lineWidth: 0.2 },
+      styles: { fontSize: 7.5, cellPadding: 2.2, lineColor: [150, 174, 211], lineWidth: 0.2 },
       headStyles: {
-        fillColor: [30, 58, 95], textColor: [255, 255, 255], fontStyle: 'bold',
-        fontSize: 7.5, halign: 'center', lineColor: [0, 32, 96], lineWidth: 0.3,
+        fillColor: [30, 58, 95], textColor: [253, 224, 71], fontStyle: 'bold',
+        fontSize: 7.5, halign: 'center', lineColor: [30, 58, 95], lineWidth: 0.3,
       },
       alternateRowStyles: { fillColor: [248, 250, 252] },
       columnStyles: {
@@ -511,8 +599,9 @@ async function generateReportCard(params: {
     });
 
     const fy = (doc as any).lastAutoTable.finalY;
-    const totalScore = subjectMarks.reduce((a, b) => a + b.score, 0);
-    const avg = totalScore / subjectMarks.length;
+    const totalScore = subjectMarks.reduce((a, b) => a + (b.score ?? 0), 0);
+    const denominator = totalSubjects && totalSubjects > 0 ? totalSubjects : subjectMarks.length;
+    const avg = calcAvg !== undefined ? calcAvg : Math.round((totalScore / denominator) * 10) / 10;
     const avgR = getRubric(avg);
 
     // Overall summary row
@@ -531,16 +620,16 @@ async function generateReportCard(params: {
 
     const chartH = 32;
     const chartW = W - M * 2;
-    doc.setDrawColor(200, 210, 230); doc.setLineWidth(0.2);
+    doc.setDrawColor(150, 174, 211); doc.setLineWidth(0.2);
     doc.setFillColor(248, 250, 252);
     doc.rect(M, chartY + 5, chartW, chartH, 'FD');
 
     // Gridlines & Y-axis labels
-    doc.setFontSize(5); doc.setFont('helvetica', 'normal'); doc.setTextColor(100, 116, 139);
+    doc.setFontSize(5); doc.setFont('helvetica', 'normal'); doc.setTextColor(140, 150, 165);
     [0, 25, 50, 75, 100].forEach(v => {
       const y = chartY + 5 + chartH - (v / 100 * chartH);
       doc.text(String(v), M - 1, y + 1, { align: 'right' });
-      doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.1);
+      doc.setDrawColor(220, 225, 235); doc.setLineWidth(0.1);
       doc.line(M, y, M + chartW, y);
     });
 
@@ -556,17 +645,18 @@ async function generateReportCard(params: {
             y: chartY + 5 + chartH - (Math.min(prev?.score ?? 0, 100) / 100 * chartH),
           };
         });
-        doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.5);
+        doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.5);
         for (let i = 0; i < prevPts.length - 1; i++)
           doc.line(prevPts[i].x, prevPts[i].y, prevPts[i + 1].x, prevPts[i + 1].y);
-        prevPts.forEach(p => { doc.setFillColor(150, 174, 211); doc.circle(p.x, p.y, 1, 'F'); });
+        prevPts.forEach(p => { doc.setFillColor(180, 180, 180); doc.circle(p.x, p.y, 1, 'F'); });
       }
 
       // Current exam line
       const pts = subjectMarks.map((m, i) => ({
         x: M + spacing * (i + 1),
-        y: chartY + 5 + chartH - (Math.min(m.score, 100) / 100 * chartH),
-        score: m.score,
+        y: chartY + 5 + chartH - (Math.min(m.score ?? 0, 100) / 100 * chartH),
+        score: m.score ?? 0,
+        hasScore: m.score !== null && m.score !== undefined,
         name: m.subject_name.length > 8 ? m.subject_name.substring(0, 8) : m.subject_name,
       }));
 
@@ -578,8 +668,8 @@ async function generateReportCard(params: {
         [pts[pts.length - 1].x, chartY + 5 + chartH],
       ];
       // Draw filled polygon approximation
-      doc.setFillColor(248, 250, 252);
-      doc.setDrawColor(248, 250, 252);
+      doc.setFillColor(214, 224, 240);
+      doc.setDrawColor(214, 224, 240);
 
       doc.setDrawColor(18, 52, 101); doc.setLineWidth(0.8);
       for (let i = 0; i < pts.length - 1; i++)
@@ -589,9 +679,9 @@ async function generateReportCard(params: {
         const r = getRubric(p.score);
         doc.setFillColor(...hexToRgb(r.color) as [number, number, number]);
         doc.circle(p.x, p.y, 1.5, 'F');
-        doc.setTextColor(15, 23, 42); doc.setFontSize(5.5); doc.setFont('helvetica', 'bold');
+        doc.setTextColor(0, 0, 0); doc.setFontSize(5.5); doc.setFont('helvetica', 'bold');
         doc.text(String(p.score), p.x, p.y - 2.5, { align: 'center' });
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(4.8); doc.setTextColor(71, 85, 105);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(4.8); doc.setTextColor(80, 90, 110);
         doc.text(p.name, p.x, chartY + 5 + chartH + 4.5, { align: 'center' });
       });
     }
@@ -599,9 +689,9 @@ async function generateReportCard(params: {
     // Chart legend
     const legendY = chartY + chartH + 11;
     if (prevSubjectMarks && prevSubjectMarks.length > 0) {
-      doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.5);
+      doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.5);
       doc.line(M + 3, legendY, M + 10, legendY);
-      doc.setTextColor(100, 116, 139); doc.setFontSize(6);
+      doc.setTextColor(120, 120, 120); doc.setFontSize(6);
       doc.text('Previous Exam', M + 12, legendY + 1);
       doc.setDrawColor(18, 52, 101); doc.setLineWidth(0.8);
       doc.line(M + 40, legendY, M + 47, legendY);
@@ -612,7 +702,7 @@ async function generateReportCard(params: {
 
     /* ── Attendance Bar ── */
     const attY = legendY + 5;
-    doc.setFillColor(248, 250, 252);
+    doc.setFillColor(237, 242, 250);
     doc.rect(M, attY, W - M * 2, 8, 'F');
     doc.setDrawColor(18, 52, 101); doc.setLineWidth(0.2);
     doc.rect(M, attY, W - M * 2, 8, 'S');
@@ -628,39 +718,39 @@ async function generateReportCard(params: {
     const halfW = (W - M * 2 - 4) / 2;
 
     // Class teacher box
-    doc.setFillColor(248, 250, 252);
-    doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.3);
+    doc.setFillColor(248, 252, 255);
+    doc.setDrawColor(150, 174, 211); doc.setLineWidth(0.3);
     doc.rect(M, remY, halfW, 32, 'FD');
     doc.setFillColor(30, 58, 95);
     doc.rect(M, remY, halfW, 6, 'F');
-    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+    doc.setTextColor(253, 224, 71); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
     doc.text("CLASS TEACHER'S REMARKS", M + 3, remY + 4.5);
-    doc.setTextColor(71, 85, 105); doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5);
+    doc.setTextColor(40, 50, 70); doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5);
     doc.text(remarks.teacher, M + 3, remY + 11, { maxWidth: halfW - 5 });
-    doc.setTextColor(15, 23, 42); doc.setFont('helvetica', 'normal'); doc.setFontSize(7);
+    doc.setTextColor(0, 0, 0); doc.setFont('helvetica', 'normal'); doc.setFontSize(7);
     doc.text('Name: ___________________________', M + 3, remY + 25);
     doc.text('Sign: ________________  Date: _______', M + 3, remY + 30);
 
     // Principal box
-    doc.setFillColor(248, 250, 252);
+    doc.setFillColor(248, 252, 255);
     doc.rect(M + halfW + 4, remY, halfW, 32, 'FD');
     doc.setFillColor(30, 58, 95);
     doc.rect(M + halfW + 4, remY, halfW, 6, 'F');
-    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+    doc.setTextColor(253, 224, 71); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
     doc.text("PRINCIPAL'S REMARKS", M + halfW + 7, remY + 4.5);
-    doc.setTextColor(71, 85, 105); doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5);
+    doc.setTextColor(40, 50, 70); doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5);
     doc.text(remarks.principal, M + halfW + 7, remY + 11, { maxWidth: halfW - 5 });
-    doc.setTextColor(15, 23, 42); doc.setFont('helvetica', 'normal'); doc.setFontSize(7);
+    doc.setTextColor(0, 0, 0); doc.setFont('helvetica', 'normal'); doc.setFontSize(7);
     doc.text('Name: ___________________________', M + halfW + 7, remY + 25);
     doc.text('Sign: ________________  Date: _______', M + halfW + 7, remY + 30);
 
     /* ── Term Dates / Fee Grid ── */
     const feeY = remY + 35;
-    doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.2);
+    doc.setDrawColor(150, 174, 211); doc.setLineWidth(0.2);
     doc.rect(M, feeY, W - M * 2, 14, 'S');
     doc.line(W / 2, feeY, W / 2, feeY + 14);
     doc.line(M, feeY + 7, W - M, feeY + 7);
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(15, 23, 42);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(0, 0, 0);
     doc.text('Term Closed:', M + 3, feeY + 5);
     doc.setFont('helvetica', 'normal');
     doc.text(new Date().toLocaleDateString('en-KE', { day: '2-digit', month: 'short', year: 'numeric' }), M + 28, feeY + 5);
@@ -742,7 +832,8 @@ export default function InsightsCenter() {
   const [marks,      setMarks]      = useState<Mark[]>([]);
   const [prevMarks,  setPrevMarks]  = useState<Mark[]>([]);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
-  const [loading,    setLoading]    = useState(false);
+  const [loading,      setLoading]      = useState(false);
+  const [schoolLoading, setSchoolLoading] = useState(true);
   const [logo, setLogo] = useState<{ data: string; fmt: 'PNG' | 'JPEG' } | null>(null);
 
   const yearOptions = useMemo(() => {
@@ -752,26 +843,77 @@ export default function InsightsCenter() {
 
   // ── Fetchers ──
   useEffect(() => {
-    if (!sid) return;
+    // users.school_id is integer 23; sid from useAuth may arrive as string "23"
+    // We normalise to both forms upfront so every query is guaranteed to match.
+    if (!sid && !user?.id) return;
+    const COLS = 'id,name,logo_url,motto,address,phone,email,website';
+    const numSid = Number(sid);
+    const strSid = String(sid ?? '');
+
     const fetchSchool = async () => {
-      let { data } = await supabase
-        .from('schools')
-        .select('id,name,logo_url,motto,address,phone,email,website')
-        .eq('id', sid).maybeSingle();
-      if (!data) {
-        const { data: d2 } = await supabase
-          .from('schools')
-          .select('id,name,logo_url,motto,address,phone,email,website')
-          .eq('id', Number(sid)).maybeSingle();
-        data = d2;
+      setSchoolLoading(true);
+      let found: School | null = null;
+
+      // ── Fast path: integer id query (covers users.school_id = 23) ──
+      if (!isNaN(numSid) && numSid > 0) {
+        const { data } = await supabase
+          .from('schools').select(COLS).eq('id', numSid).maybeSingle();
+        if (data?.name) found = data;
       }
-      if (data) setSchool(data);
+
+      // ── Fast path 2: string / UUID id query ──
+      if (!found && strSid) {
+        const { data } = await supabase
+          .from('schools').select(COLS).eq('id', strSid).maybeSingle();
+        if (data?.name) found = data;
+      }
+
+      // ── Fallback: re-read school_id from users table (handles stale auth context) ──
+      if (!found && user?.id) {
+        const { data: userRow } = await supabase
+          .from('users').select('school_id').eq('id', user.id).maybeSingle();
+        const freshSid = userRow?.school_id;
+        if (freshSid) {
+          // Try numeric first, then as-is
+          const freshNum = Number(freshSid);
+          if (!isNaN(freshNum) && freshNum > 0) {
+            const { data } = await supabase
+              .from('schools').select(COLS).eq('id', freshNum).maybeSingle();
+            if (data?.name) found = data;
+          }
+          if (!found) {
+            const { data } = await supabase
+              .from('schools').select(COLS).eq('id', freshSid).maybeSingle();
+            if (data?.name) found = data;
+          }
+        }
+      }
+
+      // ── Last resort: single-school tenant shortcut ──
+      if (!found) {
+        const { data: all } = await supabase.from('schools').select(COLS).limit(5);
+        if (all?.length === 1 && all[0].name) {
+          found = all[0];   // only one school in DB — must be theirs
+        } else if (all?.length) {
+          const match = all.find(
+            s => Number(s.id) === numSid || String(s.id) === strSid
+          );
+          if (match?.name) found = match;
+        }
+      }
+
+      if (found) setSchool(found);
+      setSchoolLoading(false);
     };
+
     fetchSchool();
-  }, [sid]);
+  }, [sid, user?.id]);
 
   useEffect(() => {
-    if (school?.logo_url) fetchLogo(school.logo_url).then(l => setLogo(l));
+    // logo_url empty string should be treated as no logo
+    if (school?.logo_url && school.logo_url.trim()) {
+      fetchLogo(school.logo_url.trim()).then(l => setLogo(l));
+    }
   }, [school?.logo_url]);
 
   useEffect(() => {
@@ -834,33 +976,36 @@ export default function InsightsCenter() {
     [exams, gradeId]);
 
   const rankings = useMemo(() => {
-    const map: Record<string, { total: number; count: number }> = {};
-    marks.forEach(m => {
-      if (m.score === null || m.score === undefined) return;
-      if (!map[m.student_id]) map[m.student_id] = { total: 0, count: 0 };
-      map[m.student_id].total += m.score;
-      map[m.student_id].count++;
-    });
+    const allSubjectIds = subjects.map(s => s.id);
     return students
       .map(s => {
-        const d = map[s.id];
-        const avg = d ? d.total / d.count : 0;
-        return { ...s, avg: Math.round(avg * 10) / 10, total: d?.total || 0, subjects: d?.count || 0 };
+        const { total, mean, entered } = calcMean(s.id, marks, allSubjectIds);
+        // Only include students with at least 1 mark entered
+        if (entered === 0) return null;
+        return { ...s, avg: mean, total: marks.filter(m => m.student_id === s.id && m.score !== null).reduce((a, m) => a + (m.score ?? 0), 0), subjects: entered };
       })
-      .filter(s => s.subjects > 0)
+      .filter((s): s is NonNullable<typeof s> => s !== null)
       .sort((a, b) => b.avg - a.avg)
       .map((s, i) => ({ ...s, rank: i + 1 }));
-  }, [marks, students]);
+  }, [marks, students, subjects]);
 
   const classStats = useMemo(() => {
-    const scores = marks.map(m => m.score);
-    if (!scores.length) return null;
-    const avg  = scores.reduce((a, b) => a + b, 0) / scores.length;
-    const pass = scores.filter(s => s >= 41).length / scores.length * 100;
-    const highest = Math.max(...scores);
-    const lowest  = Math.min(...scores);
+    if (!subjects.length || !students.length) return null;
+    const allSubjectIds = subjects.map(s => s.id);
+    // Class mean = sum of ALL student means (each divided by total subjects)
+    const studentMeans = students
+      .map(s => calcMean(s.id, marks, allSubjectIds))
+      .filter(r => r.entered > 0);
+    if (!studentMeans.length) return null;
+    const avg  = studentMeans.reduce((a, b) => a + b.mean, 0) / studentMeans.length;
+    // Pass rate: students whose mean >= 41
+    const pass = studentMeans.filter(r => r.mean >= 41).length / studentMeans.length * 100;
+    // Highest/lowest individual subject scores (entered only)
+    const enteredScores = marks.filter(m => m.score !== null && m.score !== undefined).map(m => m.score as number);
+    const highest = enteredScores.length ? Math.max(...enteredScores) : 0;
+    const lowest  = enteredScores.length ? Math.min(...enteredScores) : 0;
     return { avg, pass, highest, lowest, count: students.length, r: getRubric(avg) };
-  }, [marks, students]);
+  }, [marks, students, subjects]);
 
   const filteredStudents = useMemo(() => {
     if (!search) return students;
@@ -877,14 +1022,15 @@ export default function InsightsCenter() {
   const getStudentMarks = useCallback((studentId: string) =>
     subjects.map(subj => {
       const m = marks.find(mk => mk.student_id === studentId && mk.subject_id === subj.id);
-      if (!m || m.score === null || m.score === undefined) return null;
       return {
         subject_name: subj.subject_name,
         subject_code: subj.subject_code,
-        score: m.score,
-        teacher_remark: m.teacher_remark,
+        // score: actual if entered, null if missing (display shows '—', calc uses 0)
+        score: (m && m.score !== null && m.score !== undefined) ? m.score : null,
+        teacher_remark: m?.teacher_remark,
+        entered: m !== undefined && m.score !== null && m.score !== undefined,
       };
-    }).filter(Boolean) as { subject_name: string; subject_code: string; score: number; teacher_remark?: string }[]
+    }) as { subject_name: string; subject_code: string; score: number | null; teacher_remark?: string; entered: boolean }[]
   , [marks, subjects]);
 
   const getPrevStudentMarks = useCallback((studentId: string) =>
@@ -908,17 +1054,38 @@ export default function InsightsCenter() {
   // ── Export handlers ──
   const handleGenReportCard = useCallback(async (student: Student) => {
     const rank = rankings.find(r => r.id === student.id);
-    await generateReportCard({
-      school, logo,
-      student: { ...student, rank: rank?.rank, totalStudents: rankings.length },
-      grade: grades.find(g => String(g.id) === String(student.grade_id)),
-      exam:  exams.find(e => String(e.id) === String(examId)),
-      year, term,
-      subjectMarks: getStudentMarks(student.id),
-      att: getStudentAtt(student.id),
-      prevSubjectMarks: prevExamId ? getPrevStudentMarks(student.id) : undefined,
-    });
-  }, [school, logo, grades, exams, examId, year, term, rankings, getStudentMarks, getStudentAtt, getPrevStudentMarks, prevExamId]);
+    const allSubjectIds = subjects.map(s => s.id);
+    const { mean } = calcMean(student.id, marks, allSubjectIds);
+    const allSubjectMarks = getStudentMarks(student.id);
+    try {
+      const numSid = Number(sid);
+      let liveSchool = school;
+      if (!liveSchool?.name) {
+        const { data } = await supabase.from('schools')
+          .select('id,name,logo_url,motto,address,phone,email')
+          .eq('id', !isNaN(numSid) && numSid > 0 ? numSid : sid)
+          .maybeSingle();
+        if (data?.name) liveSchool = data;
+      }
+      const liveLogo = liveSchool?.logo_url?.trim()
+        ? await fetchLogo(liveSchool.logo_url.trim()) : logo;
+      await generateReportCard({
+        school: liveSchool, logo: liveLogo,
+        student: { ...student, rank: rank?.rank, totalStudents: rankings.length },
+        grade: grades.find(g => String(g.id) === String(student.grade_id)),
+        exam:  exams.find(e => String(e.id) === String(examId)),
+        year, term,
+        subjectMarks: allSubjectMarks,
+        calcAvg: mean,
+        totalSubjects: allSubjectIds.length,
+        att: getStudentAtt(student.id),
+        prevSubjectMarks: prevExamId ? getPrevStudentMarks(student.id) : undefined,
+      });
+    } catch (err) {
+      console.error('Report card error:', err);
+      alert('Failed to generate report card. Please try again.');
+    }
+  }, [school, logo, sid, grades, exams, examId, year, term, rankings, subjects, marks, getStudentMarks, getStudentAtt, getPrevStudentMarks, prevExamId]);
 
   const handleGenRankingsPDF = useCallback(async () => {
     if (!gradeId) { alert('Please select a grade first.'); return; }
@@ -933,8 +1100,7 @@ export default function InsightsCenter() {
         if (data?.name) liveSchool = data;
       }
       const liveLogo = liveSchool?.logo_url?.trim()
-        ? await fetchLogo(liveSchool.logo_url.trim())
-        : logo;
+        ? await fetchLogo(liveSchool.logo_url.trim()) : logo;
       await generateRankingsPDF({
         school: liveSchool, logo: liveLogo,
         gradeName: grades.find(g => String(g.id) === String(gradeId))?.grade_name || 'Class',
@@ -967,8 +1133,9 @@ export default function InsightsCenter() {
         const m = marks.find(mk => mk.student_id === s.id && mk.subject_id === subj.id);
         row[subj.subject_name] = m ? m.score : '';
       });
-      row['Total'] = s.total;
-      row['Average (%)'] = s.avg;
+      const { mean: excelMean, sum: excelSum } = calcMean(s.id, marks, subjects.map(sub => sub.id));
+      row['Total (Entered)'] = excelSum;
+      row['Average (%)'] = excelMean;
       row['Grade (PL)'] = getRubric(s.avg).code;
       row['Performance Level'] = getRubric(s.avg).label;
       row['Rubric Points'] = getRubric(s.avg).pts;
@@ -1035,11 +1202,13 @@ export default function InsightsCenter() {
           <div className="flex items-start justify-between flex-wrap gap-4 mb-3">
             <div>
               <div className="flex items-center gap-2 mb-0.5">
-                <span className="w-1.5 h-5 rounded-full" style={{ background: 'linear-gradient(#123465,#1e3a5f)' }} />
+                <span className="w-1.5 h-5 rounded-full" style={{ background: 'linear-gradient(#1e3a5f,#123465)' }} />
                 <span className="text-[10px] font-bold tracking-[0.18em] uppercase text-[#1e3a5f] dark:text-[#96aed3]">Insights Center</span>
               </div>
               <h1 className="text-xl font-black text-slate-900 dark:text-white">Academic Reports & Rankings</h1>
-              <p className="text-xs text-slate-500 mt-0.5">{school?.name || '—'} · CBC 8-Level Grading System</p>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {school?.name || <span className="animate-pulse text-slate-300">Loading…</span>} · CBC 8-Level Grading
+              </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -1068,7 +1237,7 @@ export default function InsightsCenter() {
             ] as const).map(t => (
               <button key={t.key} onClick={() => setTab(t.key)}
                 className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${tab === t.key ? 'text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
-                style={tab === t.key ? { background: '#123465' } : {}}>
+                style={tab === t.key ? { background: '#1e3a5f' } : {}}>
                 {t.label}
               </button>
             ))}
@@ -1101,10 +1270,10 @@ export default function InsightsCenter() {
                   <>
                     {/* KPIs */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                      <KpiCard label="Students" value={String(classStats?.count ?? 0)} sub={grades.find(g => g.id === gradeId)?.grade_name} accent="#123465" />
-                      <KpiCard label="Class Mean" value={classStats ? `${classStats.avg.toFixed(1)}%` : '—'} sub={classStats?.r.label} accent={classStats?.r.color ?? '#64748b'} />
+                      <KpiCard label="Students" value={String(classStats?.count ?? 0)} sub={grades.find(g => g.id === gradeId)?.grade_name} accent="#1e3a5f" />
+                      <KpiCard label="Class Mean" value={classStats ? `${classStats.avg.toFixed(1)}%` : '—'} sub={classStats?.r.label} accent={classStats?.r.color ?? '#94a3b8'} />
                       <KpiCard label="Pass Rate" value={classStats ? `${classStats.pass.toFixed(1)}%` : '—'} sub="Score ≥ 41" accent="#42b129" />
-                      <KpiCard label="Class PL" value={classStats?.r.code ?? '—'} sub={classStats ? `${classStats.r.pts} rubric points` : undefined} accent={classStats?.r.color ?? '#64748b'} />
+                      <KpiCard label="Class PL" value={classStats?.r.code ?? '—'} sub={classStats ? `${classStats.r.pts} rubric points` : undefined} accent={classStats?.r.color ?? '#94a3b8'} />
                     </div>
 
                     {/* Exam Summary Cards */}
@@ -1118,13 +1287,11 @@ export default function InsightsCenter() {
                         </div>
                         {examId && gradeId && (
                           <div className="flex gap-2">
-                            <button onClick={exportRankingsExcel}
-                              className="px-3 py-2 rounded-xl text-xs font-semibold border border-[#42b129] text-[#42b129] dark:text-[#42b129] bg-[#f8fafc] dark:bg-[#1e3a5f]/20 hover:bg-[#f8fafc] dark:hover:bg-[#1e3a5f]/40 transition-colors">
+                            <button onClick={exportRankingsExcel} className="px-3 py-2 rounded-xl text-xs font-semibold border border-[#42b129]/40 text-[#42b129] dark:text-[#42b129] bg-[#f0faf0] dark:bg-[#42b129]/10 hover:bg-[#e6f9e2] dark:hover:bg-green-900/40 transition-colors">
                               ⬇ Excel
                             </button>
-                            <button onClick={handleGenRankingsPDF}
-                              className="px-3 py-2 rounded-xl text-white text-xs font-semibold transition-colors"
-                              style={{ background: '#123465' }}>
+                            <button onClick={handleGenRankingsPDF} className="px-3 py-2 rounded-xl text-white text-xs font-semibold transition-colors"
+                              style={{ background: '#1e3a5f' }}>
                               ⬇ PDF Report
                             </button>
                           </div>
@@ -1140,7 +1307,7 @@ export default function InsightsCenter() {
                             <thead>
                               <tr style={{ background: '#1e3a5f' }}>
                                 {['#', 'Learning Area', 'Code', 'N', 'Mean', 'PL', 'Pts', 'Pass%', 'Highest', 'Lowest', 'Bar'].map(h => (
-                                  <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold uppercase text-white whitespace-nowrap">{h}</th>
+                                  <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold uppercase text-yellow-400 whitespace-nowrap">{h}</th>
                                 ))}
                               </tr>
                             </thead>
@@ -1162,7 +1329,7 @@ export default function InsightsCenter() {
                                     <td className="px-3 py-2.5 font-bold text-center" style={{ color: r.color }}>{r.pts}</td>
                                     <td className="px-3 py-2.5 text-xs font-semibold" style={{ color: pass >= 50 ? '#42b129' : '#dc2626' }}>{pass.toFixed(0)}%</td>
                                     <td className="px-3 py-2.5 text-xs text-center font-bold text-[#42b129]">{Math.max(...sm.map(m => m.score))}</td>
-                                    <td className="px-3 py-2.5 text-xs text-center font-bold text-[#dc2626]">{Math.min(...sm.map(m => m.score))}</td>
+                                    <td className="px-3 py-2.5 text-xs text-center font-bold text-red-600">{Math.min(...sm.map(m => m.score))}</td>
                                     <td className="px-3 py-2.5 w-24">
                                       <div className="h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
                                         <div className="h-full rounded-full transition-all" style={{ width: `${avg}%`, background: r.color }} />
@@ -1225,12 +1392,12 @@ export default function InsightsCenter() {
                         <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs">🔍</span>
                       </div>
                       <button onClick={exportRankingsExcel} disabled={!gradeId}
-                        className="px-3 py-2 rounded-xl text-xs font-semibold border border-[#42b129] text-[#42b129] dark:text-[#42b129] bg-[#f8fafc] dark:bg-[#1e3a5f]/20 hover:bg-[#f8fafc] disabled:opacity-40 transition-colors">
+                        className="px-3 py-2 rounded-xl text-xs font-semibold border border-[#42b129]/40 text-[#42b129] dark:text-[#42b129] bg-[#f0faf0] dark:bg-[#42b129]/10 hover:bg-[#e6f9e2] disabled:opacity-40 transition-colors">
                         ⬇ Excel
                       </button>
                       <button onClick={handleGenRankingsPDF} disabled={!gradeId}
                         className="px-4 py-2 rounded-xl text-white text-xs font-bold disabled:opacity-40 transition-colors"
-                        style={{ background: '#123465' }}>
+                        style={{ background: '#1e3a5f' }}>
                         ⬇ PDF (3 Pages)
                       </button>
                     </div>
@@ -1247,19 +1414,19 @@ export default function InsightsCenter() {
                       <table className="w-full text-sm">
                         <thead>
                           <tr style={{ background: '#1e3a5f' }}>
-                            <th className="px-3 py-2.5 text-left text-[10px] font-bold uppercase text-white w-12">Rank</th>
-                            <th className="px-3 py-2.5 text-left text-[10px] font-bold uppercase text-white">Student</th>
-                            <th className="px-3 py-2.5 text-left text-[10px] font-bold uppercase text-white">Adm No</th>
-                            <th className="px-3 py-2.5 text-left text-[10px] font-bold uppercase text-white">Gender</th>
+                            <th className="px-3 py-2.5 text-left text-[10px] font-bold uppercase text-yellow-400 w-12">Rank</th>
+                            <th className="px-3 py-2.5 text-left text-[10px] font-bold uppercase text-yellow-400">Student</th>
+                            <th className="px-3 py-2.5 text-left text-[10px] font-bold uppercase text-yellow-400">Adm No</th>
+                            <th className="px-3 py-2.5 text-left text-[10px] font-bold uppercase text-yellow-400">Gender</th>
                             {subjects.filter(s => marks.some(m => m.subject_id === s.id)).map(s => (
-                              <th key={s.id} className="px-2 py-2.5 text-center text-[10px] font-bold uppercase text-white whitespace-nowrap">
+                              <th key={s.id} className="px-2 py-2.5 text-center text-[10px] font-bold uppercase text-yellow-400 whitespace-nowrap">
                                 {s.subject_code || s.subject_name.substring(0, 5)}
                               </th>
                             ))}
-                            <th className="px-3 py-2.5 text-center text-[10px] font-bold uppercase text-white">Total</th>
-                            <th className="px-3 py-2.5 text-center text-[10px] font-bold uppercase text-white">Avg%</th>
-                            <th className="px-3 py-2.5 text-center text-[10px] font-bold uppercase text-white">PL</th>
-                            <th className="px-3 py-2.5 text-center text-[10px] font-bold uppercase text-white">Pts</th>
+                            <th className="px-3 py-2.5 text-center text-[10px] font-bold uppercase text-yellow-400">Total</th>
+                            <th className="px-3 py-2.5 text-center text-[10px] font-bold uppercase text-yellow-400">Avg%</th>
+                            <th className="px-3 py-2.5 text-center text-[10px] font-bold uppercase text-yellow-400">PL</th>
+                            <th className="px-3 py-2.5 text-center text-[10px] font-bold uppercase text-yellow-400">Pts</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1269,7 +1436,7 @@ export default function InsightsCenter() {
                             return (
                               <tr key={s.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
                                 <td className="px-3 py-2.5 font-black text-sm" style={{
-                                  color: s.rank === 1 ? '#f59e0b' : s.rank === 2 ? '#64748b' : s.rank === 3 ? '#92400e' : '#64748b'
+                                  color: s.rank === 1 ? '#b45309' : s.rank === 2 ? '#64748b' : s.rank === 3 ? '#92400e' : '#94a3b8'
                                 }}>
                                   {s.rank === 1 ? '🥇' : s.rank === 2 ? '🥈' : s.rank === 3 ? '🥉' : `#${s.rank}`}
                                 </td>
@@ -1281,7 +1448,7 @@ export default function InsightsCenter() {
                                   const sr = m ? getRubric(m.score) : null;
                                   return (
                                     <td key={subj.id} className="px-2 py-2.5 text-center text-xs font-bold"
-                                      style={{ color: sr?.color ?? '#64748b' }}>
+                                      style={{ color: sr?.color ?? '#94a3b8' }}>
                                       {m ? m.score : '—'}
                                     </td>
                                   );
@@ -1299,7 +1466,7 @@ export default function InsightsCenter() {
                         {classStats && (
                           <tfoot>
                             <tr style={{ background: '#1e3a5f' }}>
-                              <td colSpan={4} className="px-3 py-2.5 text-[10px] font-bold text-white uppercase">Class Summary</td>
+                              <td colSpan={4} className="px-3 py-2.5 text-[10px] font-bold text-yellow-400 uppercase">Class Summary</td>
                               {subjects.filter(s => marks.some(m => m.subject_id === s.id)).map(subj => {
                                 const sm = marks.filter(m => m.subject_id === subj.id);
                                 const a  = sm.length ? sm.reduce((a, b) => a + b.score, 0) / sm.length : 0;
@@ -1308,9 +1475,9 @@ export default function InsightsCenter() {
                                 );
                               })}
                               <td className="px-3 py-2.5 text-center text-[10px] font-bold text-white">—</td>
-                              <td className="px-3 py-2.5 text-center text-[10px] font-bold text-white">{classStats.avg.toFixed(1)}%</td>
+                              <td className="px-3 py-2.5 text-center text-[10px] font-bold text-yellow-400">{classStats.avg.toFixed(1)}%</td>
                               <td className="px-3 py-2.5 text-center">
-                                <span className="text-[10px] font-bold text-white">{classStats.r.code}</span>
+                                <span className="text-[10px] font-bold text-yellow-400">{classStats.r.code}</span>
                               </td>
                               <td className="px-3 py-2.5 text-center text-[10px] font-bold text-white">{classStats.r.pts}</td>
                             </tr>
@@ -1340,7 +1507,7 @@ export default function InsightsCenter() {
                       </div>
                       <button onClick={handleBulkPDF} disabled={bulkLoading || !filteredStudents.length}
                         className="px-4 py-2 rounded-xl text-white text-xs font-semibold disabled:opacity-50 transition-colors"
-                        style={{ background: '#123465' }}>
+                        style={{ background: '#1e3a5f' }}>
                         {bulkLoading ? `Generating… ${bulkProgress}%` : `⬇ Bulk PDF (${Math.min(filteredStudents.length, 100)})`}
                       </button>
                     </div>
@@ -1349,7 +1516,7 @@ export default function InsightsCenter() {
                   {bulkLoading && (
                     <div className="mb-4 h-1.5 rounded-full overflow-hidden bg-slate-100 dark:bg-slate-800">
                       <div className="h-full rounded-full transition-all duration-300"
-                        style={{ width: `${bulkProgress}%`, background: 'linear-gradient(90deg,#123465,#1e3a5f)' }} />
+                        style={{ width: `${bulkProgress}%`, background: 'linear-gradient(90deg,#1e3a5f,#123465)' }} />
                     </div>
                   )}
 
@@ -1367,11 +1534,11 @@ export default function InsightsCenter() {
                         const isSelected = selectedStudent?.id === s.id;
                         return (
                           <div key={s.id} onClick={() => setSelectedStudent(isSelected ? null : s)}
-                            className={`p-4 rounded-xl border cursor-pointer transition-all ${isSelected ? 'border-[#123465] bg-[#f8fafc] dark:bg-[#1e3a5f]/20 shadow-sm' : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 hover:border-[#96aed3] hover:shadow-sm'}`}>
+                            className={`p-4 rounded-xl border cursor-pointer transition-all ${isSelected ? 'border-[#1e3a5f] bg-[#f0f4fb] dark:bg-[#1e3a5f]/20 shadow-sm' : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 hover:border-[#96aed3] hover:shadow-sm'}`}>
                             <div className="flex items-start justify-between gap-2">
                               <div className="flex items-center gap-2.5 min-w-0">
                                 <div className="w-9 h-9 rounded-lg flex items-center justify-center text-sm font-bold text-white flex-shrink-0"
-                                  style={{ background: r ? r.color : '#64748b' }}>{s.name[0]}</div>
+                                  style={{ background: r ? r.color : '#94a3b8' }}>{s.name[0]}</div>
                                 <div className="min-w-0">
                                   <div className="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">{s.name}</div>
                                   <div className="text-[10px] text-slate-500">{s.admission_number} · {s.gender}</div>
@@ -1416,7 +1583,7 @@ export default function InsightsCenter() {
                         </div>
                         <button onClick={() => handleGenReportCard(selectedStudent)}
                           className="px-4 py-2 rounded-xl text-white text-xs font-bold shadow-sm transition-colors"
-                          style={{ background: '#123465' }}>
+                          style={{ background: '#1e3a5f' }}>
                           ⬇ Download PDF Report Card
                         </button>
                       </div>
@@ -1435,7 +1602,7 @@ export default function InsightsCenter() {
                                 <thead>
                                   <tr style={{ background: '#1e3a5f' }}>
                                     {['Learning Area', 'Marks (/100)', 'Grade', 'Rubric Pts', 'Performance Level', "Teacher's Remark"].map(h => (
-                                      <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold uppercase text-white whitespace-nowrap">{h}</th>
+                                      <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold uppercase text-yellow-400 whitespace-nowrap">{h}</th>
                                     ))}
                                   </tr>
                                 </thead>
@@ -1458,7 +1625,7 @@ export default function InsightsCenter() {
                                 </tbody>
                                 <tfoot>
                                   <tr style={{ background: '#1e3a5f' }}>
-                                    <td className="px-3 py-2.5 text-xs font-bold text-white">OVERALL</td>
+                                    <td className="px-3 py-2.5 text-xs font-bold text-yellow-400">OVERALL</td>
                                     <td className="px-3 py-2.5 font-black text-white text-lg">{avg.toFixed(1)}%</td>
                                     <td className="px-3 py-2.5"><RubricBadge score={avg} /></td>
                                     <td className="px-3 py-2.5 font-bold text-white text-center">{getRubric(avg).pts}</td>
@@ -1492,8 +1659,8 @@ export default function InsightsCenter() {
 
                             {/* Bottom row: Attendance + Remarks */}
                             <div className="grid md:grid-cols-3 gap-3">
-                              <div className="rounded-xl p-3 border border-[#e2e8f0] bg-[#f8fafc] dark:bg-[#1e3a5f]/20 dark:border-[#1e3a5f]">
-                                <div className="text-[10px] font-bold uppercase text-[#1e3a5f] dark:text-[#96aed3] mb-2">Attendance</div>
+                              <div className="rounded-xl p-3 border border-blue-200 bg-[#f0f4fb] dark:bg-[#1e3a5f]/20 dark:border-blue-800">
+                                <div className="text-[10px] font-bold uppercase text-[#1e3a5f] dark:text-blue-300 mb-2">Attendance</div>
                                 <div className="grid grid-cols-2 gap-y-1 text-xs">
                                   {[['Sessions', att.total], ['Present', att.present], ['Absent', att.absent], ['Rate', `${att.rate}%`]].map(([k, v]) => (
                                     <div key={String(k)} className="flex justify-between gap-2">
@@ -1505,12 +1672,12 @@ export default function InsightsCenter() {
                               </div>
 
                               <div className="rounded-xl p-3 border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60">
-                                <div className="text-[10px] font-bold uppercase text-[#1e3a5f] dark:text-[#96aed3] mb-1.5">Class Teacher's Remarks</div>
+                                <div className="text-[10px] font-bold uppercase text-blue-900 dark:text-[#96aed3] mb-1.5">Class Teacher's Remarks</div>
                                 <p className="text-xs italic text-slate-600 dark:text-slate-300 leading-relaxed">{remarks.teacher}</p>
                               </div>
 
                               <div className="rounded-xl p-3 border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60">
-                                <div className="text-[10px] font-bold uppercase text-[#1e3a5f] dark:text-[#96aed3] mb-1.5">Principal's Remarks</div>
+                                <div className="text-[10px] font-bold uppercase text-blue-900 dark:text-[#96aed3] mb-1.5">Principal's Remarks</div>
                                 <p className="text-xs italic text-slate-600 dark:text-slate-300 leading-relaxed">{remarks.principal}</p>
                               </div>
                             </div>

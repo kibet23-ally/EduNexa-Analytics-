@@ -5,6 +5,7 @@ import { Exam } from '../types';
 import { useData, useDataMutation } from '../hooks/useData';
 import { Plus, Calendar, Trash2, Edit2, X, Check, Lock, AlertTriangle } from 'lucide-react';
 import { TableSkeleton } from '../components/ui/Skeleton';
+import { supabase } from '../lib/supabase';
 
 const Exams = () => {
   const { user, sessionReady } = useAuth();
@@ -128,10 +129,15 @@ const Exams = () => {
     if (isReadOnly || !deleteConfirmId) return;
     setDeleting(true);
     try {
-      await examMutation.mutateAsync({
-        operation: 'delete',
-        criteria: { id: deleteConfirmId },
-      });
+      // Direct Supabase call guarantees the WHERE clause is always present
+      const { error } = await supabase
+        .from('exams')
+        .delete()
+        .eq('id', deleteConfirmId)
+        .eq('school_id', user!.school_id);
+      if (error) throw new Error(error.message);
+      // Refresh the list
+      examsQuery.refetch?.();
       setDeleteConfirmId(null);
     } catch (err: unknown) {
       alert((err as Error).message);

@@ -154,12 +154,8 @@ function drawPDFLetterhead(
   // Logo — left
   if (logo) {
     try { doc.addImage(logo.data, logo.fmt, M, 4, 24, 24); } catch { /* noop */ }
-  } else {
-    doc.setFillColor(255, 255, 255);
-    doc.roundedRect(M, 4, 24, 24, 3, 3, 'F');
-    doc.setTextColor(30, 58, 95); doc.setFontSize(13); doc.setFont('helvetica', 'bold');
-    doc.text((school?.name || 'S')[0].toUpperCase(), M + 12, 20, { align: 'center' });
   }
+  // No logo = no placeholder box, school name stays centered
 
   // Photo placeholder (portrait only, report card)
   if (showPhoto) {

@@ -1391,10 +1391,8 @@ export default function InsightsCenter() {
                                       </div>
                                     </td>
                                   </tr>
-                                );
                                 })}
-                            </tbody>
-                            </tbody>
+                              </tbody>
                           </table>
                         </div>
                       )}

@@ -260,28 +260,32 @@ async function generateRankingsPDF(params: {
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(30, 58, 95);
   doc.text('SUBJECT PERFORMANCE ANALYSIS', M, 65);
 
-  const subjRows = subjects.map((subj, i) => {
-    const sm = marks.filter(m => m.subject_id === subj.id && m.score !== null && m.score !== undefined) as (Mark & { score: number })[];
-    if (!sm.length) return null;
-    const avg = sm.reduce((x, b) => x + b.score, 0) / sm.length;
-    const r = getRubric(avg);
-    const pass = sm.filter(m => m.score >= 41).length / sm.length * 100;
-    const highest = Math.max(...sm.map(m => m.score));
-    const lowest  = Math.min(...sm.map(m => m.score));
-    return [
+  const subjRows = subjects
+    .map(subj => {
+      const sm = marks.filter(m => m.subject_id === subj.id && m.score !== null && m.score !== undefined) as (Mark & { score: number })[];
+      if (!sm.length) return null;
+      const avg = sm.reduce((x, b) => x + b.score, 0) / sm.length;
+      const r = getRubric(avg);
+      const pass = sm.filter(m => m.score >= 41).length / sm.length * 100;
+      const highest = Math.max(...sm.map(m => m.score));
+      const lowest  = Math.min(...sm.map(m => m.score));
+      return { subj, sm, avg, r, pass, highest, lowest };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b!.avg - a!.avg)
+    .map((item, i) => [
       i + 1,
-      subj.subject_name,
-      subj.subject_code,
-      sm.length,
-      avg.toFixed(1),
-      r.code,
-      r.pts,
-      r.label,
-      pass.toFixed(0) + '%',
-      highest,
-      lowest,
-    ];
-  }).filter(Boolean);
+      item!.subj.subject_name,
+      item!.subj.subject_code,
+      item!.sm.length,
+      item!.avg.toFixed(1),
+      item!.r.code,
+      item!.r.pts,
+      item!.r.label,
+      item!.pass.toFixed(0) + '%',
+      item!.highest,
+      item!.lowest,
+    ]);
 
   autoTable(doc, {
     startY: 67,
@@ -1356,13 +1360,20 @@ export default function InsightsCenter() {
                               </tr>
                             </thead>
                             <tbody>
-                              {subjects.map((subj, i) => {
-                                const sm = marks.filter(m => m.subject_id === subj.id);
-                                if (!sm.length) return null;
-                                const avg  = sm.reduce((a, b) => a + b.score, 0) / sm.length;
-                                const r    = getRubric(avg);
-                                const pass = sm.filter(m => m.score >= 41).length / sm.length * 100;
-                                return (
+                              {[...subjects]
+                                .map(subj => {
+                                  const sm = marks.filter(m => m.subject_id === subj.id);
+                                  if (!sm.length) return null;
+                                  const avg  = sm.reduce((a, b) => a + b.score, 0) / sm.length;
+                                  const r    = getRubric(avg);
+                                  const pass = sm.filter(m => m.score >= 41).length / sm.length * 100;
+                                  return { subj, sm, avg, r, pass };
+                                })
+                                .filter(Boolean)
+                                .sort((a, b) => b!.avg - a!.avg)
+                                .map((item, i) => {
+                                  const { subj, sm, avg, r, pass } = item!;
+                                  return (
                                   <tr key={subj.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
                                     <td className="px-3 py-2.5 text-slate-400 text-xs">{i + 1}</td>
                                     <td className="px-3 py-2.5 font-medium text-slate-800 dark:text-slate-100">{subj.subject_name}</td>
@@ -1381,7 +1392,8 @@ export default function InsightsCenter() {
                                     </td>
                                   </tr>
                                 );
-                              }).filter(Boolean)}
+                                })}
+                            </tbody>
                             </tbody>
                           </table>
                         </div>

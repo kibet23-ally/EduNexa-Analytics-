@@ -12,6 +12,20 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
-    storageKey: 'edunexa-auth',   // predictable key we can target in purge
+    storageKey: 'edunexa-auth',
+    // Prevent "Lock broken by another request with the 'steal' option" error.
+    // This happens when multiple tabs compete for the same IndexedDB lock.
+    // We use a timeout-based lock that yields gracefully instead of stealing.
+    lock: (name: string, acquireTimeout: number, fn: <T>() => Promise<T>): Promise<T> => {
+      if (typeof navigator !== 'undefined' && navigator.locks) {
+        return navigator.locks.request(
+          name,
+          { timeout: acquireTimeout },
+          fn
+        ) as Promise<T>;
+      }
+      // Fallback: no lock support — just run the function directly
+      return fn();
+    },
   },
 });

@@ -214,7 +214,9 @@ export default function Subscription() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { setPayStatus('failed'); setErrorMsg('Session expired. Please log in again.'); return; }
 
-      const fnUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/payhero-stk-push`;
+      const fnUrl = import.meta.env.VITE_SUPABASE_URL
+        ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/payhero-stk-push`
+        : 'https://zclwokyzsqzitqwmugtt.supabase.co/functions/v1/payhero-stk-push';
       const res = await fetch(fnUrl,
         {
           method: 'POST',

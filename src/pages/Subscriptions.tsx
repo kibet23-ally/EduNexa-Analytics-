@@ -214,9 +214,9 @@ export default function Subscription() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { setPayStatus('failed'); setErrorMsg('Session expired. Please log in again.'); return; }
 
-      const fnUrl = import.meta.env.VITE_SUPABASE_URL
-        ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/payhero-stk-push`
-        : 'https://zclwokyzsqzitqwmugtt.supabase.co/functions/v1/payhero-stk-push';
+      const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://zclwokyzsqzitqwmugtt.supabase.co';
+      const fnUrl = `${SUPABASE_URL}/functions/v1/payhero-stk-push`;
+      console.log('[Subscription] STK Push URL:', fnUrl);
       const res = await fetch(fnUrl,
         {
           method: 'POST',
@@ -236,9 +236,10 @@ export default function Subscription() {
 
       const data = await res.json();
 
+      console.log('[Subscription] Edge function response:', res.status, data);
       if (!res.ok || data.error) {
         setPayStatus('failed');
-        setErrorMsg(data.error || 'Failed to initiate payment. Please try again.');
+        setErrorMsg(data.error || `Payment failed (${res.status}). Please try again.`);
         return;
       }
 
@@ -644,3 +645,4 @@ function PaymentHistory({ schoolId }: { schoolId?: any }) {
     </div>
   );
 }
+      

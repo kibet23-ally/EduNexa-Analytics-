@@ -192,13 +192,22 @@ const AppRoutes = () => {
         }
       />
       <Route
-        path="/subscription"
-        element={
-          <RoleProtectedRoute allowedRoles={['Admin', 'admin', 'school_admin', 'Principal', 'SuperAdmin', 'super_admin']}>
-            <Layout>{wrap(<SchoolSubscription />, 'Subscription')}</Layout>
-          </RoleProtectedRoute>
-        }
-      />
+  path="/subscription"
+  element={
+    <RoleProtectedRoute
+      allowedRoles={[
+        'Admin',
+        'admin',
+        'school_admin',
+        'Principal',
+        'SuperAdmin',
+        'super_admin'
+      ]}
+    >
+      <Layout>{wrap(<Subscriptions />, 'Subscription')}</Layout>
+    </RoleProtectedRoute>
+  }
+/>
 
       {/* Super Admin Routes */}
       <Route

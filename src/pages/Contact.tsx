@@ -15,12 +15,12 @@ const Contact = () => {
         <div className="space-y-6">
           <div>
             <h2 className="font-semibold text-xl mb-2">Email</h2>
-            <p className="text-gray-600">support@yoursaas.com</p>
+            <p className="text-gray-600">edunexasoftwares@gmail.com</p>
           </div>
 
           <div>
             <h2 className="font-semibold text-xl mb-2">Phone</h2>
-            <p className="text-gray-600">+254 700 000 000</p>
+            <p className="text-gray-600">+254 736 907 587</p>
           </div>
 
           <div>

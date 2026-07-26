@@ -7,7 +7,6 @@ import React, {
   useState,
 } from 'react';
 import { Session, User } from '@supabase/supabase-js';
-import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from './lib/supabase';
 
 /* ─── Types ──────────────────────────────────────────────────────────────── */
@@ -91,7 +90,6 @@ async function fetchProfile(userId: string): Promise<AppUser | null> {
    AUTH PROVIDER
 ══════════════════════════════════════════════════════════════════════════ */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const queryClient   = useQueryClient();
   const mountedRef    = useRef(true);
   const profileFetching = useRef(false);
 
@@ -194,8 +192,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               setUser(null);
               setAuthLoading(false);
               setSessionReady(true);
-              // Clear all query cache on explicit logout
-              queryClient.clear();
+              // Clear stale localStorage keys on logout
+purgeStaleAuthKeys();
             }
             break;
 
@@ -222,7 +220,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Force local clear even if API fails
       setSession(null);
       setUser(null);
-      queryClient.clear();
+      purgeStaleAuthKeys();
     }
   }, [queryClient]);
 

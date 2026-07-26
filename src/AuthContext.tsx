@@ -208,7 +208,7 @@ purgeStaleAuthKeys();
       subscription.unsubscribe();
       console.log('[Auth] Unsubscribed');
     };
-  }, [handleSession, loadProfile, queryClient]);
+  }, [handleSession, loadProfile]);
 
   /* ── Sign out ─────────────────────────────────────────────────────────── */
   const signOut = useCallback(async () => {
@@ -222,7 +222,7 @@ purgeStaleAuthKeys();
       setUser(null);
       purgeStaleAuthKeys();
     }
-  }, [queryClient]);
+  }, []);
 
   /* ── Refresh profile ──────────────────────────────────────────────────── */
   const refreshProfile = useCallback(async () => {

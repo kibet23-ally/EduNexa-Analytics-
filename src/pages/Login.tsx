@@ -16,7 +16,7 @@ const Login = () => {
   const [loading, setLoading] = useState(false);  
   const [resendTimer, setResendTimer] = useState(0);  
   
-  const { login } = useAuth();  
+  const { } = useAuth(); // session handled by onAuthStateChange  
   const navigate = useNavigate();  
   
   useEffect(() => {
@@ -250,7 +250,6 @@ const Login = () => {
       role: finalProfile.role as any,  
     };  
   
-    login(session.access_token, fullUser);  
     toast.success(`Welcome back, ${finalProfile.name}!`);  
     redirectBasedOnRole(finalProfile.role);  
   };  

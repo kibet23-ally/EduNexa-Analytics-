@@ -105,15 +105,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     profileFetching.current = true;
     if (mountedRef.current) setProfileLoading(true);
 
-    // Retry up to 3 times to handle transient RLS errors
+    // Try to fetch profile — 2 fast attempts max (300ms gap)
     let profile: AppUser | null = null;
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    profile = await fetchProfile(authUser.id);
+    if (!profile) {
+      await new Promise(r => setTimeout(r, 300));
       profile = await fetchProfile(authUser.id);
-      if (profile) break;
-      if (attempt < 3) {
-        console.log(`[Auth] Profile retry ${attempt}/3`);
-        await new Promise(r => setTimeout(r, 600 * attempt));
-      }
     }
 
     if (mountedRef.current) {
@@ -147,66 +144,71 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     mountedRef.current = true;
     purgeStaleAuthKeys();
 
-    console.log('[Auth] Restoring session…');
+    let resolved = false;
 
-    // getSession() reads from localStorage — synchronous in practice
-    supabase.auth.getSession().then(({ data: { session: s }, error }) => {
-      if (error) {
-        console.error('[Auth] getSession error:', error.message);
+    // Safety timeout — never show spinner for more than 2 seconds
+    const safetyTimer = setTimeout(() => {
+      if (!resolved && mountedRef.current) {
+        resolved = true;
+        setAuthLoading(false);
+        setSessionReady(true);
       }
-      console.log('[Auth] Restored session:', s ? s.user.email : 'none');
+    }, 2000);
+
+    // Fast path: getSession reads from localStorage — usually <50ms
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(safetyTimer);
       handleSession(s, 'INITIAL_SESSION');
+    }).catch(() => {
+      if (!resolved && mountedRef.current) {
+        resolved = true;
+        clearTimeout(safetyTimer);
+        setAuthLoading(false);
+        setSessionReady(true);
+      }
     });
 
-    /* ── Subscribe to all auth state changes ── */
+    // Subscribe to ongoing auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, newSession) => {
-        console.log('[Auth] onAuthStateChange:', event, newSession?.user?.email);
-
         switch (event) {
           case 'INITIAL_SESSION':
-            // Already handled above via getSession — skip to avoid double call
+            if (!resolved) {
+              resolved = true;
+              clearTimeout(safetyTimer);
+              await handleSession(newSession, event);
+            }
             break;
-
           case 'SIGNED_IN':
             await handleSession(newSession, event);
             break;
-
           case 'TOKEN_REFRESHED':
-            console.log('[Auth] Token refreshed successfully');
             if (mountedRef.current) setSession(newSession);
-            // Profile stays the same — no need to refetch
             break;
-
           case 'USER_UPDATED':
-            console.log('[Auth] User updated');
             if (newSession?.user && mountedRef.current) {
               await loadProfile(newSession.user);
             }
             break;
-
           case 'SIGNED_OUT':
-            console.log('[Auth] Signed out');
             if (mountedRef.current) {
               setSession(null);
               setUser(null);
               setAuthLoading(false);
               setSessionReady(true);
-              // Clear stale localStorage keys on logout
-purgeStaleAuthKeys();
+              purgeStaleAuthKeys();
             }
             break;
-
-          default:
-            console.log('[Auth] Unhandled event:', event);
         }
       }
     );
 
     return () => {
       mountedRef.current = false;
+      clearTimeout(safetyTimer);
       subscription.unsubscribe();
-      console.log('[Auth] Unsubscribed');
     };
   }, [handleSession, loadProfile]);
 

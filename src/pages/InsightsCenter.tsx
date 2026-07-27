@@ -37,14 +37,7 @@ function calcMean(
   marks: { student_id: string; subject_id: string; score: number | null }[],
   allSubjectIds: string[],
 ): { total: number; mean: number; entered: number; missing: number; sum: number } {
-  let total = allSubjectIds.length;
-
-// Temporary CBC subject counts
-if (studentGrade >= 4 && studentGrade <= 6) {
-  total = 6;
-} else if (studentGrade >= 7 && studentGrade <= 9) {
-  total = 9;
-}
+  const total = allSubjectIds.length;
   if (total === 0) return { total: 0, mean: 0, entered: 0, missing: 0, sum: 0 };
   let sum = 0;
   let entered = 0;

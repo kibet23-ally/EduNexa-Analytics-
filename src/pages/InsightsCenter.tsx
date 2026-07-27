@@ -21,7 +21,10 @@ const RUBRIC = [
 const getRubric = (score: number) => { const s = Math.round(score); return RUBRIC.find(r => s >= r.min && s <= r.max) || RUBRIC[RUBRIC.length - 1]; };
 
 /* ─── Reusable mean score utility ─────────────────────────────────────────
- * ALWAYS divides by totalSubjects (the full grade subject count).
+ * /* Divides by the expected number of subjects for the student's grade.
+ * Grade 4–6: 6 subjects
+ * Grade 7–9: 9 subjects
+ * If grade information is unavailable, fall back to the number of available subjects.
  * Missing marks are treated as 0 — never skipped.
  * Formula: mean = sum(entered marks) / totalSubjects
  * Tests:
@@ -34,7 +37,14 @@ function calcMean(
   marks: { student_id: string; subject_id: string; score: number | null }[],
   allSubjectIds: string[],
 ): { total: number; mean: number; entered: number; missing: number; sum: number } {
-  const total = allSubjectIds.length;
+  let total = allSubjectIds.length;
+
+// Temporary CBC subject counts
+if (studentGrade >= 4 && studentGrade <= 6) {
+  total = 6;
+} else if (studentGrade >= 7 && studentGrade <= 9) {
+  total = 9;
+}
   if (total === 0) return { total: 0, mean: 0, entered: 0, missing: 0, sum: 0 };
   let sum = 0;
   let entered = 0;

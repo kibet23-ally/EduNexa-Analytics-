@@ -62,15 +62,8 @@ const PageFallback = () => (
 
 /* ─── Full-screen auth loading ───────────────────────────────────────────── */
 const AuthLoadingScreen = () => (
-  <div className="h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950 gap-4">
-    <div className="flex items-center gap-2 mb-2">
-      <div className="w-8 h-8 rounded-lg bg-[#1e3a5f] flex items-center justify-center">
-        <span className="text-white font-black text-sm">E</span>
-      </div>
-      <span className="text-xl font-black text-[#1e3a5f] dark:text-white">EduNexa</span>
-    </div>
-    <div className="w-6 h-6 border-2 border-[#1e3a5f] border-t-transparent rounded-full animate-spin" />
-    <p className="text-xs text-slate-400">Restoring your session…</p>
+  <div className="h-screen flex items-center justify-center bg-white dark:bg-slate-950">
+    <div className="w-5 h-5 border-2 border-[#1e3a5f] border-t-transparent rounded-full animate-spin" />
   </div>
 );
 
@@ -155,9 +148,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 const AppRoutes = () => {
   const { authLoading } = useAuth();
 
-  // While restoring session, show spinner — never render routes
-  if (authLoading) return <AuthLoadingScreen />;
-
+  // authLoading handled by ProtectedRoute — render public routes immediately
   return (
     <Routes>
       {/* ── Public Routes ── */}

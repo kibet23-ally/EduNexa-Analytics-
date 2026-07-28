@@ -5,6 +5,9 @@ import { useAuth } from '../useAuth';
 
 // DASHBOARDS
 import SchoolDashboard from '../components/SchoolDashboard';
+import LevelDashboardCards from '../components/LevelDashboardCards';
+// Then inside the JSX:
+<LevelDashboardCards />
 
 // OPTIONAL
 // import TeacherDashboard from '../components/TeacherDashboard';

@@ -50,7 +50,62 @@ export interface Student {
   grade_id: number;
   school_id: number;
   grade_name?: string;
+  upi_number?: string | null;
+  first_name?: string | null;
+  middle_name?: string | null;
+  last_name?: string | null;
+  date_of_birth?: string | null;
+  birth_certificate_number?: string | null;
+  nationality?: string | null;
+  photo_url?: string | null;
+  date_of_admission?: string | null;
+  stream?: string | null;
+  boarding_status?: 'Day' | 'Boarding' | null;
+  previous_school?: string | null;
+  student_status?: 'Active' | 'Transferred' | 'Alumni' | 'Suspended' | null;
+  admission_category?: string | null;
+  previous_academic_performance?: string | null;
+  talents?: string | null;
+  blood_group?: string | null;
+  allergies?: string | null;
+  medical_conditions?: string | null;
+  special_needs?: string | null;
+  emergency_medical_notes?: string | null;
+  fee_category?: string | null;
+  sponsor_bursary?: string | null;
+  billing_guardian_id?: number | null;
+  deleted_at?: string | null;
+  deleted_by?: string | null;
+  created_by?: string | null;
+  updated_by?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
+
+export interface Guardian {
+  id: number;
+  student_id: number;
+  school_id: number;
+  full_name: string;
+  relationship?: string | null;
+  phone: string;
+  alt_phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  is_emergency_contact: boolean;
+}
+
+export interface LearnerDocument {
+  id: number;
+  student_id: number;
+  school_id: number;
+  doc_type: 'birth_certificate' | 'passport_photo' | 'guardian_id' | 'previous_report' | 'transfer_letter' | 'admission_letter' | 'other';
+  file_url: string;
+  file_name?: string | null;
+  uploaded_by?: string | null;
+  uploaded_at?: string | null;
+}
+
 
 export interface Exam {
   id: number;

@@ -29,6 +29,17 @@ interface AnalyticsData {
   };
 }
 
+// ── Grade-band subject count rule (CBC Kenya) ──────────────────────────────
+// Grades 4–6  (Upper Primary):      6 subjects
+// Grades 7–9  (Junior Secondary):   9 subjects
+// Each band has its own expected subject count — never a single shared number.
+const getExpectedSubjectCount = (gradeName: string): number => {
+  const gradeNum = parseInt(gradeName.match(/\d+/)?.[0] || '0', 10);
+  if (gradeNum >= 4 && gradeNum <= 6) return 6;
+  if (gradeNum >= 7 && gradeNum <= 9) return 9;
+  return 0; // Unknown/unsupported grade band — no fixed expectation, fall back to actual count
+};
+
 const Analytics = () => {
   const { user } = useAuth();
   const [selectedExam, setSelectedExam] = useState('');
@@ -127,6 +138,9 @@ const Analytics = () => {
         previousMarks = prevData.marks || [];
       }
 
+      const gradeName = grades.find(g => g.id.toString() === selectedGrade)?.grade_name || '';
+      const expectedSubjectCount = getExpectedSubjectCount(gradeName);
+
       const distributionMap: Record<string, number> = { EE1: 0, EE2: 0, ME1: 0, ME2: 0, AE1: 0, AE2: 0, BE1: 0, BE2: 0 };
       const studentPerformance: { id: number; name: string; avgPoints: number; totalScore: number; subjectMarks: { [key: number]: number | string } }[] = [];
 
@@ -134,8 +148,16 @@ const Analytics = () => {
         const sMarks = marks.filter((m: Mark) => m.student_id === s.id && filteredSubjects.some(sub => sub.id === m.subject_id));
         if (sMarks.length === 0) return;
 
+        // DYNAMIC DIVISOR, grade-band aware:
+        // - Normally divide by the number of subjects this student actually sat (sMarks.length).
+        // - expectedSubjectCount (6 for grades 4–6, 9 for grades 7–9) is only used as a safety
+        //   cap in case of bad/duplicate data — it is NEVER used to inflate the divisor for a
+        //   student who validly sat fewer subjects than their grade band's full count.
         const totalScore = sMarks.reduce((acc: number, m: Mark) => acc + m.score, 0);
-        const avgPoints = totalScore / 9;
+        const divisor = expectedSubjectCount > 0
+          ? Math.min(sMarks.length, expectedSubjectCount)
+          : sMarks.length;
+        const avgPoints = totalScore / divisor;
         const grade = getOverallGrade(avgPoints);
         if (grade in distributionMap) distributionMap[grade as keyof typeof distributionMap]++;
 
@@ -162,8 +184,14 @@ const Analytics = () => {
         studentPerformance.forEach(s => {
           const prevSMarks = previousMarks.filter(m => m.student_id === s.id && filteredSubjects.some(sub => sub.id === m.subject_id));
           if (prevSMarks.length > 0) {
+            // DYNAMIC DIVISOR here too, same grade-band cap as the current exam —
+            // the previous exam's average must use the actual number of subjects
+            // the student sat then, not a fixed count.
             const prevTotal = prevSMarks.reduce((acc, m) => acc + m.score, 0);
-            const prevAvg = prevTotal / 9;
+            const prevDivisor = expectedSubjectCount > 0
+              ? Math.min(prevSMarks.length, expectedSubjectCount)
+              : prevSMarks.length;
+            const prevAvg = prevTotal / prevDivisor;
             const imp = s.avgPoints - prevAvg;
             if (imp > maxImp) {
               maxImp = imp;
@@ -491,3 +519,4 @@ const Analytics = () => {
 };
 
 export default Analytics;
+    

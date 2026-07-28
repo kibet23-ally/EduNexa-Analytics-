@@ -15,6 +15,7 @@ const Register           = lazy(() => import('./pages/Register'));
 const AwaitingApproval   = lazy(() => import('./pages/AwaitingApproval'));
 const Dashboard          = lazy(() => import('./pages/Dashboard'));
 const Students           = lazy(() => import('./pages/Students'));
+const LearnerOnboarding  = lazy(() => import('./pages/LearnerOnboarding'));
 const Grades             = lazy(() => import('./pages/Grades'));
 const Subjects           = lazy(() => import('./pages/Subjects'));
 const Exams              = lazy(() => import('./pages/Exams'));
@@ -62,8 +63,15 @@ const PageFallback = () => (
 
 /* ─── Full-screen auth loading ───────────────────────────────────────────── */
 const AuthLoadingScreen = () => (
-  <div className="h-screen flex items-center justify-center bg-white dark:bg-slate-950">
-    <div className="w-5 h-5 border-2 border-[#1e3a5f] border-t-transparent rounded-full animate-spin" />
+  <div className="h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950 gap-4">
+    <div className="flex items-center gap-2 mb-2">
+      <div className="w-8 h-8 rounded-lg bg-[#1e3a5f] flex items-center justify-center">
+        <span className="text-white font-black text-sm">E</span>
+      </div>
+      <span className="text-xl font-black text-[#1e3a5f] dark:text-white">EduNexa</span>
+    </div>
+    <div className="w-6 h-6 border-2 border-[#1e3a5f] border-t-transparent rounded-full animate-spin" />
+    <p className="text-xs text-slate-400">Restoring your session…</p>
   </div>
 );
 
@@ -148,7 +156,9 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 const AppRoutes = () => {
   const { authLoading } = useAuth();
 
-  // authLoading handled by ProtectedRoute — render public routes immediately
+  // While restoring session, show spinner — never render routes
+  if (authLoading) return <AuthLoadingScreen />;
+
   return (
     <Routes>
       {/* ── Public Routes ── */}
@@ -174,6 +184,8 @@ const AppRoutes = () => {
 
       {/* ── School Admin & Teacher Routes ── */}
       <Route path="/students"          element={<ProtectedRoute><Layout>{wrap(<Students />, 'Students')}</Layout></ProtectedRoute>} />
+      <Route path="/students/onboard"  element={<ProtectedRoute><Layout>{wrap(<LearnerOnboarding />, 'Learner Onboarding')}</Layout></ProtectedRoute>} />
+      <Route path="/students/:id/edit" element={<ProtectedRoute><Layout>{wrap(<LearnerOnboarding />, 'Edit Learner Profile')}</Layout></ProtectedRoute>} />
       <Route path="/grades"            element={<ProtectedRoute><Layout>{wrap(<Grades />, 'Grades')}</Layout></ProtectedRoute>} />
       <Route path="/subjects"          element={<ProtectedRoute><Layout>{wrap(<Subjects />, 'Subjects')}</Layout></ProtectedRoute>} />
       <Route path="/exams"             element={<ProtectedRoute><Layout>{wrap(<Exams />, 'Exams')}</Layout></ProtectedRoute>} />

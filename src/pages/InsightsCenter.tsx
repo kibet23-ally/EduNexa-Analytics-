@@ -1593,7 +1593,13 @@ export default function InsightsCenter() {
                     <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
                       {filteredStudents.map(s => {
                         const sMarks  = getStudentMarks(s.id);
-                        const avg     = sMarks.length ? sMarks.reduce((a, b) => a + b.score, 0) / sMarks.length : null;
+                        const enteredMarks = sMarks.filter(m => m.score !== null && m.score !== undefined);
+                        const studentGradeName = grades.find(g => String(g.id) === String(s.grade_id))?.grade_name || '';
+                        const expected = getExpectedSubjectCount(studentGradeName);
+                        const divisor = expected > 0 ? expected : sMarks.length;
+                        const avg = enteredMarks.length
+                          ? enteredMarks.reduce((a, b) => a + (b.score ?? 0), 0) / divisor
+                          : null;
                         const rank    = rankings.find(r => r.id === s.id);
                         const r       = avg !== null ? getRubric(avg) : null;
                         const isSelected = selectedStudent?.id === s.id;
@@ -1656,7 +1662,13 @@ export default function InsightsCenter() {
                       {(() => {
                         const sMarks = getStudentMarks(selectedStudent.id);
                         const att    = getStudentAtt(selectedStudent.id);
-                        const avg    = sMarks.length ? sMarks.reduce((a, b) => a + b.score, 0) / sMarks.length : 0;
+                        const enteredMarks = sMarks.filter(m => m.score !== null && m.score !== undefined);
+                        const studentGradeName = grades.find(g => String(g.id) === String(selectedStudent.grade_id))?.grade_name || '';
+                        const expected = getExpectedSubjectCount(studentGradeName);
+                        const divisor = expected > 0 ? expected : sMarks.length;
+                        const avg = enteredMarks.length
+                          ? enteredMarks.reduce((a, b) => a + (b.score ?? 0), 0) / divisor
+                          : 0;
                         const remarks = getRemarks(avg);
 
                         return sMarks.length > 0 ? (

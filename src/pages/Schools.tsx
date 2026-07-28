@@ -12,6 +12,26 @@ interface SchoolWithStatus extends School {
   admin_name?: string;
 }
 
+// Supabase throws PostgrestError as a plain object ({ message, details, hint, code }),
+// NOT an instance of the native Error class. `err instanceof Error` is therefore
+// always false for real database errors (RLS denials, check-constraint violations,
+// bad column names, etc.), and code that only checks `instanceof Error` silently
+// swallows the real reason in favor of a generic fallback string.
+const getErrorMessage = (err: unknown, fallback: string): string => {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === 'object') {
+    const e = err as { message?: string; details?: string; hint?: string; code?: string };
+    if (e.message) {
+      const parts = [e.message];
+      if (e.details) parts.push(e.details);
+      if (e.hint) parts.push(`Hint: ${e.hint}`);
+      if (e.code) parts.push(`(code ${e.code})`);
+      return parts.join(' — ');
+    }
+  }
+  return fallback;
+};
+
 const Schools = () => {
   const { user } = useAuth();
   const [schools, setSchools] = useState<SchoolWithStatus[]>([]);
@@ -69,7 +89,7 @@ const Schools = () => {
       });
       setSchools((data as SchoolWithStatus[]) || []);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not fetch schools');
+      setError(getErrorMessage(err, 'Could not fetch schools'));
     } finally {
       setLoading(false);
     }
@@ -99,7 +119,7 @@ const Schools = () => {
       setSuccess(`✓ ${school.name} has been approved and can now log in.`);
       setTimeout(() => setSuccess(null), 4000);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Approval failed');
+      setError(getErrorMessage(err, 'Approval failed'));
     } finally {
       setApprovingId(null);
     }
@@ -122,7 +142,7 @@ const Schools = () => {
       setSuccess(`${school.name} has been rejected/suspended.`);
       setTimeout(() => setSuccess(null), 4000);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Action failed');
+      setError(getErrorMessage(err, 'Action failed'));
     } finally {
       setApprovingId(null);
     }
@@ -147,7 +167,7 @@ const Schools = () => {
     setSuccess(`"${schoolToDelete.name}" successfully removed`);
     setTimeout(() => setSuccess(null), 3000);
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Delete operation failed';
+    const msg = getErrorMessage(err, 'Delete operation failed');
     setError(`Delete failed: ${msg}`);
   } finally {
     setLoadingAction(false);
@@ -173,7 +193,7 @@ const Schools = () => {
         }
       });
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch stats');
+      setError(getErrorMessage(err, 'Failed to fetch stats'));
     } finally {
       setLoadingAction(false);
     }
@@ -216,7 +236,7 @@ const Schools = () => {
       fetchSchools();
       setTimeout(() => setSuccess(null), 3000);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Update failed');
+      setError(getErrorMessage(err, 'Update failed'));
     } finally {
       setLoadingAction(false);
     }
@@ -282,7 +302,7 @@ const Schools = () => {
       if (schoolIdCreated) {
         await writeWithProxy('schools', 'delete', null, { id: schoolIdCreated }).catch(() => {});
       }
-      setError(err instanceof Error ? err.message : 'Failed to add school');
+      setError(getErrorMessage(err, 'Failed to add school'));
     } finally {
       setLoadingAction(false);
     }
@@ -301,7 +321,7 @@ const Schools = () => {
       setSuccess(`Password reset email sent to ${resetModalEmail}`);
       setResetModalSchool(null);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to send reset email');
+      setError(getErrorMessage(err, 'Failed to send reset email'));
     } finally {
       setLoadingAction(false);
     }
@@ -793,3 +813,4 @@ const Schools = () => {
 };
 
 export default Schools;
+    

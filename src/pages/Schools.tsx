@@ -224,12 +224,23 @@ const Schools = () => {
     setLoadingAction(true);
     setError(null);
     try {
+      // subscription_end_date (not expiry_date) is what the DB triggers actually
+      // use to compute subscription_expiry / active status — sync_expiry_trigger
+      // copies subscription_end_date → subscription_expiry, and trg_auto_expire
+      // reads subscription_expiry + subscription_grace_ends_at to decide whether
+      // to force subscription_status back to 'expired'. Writing only expiry_date
+      // (as before) had no effect on either trigger, so renewals silently failed.
+      const newExpiry = editFormData.expiry_date || editFormData.subscription_expiry_date || editFormData.subscription_end_date || null;
       await writeWithProxy('schools', 'update', {
-        name:                editFormData.name,
-        logo_url:            editFormData.logo_url,
-        subscription_plan:   editFormData.subscription_plan,
-        subscription_status: editFormData.subscription_status,
-        expiry_date:         editFormData.expiry_date || editFormData.subscription_expiry_date || editFormData.subscription_end_date || null,
+        name:                       editFormData.name,
+        logo_url:                   editFormData.logo_url,
+        subscription_plan:          editFormData.subscription_plan,
+        subscription_status:        editFormData.subscription_status,
+        expiry_date:                newExpiry,
+        subscription_end_date:      newExpiry,
+        // Clear any stale grace period so trg_auto_expire doesn't immediately
+        // re-expire a school that's being actively renewed/reactivated.
+        subscription_grace_ends_at: editFormData.subscription_status === 'Active' ? null : undefined,
       }, { id: editingSchool.id });
       setEditingSchool(null);
       setSuccess('School settings updated');
@@ -813,4 +824,4 @@ const Schools = () => {
 };
 
 export default Schools;
-    
+ 

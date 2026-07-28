@@ -39,6 +39,7 @@ const StudentPromotion   = lazy(() => import('./pages/StudentPromotion'));
 const ResetPassword      = lazy(() => import('./pages/ResetPassword'));
 const ForgotPassword     = lazy(() => import('./pages/ForgotPassword'));
 const InsightsCenter     = lazy(() => import('./pages/InsightsCenter'));
+const SchoolLevels = lazy(() => import('./pages/SchoolLevels'));
 
 // Footer pages
 const Features = lazy(() => import('./pages/Features'));
@@ -195,6 +196,11 @@ const AppRoutes = () => {
       <Route path="/analytics"         element={<ProtectedRoute><Layout>{wrap(<Analytics />, 'Analytics')}</Layout></ProtectedRoute>} />
       <Route path="/reports"           element={<ProtectedRoute><Layout>{wrap(<Reports />, 'Reports')}</Layout></ProtectedRoute>} />
       <Route path="/settings"          element={<ProtectedRoute><Layout>{wrap(<SettingsPage />, 'Settings')}</Layout></ProtectedRoute>} />
+      <Route path="/settings/levels" element={
+  <RoleProtectedRoute allowedRoles={['Admin','admin','school_admin','Principal']}>
+    <Layout>{wrap(<SchoolLevels />, 'School Levels')}</Layout>
+  </RoleProtectedRoute>
+} />
       <Route path="/insights"          element={<ProtectedRoute><Layout>{wrap(<InsightsCenter />, 'Insights Center')}</Layout></ProtectedRoute>} />
 
       {/* ── Student Promotion ── */}

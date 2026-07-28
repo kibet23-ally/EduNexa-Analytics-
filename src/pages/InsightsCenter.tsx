@@ -20,13 +20,27 @@ const RUBRIC = [
 
 const getRubric = (score: number) => { const s = Math.round(score); return RUBRIC.find(r => s >= r.min && s <= r.max) || RUBRIC[RUBRIC.length - 1]; };
 
+/* ─── Grade-band subject count rule (CBC Kenya) ───────────────────────────
+ * Grades 4–6  (Upper Primary):      6 subjects
+ * Grades 7–9  (Junior Secondary):   9 subjects
+ * Each band has its own expected subject count. This is looked up per
+ * STUDENT (from their own grade_id), not from the page-level grade filter —
+ * the `subjects` list is fetched school-wide (not grade-scoped), so relying
+ * on subjects.length alone silently divides every grade by the same number.
+ * ─────────────────────────────────────────────────────────────────────── */
+const getExpectedSubjectCount = (gradeName: string): number => {
+  const gradeNum = parseInt(gradeName.match(/\d+/)?.[0] || '0', 10);
+  if (gradeNum >= 4 && gradeNum <= 6) return 6;
+  if (gradeNum >= 7 && gradeNum <= 9) return 9;
+  return 0; // Unknown grade band — fall back to actual subject count
+};
+
 /* ─── Reusable mean score utility ─────────────────────────────────────────
- * /* Divides by the expected number of subjects for the student's grade.
- * Grade 4–6: 6 subjects
- * Grade 7–9: 9 subjects
- * If grade information is unavailable, fall back to the number of available subjects.
+ * Divides by the expected subject count for the STUDENT'S OWN grade band
+ * (6 for grades 4–6, 9 for grades 7–9) — passed in as expectedSubjectCount.
+ * Falls back to allSubjectIds.length only if the grade band is unknown.
  * Missing marks are treated as 0 — never skipped.
- * Formula: mean = sum(entered marks) / totalSubjects
+ * Formula: mean = sum(entered marks) / divisor
  * Tests:
  *   calcMean([70,60,80], 8) = 26.25  ✓  (5 missing = 0)
  *   calcMean([70,60,80], 3) = 70     ✓  (no missing)
@@ -36,8 +50,15 @@ function calcMean(
   studentId: string,
   marks: { student_id: string; subject_id: string; score: number | null }[],
   allSubjectIds: string[],
+  expectedSubjectCount?: number,
 ): { total: number; mean: number; entered: number; missing: number; sum: number } {
-  const total = allSubjectIds.length;
+  // DYNAMIC, GRADE-BAND-AWARE DIVISOR — never a single hardcoded number.
+  // Uses the caller-supplied expectedSubjectCount (6 for grades 4–6, 9 for
+  // grades 7–9, based on the STUDENT'S OWN grade). Only falls back to the raw
+  // subjects list length when the grade band is unknown/unsupported.
+  const total = expectedSubjectCount && expectedSubjectCount > 0
+    ? expectedSubjectCount
+    : allSubjectIds.length;
   if (total === 0) return { total: 0, mean: 0, entered: 0, missing: 0, sum: 0 };
   let sum = 0;
   let entered = 0;
@@ -231,7 +252,8 @@ async function generateRankingsPDF(params: {
   drawPDFLetterhead(doc, school, logo, `EXAMINATION RESULTS — ${gradeName} • ${examName}`, true);
 
   const allSubjectIds = subjects.map(s => s.id);
-  const studentMeans = rankings.map(s => calcMean(s.id, marks, allSubjectIds));
+  const expectedSubjectCount = getExpectedSubjectCount(gradeName);
+  const studentMeans = rankings.map(s => calcMean(s.id, marks, allSubjectIds, expectedSubjectCount));
   const classAvg = studentMeans.length
     ? Math.round((studentMeans.reduce((a, b) => a + b.mean, 0) / studentMeans.length) * 10) / 10
     : 0;
@@ -1007,16 +1029,22 @@ export default function InsightsCenter() {
     // ── Reusable ranking logic ─────────────────────────────────────────────
     // Rules:
     //   1. ALL students included (even DNS — did not sit)
-    //   2. Mean = sum(entered) / totalSubjectsInGrade  (missing treated as 0)
+    //   2. Mean = sum(entered) / expectedSubjectCount for the STUDENT'S OWN
+    //      grade band (6 for grades 4–6, 9 for grades 7–9) — missing marks
+    //      are treated as 0. This is per-student, not a page-wide constant,
+    //      since `subjects` is fetched school-wide and is NOT grade-scoped.
     //   3. DNS students ranked at bottom
     //   4. Tied means share the same rank
     // ──────────────────────────────────────────────────────────────────────
-    const totalSubjs = subjects.length || 1;
+    const fallbackTotal = subjects.length || 1;
     const mapped = students.map(s => {
+      const studentGradeName = grades.find(g => String(g.id) === String(s.grade_id))?.grade_name || '';
+      const expected = getExpectedSubjectCount(studentGradeName);
+      const divisor = expected > 0 ? expected : fallbackTotal;
       const studentMarks = marks.filter(m => m.student_id === s.id);
       const enteredSum   = studentMarks.reduce((a, m) => a + (m.score ?? 0), 0);
       const entered      = studentMarks.filter(m => m.score !== null && m.score !== undefined).length;
-      const avg = Math.round((enteredSum / totalSubjs) * 10) / 10;
+      const avg = Math.round((enteredSum / divisor) * 10) / 10;
       return { ...s, avg, total: enteredSum, subjects: entered, didNotSit: entered === 0 };
     });
     // Sort: ranked students first (desc avg), DNS last
@@ -1035,14 +1063,20 @@ export default function InsightsCenter() {
       currentRank = i + 1;
       return { ...s, rank: currentRank };
     });
-  }, [marks, students, subjects]);
+  }, [marks, students, subjects, grades]);
 
   const classStats = useMemo(() => {
     if (!subjects.length || !students.length) return null;
     const allSubjectIds = subjects.map(s => s.id);
-    // Class mean = sum of ALL student means (each divided by total subjects)
+    // Class mean = sum of ALL student means, each divided by the EXPECTED
+    // SUBJECT COUNT FOR THAT STUDENT'S OWN GRADE BAND (6 for grades 4–6, 9
+    // for grades 7–9) — not a single shared subjects.length for everyone.
     const studentMeans = students
-      .map(s => calcMean(s.id, marks, allSubjectIds))
+      .map(s => {
+        const studentGradeName = grades.find(g => String(g.id) === String(s.grade_id))?.grade_name || '';
+        const expected = getExpectedSubjectCount(studentGradeName);
+        return calcMean(s.id, marks, allSubjectIds, expected);
+      })
       .filter(r => r.entered > 0);
     if (!studentMeans.length) return null;
     const avg  = studentMeans.reduce((a, b) => a + b.mean, 0) / studentMeans.length;
@@ -1053,7 +1087,7 @@ export default function InsightsCenter() {
     const highest = enteredScores.length ? Math.max(...enteredScores) : 0;
     const lowest  = enteredScores.length ? Math.min(...enteredScores) : 0;
     return { avg, pass, highest, lowest, count: students.length, r: getRubric(avg) };
-  }, [marks, students, subjects]);
+  }, [marks, students, subjects, grades]);
 
   const filteredStudents = useMemo(() => {
     if (!search) return students;
@@ -1595,10 +1629,10 @@ export default function InsightsCenter() {
                         const sMarks  = getStudentMarks(s.id);
                         const enteredMarks = sMarks.filter(m => m.score !== null && m.score !== undefined);
                         const studentGradeName = grades.find(g => String(g.id) === String(s.grade_id))?.grade_name || '';
-                        const expected = getExpectedSubjectCount(studentGradeName);
-                        const divisor = expected > 0 ? expected : sMarks.length;
+                        const expectedCount = getExpectedSubjectCount(studentGradeName);
+                        const cardDivisor = expectedCount > 0 ? expectedCount : sMarks.length;
                         const avg = enteredMarks.length
-                          ? enteredMarks.reduce((a, b) => a + (b.score ?? 0), 0) / divisor
+                          ? enteredMarks.reduce((a, b) => a + (b.score ?? 0), 0) / cardDivisor
                           : null;
                         const rank    = rankings.find(r => r.id === s.id);
                         const r       = avg !== null ? getRubric(avg) : null;
@@ -1664,10 +1698,10 @@ export default function InsightsCenter() {
                         const att    = getStudentAtt(selectedStudent.id);
                         const enteredMarks = sMarks.filter(m => m.score !== null && m.score !== undefined);
                         const studentGradeName = grades.find(g => String(g.id) === String(selectedStudent.grade_id))?.grade_name || '';
-                        const expected = getExpectedSubjectCount(studentGradeName);
-                        const divisor = expected > 0 ? expected : sMarks.length;
+                        const expectedCount = getExpectedSubjectCount(studentGradeName);
+                        const panelDivisor = expectedCount > 0 ? expectedCount : sMarks.length;
                         const avg = enteredMarks.length
-                          ? enteredMarks.reduce((a, b) => a + (b.score ?? 0), 0) / divisor
+                          ? enteredMarks.reduce((a, b) => a + (b.score ?? 0), 0) / panelDivisor
                           : 0;
                         const remarks = getRemarks(avg);
 
@@ -1775,5 +1809,4 @@ export default function InsightsCenter() {
     </div>
   );
 }
-                    
-                       
+                 

@@ -50,7 +50,7 @@ export interface Student {
   grade_id: number;
   school_id: number;
   grade_name?: string;
-  upi_number?: string | null;
+  uli_number?: string | null;
   first_name?: string | null;
   middle_name?: string | null;
   last_name?: string | null;

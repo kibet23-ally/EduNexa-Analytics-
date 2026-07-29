@@ -19,7 +19,7 @@ import { cn } from '../lib/utils';
 import { supabase } from '../lib/supabase';
 
 const SettingsPage = () => {
-  const { user, token, theme, setTheme, login } = useAuth();
+  const { user, theme, setTheme, refreshProfile } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -148,10 +148,11 @@ const SettingsPage = () => {
 
       if (error) throw error;
 
-      if (data && token) {
-        const updatedUser = { ...user!, ...data };
-        localStorage.setItem('edunexa_user', JSON.stringify(updatedUser));
-        login(token, updatedUser);
+      if (data) {
+        // Refetch the canonical profile from the DB so AuthContext's cached
+        // user state (name/avatar/theme, used across the sidebar/header)
+        // reflects these changes immediately instead of only after reload.
+        await refreshProfile();
       }
 
       setFeedback({ type: 'success', message: 'Profile updated successfully!' });

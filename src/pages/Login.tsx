@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';  
 import { useNavigate, Link } from 'react-router-dom';  
-import { useAuth } from '../useAuth';  
 import { GraduationCap, Lock, Mail, Dot, ArrowLeft, Phone, ChevronDown, CheckCircle2, AlertCircle, Sparkles } from 'lucide-react';  
 import { supabase } from '../lib/supabase';  
 import { toast, Toaster } from 'react-hot-toast';  
@@ -16,8 +15,7 @@ const Login = () => {
   const [loading, setLoading] = useState(false);  
   const [resendTimer, setResendTimer] = useState(0);  
   
-  const { } = useAuth(); // session handled by onAuthStateChange  
-  const navigate = useNavigate();  
+  const navigate = useNavigate();
   
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -244,12 +242,9 @@ const Login = () => {
       }  
     }  
   
-    const fullUser = {  
-      ...authUser,  
-      ...finalProfile,  
-      role: finalProfile.role as any,  
-    };  
-  
+    // Note: session/profile state is set reactively by AuthContext's own
+    // onAuthStateChange listener the moment signInWithPassword/verifyOtp
+    // above succeeds — no separate "login()" call is needed (or exists) here.
     toast.success(`Welcome back, ${finalProfile.name}!`);  
     redirectBasedOnRole(finalProfile.role);  
   };  

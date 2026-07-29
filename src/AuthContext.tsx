@@ -65,11 +65,20 @@ function purgeStaleAuthKeys() {
 async function fetchProfile(userId: string): Promise<AppUser | null> {
   console.log('[Auth] Fetching profile for', userId);
   try {
-    const { data, error } = await supabase
+    const queryPromise = supabase
       .from('users')
       .select('id, email, role, school_id, name, auth_id')
       .or(`id.eq.${userId},auth_id.eq.${userId}`)
       .maybeSingle();
+
+    // Guard against the query itself hanging (e.g. a stalled connection) —
+    // without this, loadProfile()/handleSession() would await it forever and
+    // authLoading would never resolve, same symptom as the getSession() hang.
+    const timeoutPromise = new Promise<{ data: null; error: { message: string } }>((resolve) =>
+      setTimeout(() => resolve({ data: null, error: { message: 'Profile fetch timed out' } }), 6000)
+    );
+
+    const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
 
     if (error) {
       console.error('[Auth] Profile fetch error:', error.message);
@@ -79,7 +88,6 @@ async function fetchProfile(userId: string): Promise<AppUser | null> {
       console.warn('[Auth] No profile row found for', userId);
       return null;
     }
-    console.log('[Auth] Profile loaded:', data.email, data.role);
     return data as AppUser;
   } catch (err) {
     console.error('[Auth] Profile fetch exception:', err);
@@ -151,14 +159,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     console.log('[Auth] Restoring session…');
 
+    // Safety net: if getSession() ever hangs (a known supabase-js failure mode
+    // when a stale/corrupted refresh token or cross-tab auth lock gets stuck),
+    // this forces the app out of "Restoring your session…" after 8s instead of
+    // leaving the user stuck forever with only "clear browser data" as a fix.
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      if (settled || !mountedRef.current) return;
+      console.warn('[Auth] getSession() timed out after 8s — clearing stale auth state and unblocking UI');
+      purgeStaleAuthKeys();
+      settled = true;
+      setSession(null);
+      setUser(null);
+      setAuthLoading(false);
+      setSessionReady(true);
+    }, 8000);
+
     // getSession() reads from localStorage — synchronous in practice
-    supabase.auth.getSession().then(({ data: { session: s }, error }) => {
-      if (error) {
-        console.error('[Auth] getSession error:', error.message);
-      }
-      console.log('[Auth] Restored session:', s ? s.user.email : 'none');
-      handleSession(s, 'INITIAL_SESSION');
-    });
+    supabase.auth.getSession()
+      .then(({ data: { session: s }, error }) => {
+        if (settled || !mountedRef.current) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        if (error) {
+          console.error('[Auth] getSession error:', error.message);
+        }
+        console.log('[Auth] Restored session:', s ? s.user.email : 'none');
+        handleSession(s, 'INITIAL_SESSION');
+      })
+      .catch((err) => {
+        // A rejected promise here (not just a returned {error}) previously left
+        // authLoading stuck at true forever — this ensures it always resolves.
+        if (settled || !mountedRef.current) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        console.error('[Auth] getSession() rejected — clearing stale auth state:', err);
+        purgeStaleAuthKeys();
+        handleSession(null, 'INITIAL_SESSION');
+      });
 
     /* ── Subscribe to all auth state changes ── */
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
@@ -210,6 +248,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       mountedRef.current = false;
+      clearTimeout(timeoutId);
       subscription.unsubscribe();
       console.log('[Auth] Unsubscribed');
     };

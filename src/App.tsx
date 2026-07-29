@@ -240,14 +240,10 @@ const AppRoutes = () => {
 };
 
 /* ─── App root ───────────────────────────────────────────────────────────── */
+// Theme state/class-toggling is owned exclusively by AuthContext (edunexa-theme
+// key) — no separate effect here, to avoid the two mechanisms fighting each
+// other over the <html> `dark` class.
 export default function App() {
-  React.useEffect(() => {
-    if (!localStorage.getItem('edunexa_theme')) {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('edunexa_theme', 'light');
-    }
-  }, []);
-
   return (
     <AuthProvider>
       <BrowserRouter>

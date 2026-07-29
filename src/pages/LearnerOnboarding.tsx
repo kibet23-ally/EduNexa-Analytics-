@@ -41,7 +41,7 @@ interface DocSlot {
 interface LearnerForm {
   admission_number: string;
   admissionAuto: boolean;
-  upi_number: string;
+  uli_number: string;
   first_name: string;
   middle_name: string;
   last_name: string;
@@ -79,7 +79,7 @@ const emptyGuardian = (): Guardian => ({
 });
 
 const emptyForm = (): LearnerForm => ({
-  admission_number: '', admissionAuto: true, upi_number: '',
+  admission_number: '', admissionAuto: true, uli_number: '',
   first_name: '', middle_name: '', last_name: '',
   gender: '', date_of_birth: '', birth_certificate_number: '', nationality: 'Kenyan',
   photo_url: '', date_of_admission: new Date().toISOString().slice(0, 10),
@@ -156,7 +156,7 @@ const LearnerOnboarding: React.FC = () => {
         setForm(f => ({
           ...f,
           admission_number: s.admission_number || '', admissionAuto: false,
-          upi_number: s.upi_number || '',
+          uli_number: s.uli_number || '',
           first_name: s.first_name || '', middle_name: s.middle_name || '', last_name: s.last_name || '',
           gender: s.gender || '', date_of_birth: s.date_of_birth || '',
           birth_certificate_number: s.birth_certificate_number || '', nationality: s.nationality || 'Kenyan',
@@ -212,7 +212,7 @@ const LearnerOnboarding: React.FC = () => {
   }, [user?.school_id, isEditing]);
 
   /* ── Duplicate detection (debounced) ───────────────────────────────────── */
-  const checkDuplicate = useCallback(async (field: 'admission_number' | 'upi_number' | 'birth_certificate_number', value: string) => {
+  const checkDuplicate = useCallback(async (field: 'admission_number' | 'uli_number' | 'birth_certificate_number', value: string) => {
     if (!value || !user?.school_id) { setDupWarnings(w => ({ ...w, [field]: '' })); return; }
     const filters: Record<string, unknown> = { [field]: value };
     if (field === 'admission_number') filters.school_id = user.school_id;
@@ -327,7 +327,7 @@ const LearnerOnboarding: React.FC = () => {
   /* ── Final submit ───────────────────────────────────────────────────────── */
   const handleSubmit = async () => {
     if (!validateStep(0) || !validateStep(1)) { setBanner({ type: 'error', msg: 'Please complete all required fields before submitting.' }); return; }
-    if (dupWarnings.admission_number || dupWarnings.upi_number || dupWarnings.birth_certificate_number) {
+    if (dupWarnings.admission_number || dupWarnings.uli_number || dupWarnings.birth_certificate_number) {
       setBanner({ type: 'error', msg: 'Please resolve duplicate warnings before submitting.' });
       return;
     }
@@ -337,7 +337,7 @@ const LearnerOnboarding: React.FC = () => {
         school_id: user?.school_id,
         name: `${form.first_name} ${form.middle_name} ${form.last_name}`.replace(/\s+/g, ' ').trim(),
         first_name: form.first_name, middle_name: form.middle_name || null, last_name: form.last_name,
-        admission_number: form.admission_number, upi_number: form.upi_number || null,
+        admission_number: form.admission_number, uli_number: form.uli_number || null,
         gender: form.gender, date_of_birth: form.date_of_birth,
         birth_certificate_number: form.birth_certificate_number || null, nationality: form.nationality || null,
         photo_url: form.photo_url || null, date_of_admission: form.date_of_admission,
@@ -408,7 +408,7 @@ const LearnerOnboarding: React.FC = () => {
       startY: 32,
       head: [['Field', 'Value']],
       body: [
-        ['Admission No', form.admission_number], ['UPI Number', form.upi_number],
+        ['Admission No', form.admission_number], ['ULI Number', form.uli_number],
         ['Gender', form.gender], ['Date of Birth', form.date_of_birth],
         ['Birth Cert. No', form.birth_certificate_number], ['Nationality', form.nationality],
         ['Grade', grades.find(g => String(g.id) === form.grade_id)?.grade_name || ''],
@@ -584,10 +584,11 @@ const BasicInfoStep: React.FC<any> = ({ form, setForm, errors, dupWarnings, chec
         </label>
       </div>
     </Field>
-    <Field label="UPI Number" warning={dupWarnings.upi_number}>
-      <input className={inputCls} value={form.upi_number}
-        onChange={e => setForm((f: LearnerForm) => ({ ...f, upi_number: e.target.value }))}
-        onBlur={e => checkDuplicate('upi_number', e.target.value)} />
+    <Field label="ULI Number" warning={dupWarnings.uli_number}>
+      <p className="text-[10px] text-slate-400 -mt-1 mb-1">Unique Learner Identification</p>
+      <input className={inputCls} value={form.uli_number}
+        onChange={e => setForm((f: LearnerForm) => ({ ...f, uli_number: e.target.value }))}
+        onBlur={e => checkDuplicate('uli_number', e.target.value)} />
     </Field>
     <Field label="Birth Certificate Number" warning={dupWarnings.birth_certificate_number}>
       <input className={inputCls} value={form.birth_certificate_number}

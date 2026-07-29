@@ -76,15 +76,15 @@ const Students = () => {
     'students-page',
     'students',
     {
-      select: 'id, name, admission_number, upi_number, gender, grade_id, student_status, deleted_at, grades:grade_id(grade_name)',
-      range: { from: page * PAGE_SIZE, to: (page + 1) * PAGE_SIZE - 1 },
+      select: 'id, name, admission_number, uli_number, gender, grade_id, student_status, deleted_at, grades:grade_id(grade_name)',
+      limit: 2000,
     },
     !!user?.school_id
   );
 
   const studentsMutation = useDataMutation('students');
 
-  const students = useMemo(() => {
+  const filteredStudents = useMemo(() => {
     let items = (studentsQuery.data || []) as any[];
     items = items.filter(s => showArchived ? !!s.deleted_at : !s.deleted_at);
     if (debouncedSearch) {
@@ -92,12 +92,24 @@ const Students = () => {
       items = items.filter(s =>
         s.name.toLowerCase().includes(q) ||
         (s.admission_number || '').toLowerCase().includes(q) ||
-        (s.upi_number || '').toLowerCase().includes(q) ||
+        (s.uli_number || '').toLowerCase().includes(q) ||
         (guardianMatchIds?.includes(s.id) ?? false)
       );
     }
     return items;
   }, [studentsQuery.data, debouncedSearch, guardianMatchIds, showArchived]);
+
+  // Client-side pagination — the data layer (useData/fetchWithProxy) has no
+  // server-side range/offset support, so page slicing happens here instead.
+  const students = useMemo(
+    () => filteredStudents.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
+    [filteredStudents, page]
+  );
+  const totalPages = Math.max(1, Math.ceil(filteredStudents.length / PAGE_SIZE));
+
+  useEffect(() => {
+    if (page > 0 && page >= totalPages) setPage(0);
+  }, [totalPages, page]);
 
   const handleArchive = async (id: number) => {
     if (isReadOnly) return;
@@ -162,7 +174,7 @@ const Students = () => {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
             <input
               type="text"
-              placeholder="Search by name, admission no, UPI, or parent phone..."
+              placeholder="Search by name, admission no, ULI, or parent phone..."
               value={search}
               onChange={handleSearchChange}
               className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20"
@@ -176,8 +188,8 @@ const Students = () => {
             <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="p-2 border rounded-lg disabled:opacity-50">
               <ChevronLeft size={18} />
             </button>
-            <span className="text-xs font-bold text-slate-500">Page {page + 1}</span>
-            <button onClick={() => setPage(p => p + 1)} disabled={(studentsQuery.data?.length || 0) < PAGE_SIZE} className="p-2 border rounded-lg disabled:opacity-50">
+            <span className="text-xs font-bold text-slate-500">Page {page + 1} of {totalPages}</span>
+            <button onClick={() => setPage(p => Math.min(p + 1, totalPages - 1))} disabled={page >= totalPages - 1} className="p-2 border rounded-lg disabled:opacity-50">
               <ChevronRight size={18} />
             </button>
           </div>
@@ -191,7 +203,7 @@ const Students = () => {
               <thead>
                 <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider font-semibold">
                   <th className="px-6 py-3">Admission No</th>
-                  <th className="px-6 py-3">UPI</th>
+                  <th className="px-6 py-3">ULI</th>
                   <th className="px-6 py-3">Name</th>
                   <th className="px-6 py-3">Gender</th>
                   <th className="px-6 py-3">Grade</th>
@@ -203,7 +215,7 @@ const Students = () => {
                 {students.map((student: any) => (
                   <tr key={student.id} className={`hover:bg-slate-50 transition-colors ${student.deleted_at ? 'opacity-60' : ''}`}>
                     <td className="px-6 py-4 font-mono text-blue-600 font-medium">{student.admission_number}</td>
-                    <td className="px-6 py-4 text-slate-500 font-mono text-xs">{student.upi_number || '—'}</td>
+                    <td className="px-6 py-4 text-slate-500 font-mono text-xs">{student.uli_number || '—'}</td>
                     <td className="px-6 py-4 font-medium text-slate-900">{student.name}</td>
                     <td className="px-6 py-4 text-slate-600">{student.gender}</td>
                     <td className="px-6 py-4">

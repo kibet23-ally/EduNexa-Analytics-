@@ -174,7 +174,7 @@ const AppRoutes = () => {
       <Route path="/register"        element={<Suspense fallback={<AuthLoadingScreen />}><Register /></Suspense>} />
       <Route path="/awaiting-approval" element={<Suspense fallback={<AuthLoadingScreen />}><AwaitingApproval /></Suspense>} />
       <Route path="/order"           element={<Suspense fallback={<AuthLoadingScreen />}><OrderForm /></Suspense>} />
-      <Route path="/status"          element={<Suspense fallback={<AuthLoadingScreen />}><SystemStatus /></Suspense>} />
+      <Route path="/status"          element={<RoleProtectedRoute allowedRoles={['SuperAdmin','super_admin']}><Suspense fallback={<AuthLoadingScreen />}><SystemStatus /></Suspense></RoleProtectedRoute>} />
       <Route path="/reset-password"  element={<Suspense fallback={<AuthLoadingScreen />}><ResetPassword /></Suspense>} />
       <Route path="/forgot-password" element={<Suspense fallback={<AuthLoadingScreen />}><ForgotPassword /></Suspense>} />
 

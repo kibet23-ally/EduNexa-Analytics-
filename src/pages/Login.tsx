@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';  
 import { useNavigate, Link } from 'react-router-dom';  
+import { useAuth } from '../useAuth';
 import { GraduationCap, Lock, Mail, Dot, ArrowLeft, Phone, ChevronDown, CheckCircle2, AlertCircle, Sparkles } from 'lucide-react';  
 import { supabase } from '../lib/supabase';  
 import { toast, Toaster } from 'react-hot-toast';  
@@ -16,6 +17,36 @@ const Login = () => {
   const [resendTimer, setResendTimer] = useState(0);  
   
   const navigate = useNavigate();
+  const { isAuthenticated } = useAuth();
+  // We don't navigate() the instant our own local sign-in logic finishes -
+  // AuthContext resolves the session/profile via its own independent
+  // onAuthStateChange listener, asynchronously. Navigating immediately races
+  // that update: ProtectedRoute checks AuthContext's isAuthenticated, which
+  // may still be false for a moment, bouncing straight back to /login even
+  // though sign-in genuinely succeeded (the "must log in twice" bug). Instead
+  // we record the role we resolved and only redirect once AuthContext
+  // confirms isAuthenticated - the same source of truth ProtectedRoute uses.
+  const [pendingRedirectRole, setPendingRedirectRole] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!pendingRedirectRole) return;
+    if (isAuthenticated) {
+      redirectBasedOnRole(pendingRedirectRole);
+      setPendingRedirectRole(null);
+      return;
+    }
+    // Safety net: if AuthContext's isAuthenticated somehow never confirms
+    // within a few seconds (shouldn't happen, but we've been burned by
+    // "stuck between states" bugs enough times this session to not rely on
+    // that alone) - redirect anyway rather than leaving the user stranded
+    // silently on the login page after already seeing "Welcome back".
+    const fallback = setTimeout(() => {
+      redirectBasedOnRole(pendingRedirectRole);
+      setPendingRedirectRole(null);
+    }, 4000);
+    return () => clearTimeout(fallback);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingRedirectRole, isAuthenticated]);
   
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -243,10 +274,13 @@ const Login = () => {
     }  
   
     // Note: session/profile state is set reactively by AuthContext's own
-    // onAuthStateChange listener the moment signInWithPassword/verifyOtp
-    // above succeeds — no separate "login()" call is needed (or exists) here.
+    // onAuthStateChange listener, asynchronously - not necessarily finished
+    // yet at this exact point. Rather than navigate() immediately (which can
+    // race that update and get bounced back to /login by ProtectedRoute),
+    // we flag the resolved role and let the useEffect above redirect once
+    // AuthContext's isAuthenticated actually confirms it.
     toast.success(`Welcome back, ${finalProfile.name}!`);  
-    redirectBasedOnRole(finalProfile.role);  
+    setPendingRedirectRole(finalProfile.role);  
   };  
   
   return (  

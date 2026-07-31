@@ -7,6 +7,8 @@ import Sidebar from './components/Sidebar';
 import GlobalHeader from './components/GlobalHeader';
 import SubscriptionBanner from './components/SubscriptionBanner';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import OfflineScreen from './components/OfflineScreen';
+import PWAUpdatePrompt from './components/PWAUpdatePrompt';
 
 // Lazy load all pages
 const Landing            = lazy(() => import('./pages/Landing'));
@@ -249,6 +251,12 @@ export default function App() {
       <BrowserRouter>
         <AppRoutes />
       </BrowserRouter>
+      {/* Mounted once, globally: */}
+      {/* - OfflineScreen: full-screen takeover the instant the browser goes offline. */}
+      {/* - PWAUpdatePrompt: small banner when a newly deployed version is ready. */}
+      {/* Neither of these caches or serves any app data - see vite.config.ts. */}
+      <OfflineScreen />
+      <PWAUpdatePrompt />
     </AuthProvider>
   );
 }

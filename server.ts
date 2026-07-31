@@ -495,24 +495,6 @@ async function startServer() {
         // Apply security filters
         if (!isSuperAdmin && schoolId) {
           if (table === 'schools') {
-            updateQuery = updateQuery.eq('id', schoolId);
-          } else if (!isGlobalTable) {
-            updateQuery = updateQuery.eq('school_id', schoolId);
-          }
-        }
-
-        if (filters) {
-          Object.entries(filters).forEach(([key, val]) => {
-            updateQuery = updateQuery.eq(key, val);
-          });
-        }
-        result = await updateQuery.select();
-      } else if (operation === 'delete') {
-        let deleteQuery = sbTable.delete();
-
-        // Apply security filters
-        if (!isSuperAdmin && schoolId) {
-          if (table === 'schools') {
             deleteQuery = deleteQuery.eq('id', schoolId);
           } else if (!isGlobalTable) {
             deleteQuery = deleteQuery.eq('school_id', schoolId);
@@ -560,7 +542,22 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    app.use(express.static(distPath, {
+      setHeaders: (res, filePath) => {
+        // The service worker file itself must never be cached by the browser
+        // or any CDN in front of this server - otherwise browsers keep using
+        // an old sw.js and never discover new deployments, breaking the
+        // "prompt to refresh on new version" behavior entirely.
+        if (filePath.endsWith('sw.js')) {
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        }
+        // Some Express/mime-type versions don't know the manifest extension -
+        // set it explicitly so Chrome/Edge reliably show the install prompt.
+        if (filePath.endsWith('.webmanifest')) {
+          res.setHeader('Content-Type', 'application/manifest+json');
+        }
+      },
+    }));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
@@ -573,3 +570,4 @@ async function startServer() {
 }
 
 startServer();
+          

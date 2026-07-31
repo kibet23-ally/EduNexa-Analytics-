@@ -43,6 +43,16 @@ export default defineConfig(({mode}) => {
 
         // -- Service worker: static assets ONLY, never app/API data ----------
         workbox: {
+          // Remove old precache entries immediately once a new SW activates -
+          // without this, stale JS/CSS/index.html from a previous deploy can
+          // keep being served from cache even after the user accepts an
+          // update, which is exactly what makes bugs "already fixed" in a
+          // new deploy appear to still be present until the user manually
+          // clears site data.
+          cleanupOutdatedCaches: true,
+          // Take control of open tabs the instant the accepted update
+          // activates, instead of waiting for a subsequent load.
+          clientsClaim: true,
           // Precache only the built static bundle + icons/fonts. This is an
           // SPA with a single index.html shell - no API responses, ever.
           globPatterns: ['**/*.{js,css,html,ico,png,svg,webp,woff,woff2,ttf,eot}'],

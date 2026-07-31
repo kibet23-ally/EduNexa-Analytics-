@@ -17,13 +17,26 @@ const PWAUpdatePrompt: React.FC = () => {
     immediate: true, // register the SW as soon as the app loads - required
                       // for Chrome's install criteria to be met promptly.
     onRegisteredSW(swUrl, registration) {
-      // Poll for a new service worker periodically so long-lived open tabs
-      // still get offered the update prompt, not just on next full reload.
-      if (registration) {
-        setInterval(() => {
+      if (!registration) return;
+
+      // Check for a new version right away (don't wait for the hourly poll -
+      // a user reopening the app shortly after a deploy should be offered
+      // the update promptly instead of silently running stale cached code).
+      registration.update().catch(() => {});
+
+      // Re-check whenever the tab regains focus/visibility - covers the
+      // common case of a long-lived open tab that was backgrounded during
+      // a deploy.
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
           registration.update().catch(() => {});
-        }, 60 * 60 * 1000); // hourly is plenty for a dashboard app
-      }
+        }
+      });
+
+      // Also poll periodically for tabs that are simply left open and idle.
+      setInterval(() => {
+        registration.update().catch(() => {});
+      }, 60 * 60 * 1000); // hourly is plenty for a dashboard app
     },
   });
 

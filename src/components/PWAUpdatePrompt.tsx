@@ -14,6 +14,8 @@ const PWAUpdatePrompt: React.FC = () => {
     needRefresh: [needRefresh, setNeedRefresh],
     updateServiceWorker,
   } = useRegisterSW({
+    immediate: true, // register the SW as soon as the app loads - required
+                      // for Chrome's install criteria to be met promptly.
     onRegisteredSW(swUrl, registration) {
       // Poll for a new service worker periodically so long-lived open tabs
       // still get offered the update prompt, not just on next full reload.

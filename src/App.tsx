@@ -1,4 +1,4 @@
-import React, { Suspense, lazy } from 'react';
+import React, { Suspense, lazy, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './AuthContext';
 import { useAuth } from './useAuth';
@@ -246,6 +246,37 @@ const AppRoutes = () => {
 // key) — no separate effect here, to avoid the two mechanisms fighting each
 // other over the <html> `dark` class.
 export default function App() {
+  useEffect(() => {
+    // The manifest's `orientation: portrait-primary` is only a hint on many
+    // Android/Chrome combinations and isn't always enforced. The Screen
+    // Orientation API's lock() is the actual enforcement mechanism - but it
+    // only works (and only makes sense) when running as an installed
+    // standalone app, never inside a regular browser tab, where it throws.
+    const isStandalone =
+      window.matchMedia('(display-mode: standalone)').matches ||
+      (window.navigator as any).standalone === true; // iOS Safari flag
+
+    if (!isStandalone) return;
+
+    const lockPortrait = () => {
+      const orientation = (screen as any).orientation;
+      if (orientation?.lock) {
+        orientation.lock('portrait').catch(() => {
+          // Some devices/browsers reject this (e.g. tablets, or if the
+          // fullscreen requirement isn't met) - fail silently, the manifest
+          // hint still applies as a fallback.
+        });
+      }
+    };
+
+    lockPortrait();
+    // Re-assert on resume - some browsers release the lock when the app is
+    // backgrounded and restored.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') lockPortrait();
+    });
+  }, []);
+
   return (
     <AuthProvider>
       <BrowserRouter>

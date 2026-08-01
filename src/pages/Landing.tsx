@@ -541,34 +541,6 @@ const Landing = () => {
             </div>
           </div>
 
-          <div>
-            <h4 className="font-semibold text-white mb-4 text-sm">Product</h4>
-            <ul className="space-y-2.5 text-sm text-slate-400">
-              <li><a href="#features" className="hover:text-white transition">Features</a></li>
-              <li><a href="#pricing" className="hover:text-white transition">Pricing</a></li>
-              <li><a href="/changelog" className="hover:text-white transition">Changelog</a></li>
-            </ul>
-          </div>
-
-          <div>
-            <h4 className="font-semibold text-white mb-4 text-sm">Company</h4>
-            <ul className="space-y-2.5 text-sm text-slate-400">
-              <li><a href="/about" className="hover:text-white transition">About</a></li>
-              <li><a href="/contact" className="hover:text-white transition">Contact</a></li>
-              <li><a href="/careers" className="hover:text-white transition">Careers</a></li>
-            </ul>
-          </div>
-
-          <div>
-            <h4 className="font-semibold text-white mb-4 text-sm">Legal</h4>
-            <ul className="space-y-2.5 text-sm text-slate-400">
-              <li><a href="/privacy" className="hover:text-white transition">Privacy</a></li>
-              <li><a href="/terms" className="hover:text-white transition">Terms</a></li>
-              <li><a href="/security" className="hover:text-white transition">Security</a></li>
-            </ul>
-          </div>
-        </div>
-
         <div className="max-w-7xl mx-auto mt-12 pt-8 border-t border-slate-800 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-slate-500">
           <p>© {new Date().getFullYear()} EduNexa. All rights reserved.</p>
           <div className="flex items-center gap-2">

@@ -7,8 +7,9 @@ import { Student, Grade } from '../types';
 import { useData, useDataMutation } from '../hooks/useData';
 import { fetchWithProxy } from '../lib/fetchProxy';
 import { TableSkeleton } from '../components/ui/Skeleton';
-import { Search, UserPlus, Archive, Edit2, X, Check, Lock, ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react';
+import { Search, UserPlus, Archive, Edit2, X, Check, Lock, ChevronLeft, ChevronRight, RotateCcw, Download } from 'lucide-react';
 import debounce from 'lodash/debounce';
+import ClassListModal from '../components/ClassListModal';
 
 const PAGE_SIZE = 50;
 
@@ -34,6 +35,7 @@ const Students = () => {
   const [showArchived, setShowArchived] = useState(false);
   const [archiveConfirmId, setArchiveConfirmId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showClassListModal, setShowClassListModal] = useState(false);
 
   const debouncedSetSearch = useMemo(
     () => debounce((val: string) => {
@@ -148,6 +150,14 @@ const Students = () => {
         {isAdmin(user?.role) && (
           <div className="flex gap-2">
             <button
+              onClick={() => setShowClassListModal(true)}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-blue-300 hover:text-blue-600 transition-colors"
+            >
+              <Download size={18} />
+              <span className="hidden sm:inline">Download Class List</span>
+              <span className="sm:hidden">Class List</span>
+            </button>
+            <button
               disabled={isReadOnly}
               onClick={() => navigate('/students/onboard')}
               className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm ${
@@ -160,6 +170,8 @@ const Students = () => {
           </div>
         )}
       </div>
+
+      <ClassListModal isOpen={showClassListModal} onClose={() => setShowClassListModal(false)} />
 
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg text-sm flex items-center justify-between">

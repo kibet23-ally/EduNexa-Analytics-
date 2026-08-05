@@ -9,6 +9,7 @@ import SubscriptionBanner from './components/SubscriptionBanner';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import OfflineScreen from './components/OfflineScreen';
 import PWAUpdatePrompt from './components/PWAUpdatePrompt';
+import { Toaster } from 'react-hot-toast';
 
 // Lazy load all pages
 const Landing            = lazy(() => import('./pages/Landing'));
@@ -41,7 +42,7 @@ const StudentPromotion   = lazy(() => import('./pages/StudentPromotion'));
 const ResetPassword      = lazy(() => import('./pages/ResetPassword'));
 const ForgotPassword     = lazy(() => import('./pages/ForgotPassword'));
 const InsightsCenter     = lazy(() => import('./pages/InsightsCenter'));
-const SchoolLevels = lazy(() => import('./pages/SchoolLevels'));
+const SchoolLevels.      = lazy(() => import('./pages/SchoolLevels'));
 
 // Footer pages
 const Features = lazy(() => import('./pages/Features'));
@@ -144,6 +145,7 @@ const wrap = (component: React.ReactNode, name?: string) => (
 /* ─── Layout ─────────────────────────────────────────────────────────────── */
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
+    <Toaster position="top-right" />
     <Sidebar />
     <div className="flex-1 flex flex-col min-w-0">
       <SubscriptionBanner />

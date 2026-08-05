@@ -42,7 +42,7 @@ const StudentPromotion   = lazy(() => import('./pages/StudentPromotion'));
 const ResetPassword      = lazy(() => import('./pages/ResetPassword'));
 const ForgotPassword     = lazy(() => import('./pages/ForgotPassword'));
 const InsightsCenter     = lazy(() => import('./pages/InsightsCenter'));
-const SchoolLevels.      = lazy(() => import('./pages/SchoolLevels'));
+const SchoolLevels = lazy(() => import('./pages/SchoolLevels'));
 
 // Footer pages
 const Features = lazy(() => import('./pages/Features'));

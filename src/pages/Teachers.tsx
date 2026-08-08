@@ -3,6 +3,7 @@ import React, { useState, useMemo } from 'react';
 import { useAuth } from '../useAuth';
 import { useSubscription } from '../useSubscription';
 import { useData, useDataMutation } from '../hooks/useData';
+import { supabase } from '../lib/supabase';
 import { Subject, Grade } from '../types';
 import toast from 'react-hot-toast';
 import {
@@ -152,14 +153,25 @@ const Teachers = () => {
         });
         toast.success('Teacher updated successfully.');
       } else {
-        await teachersMutation.mutateAsync({
-          operation: 'insert',
-          payload: [{
+        // Creates a real Supabase Auth account server-side (via the service
+        // role key) instead of writing the password into a plaintext column
+        // in the teachers table - the client never has a path to store or
+        // read raw passwords at all now.
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) { toast.error('Session expired. Please log in again.'); setSaving(false); return; }
+
+        const res = await fetch('/api/admin/create-teacher', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({
             name: teacherForm.name, email: teacherForm.email, phone: cleanPhone || null,
-            password: teacherForm.password, role: teacherForm.role, school_id: Number(user?.school_id),
-          }],
+            password: teacherForm.password, role: teacherForm.role,
+          }),
         });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || 'Failed to add teacher.');
         toast.success('Teacher added successfully.');
+        teachersQuery.refetch?.();
       }
       setPage(0);
       setShowTeacherModal(false);

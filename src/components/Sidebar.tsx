@@ -17,6 +17,7 @@ import {
   Settings,
   UserCheck,
   Lightbulb,
+  Wallet,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -76,6 +77,7 @@ const Sidebar = () => {
   const isSuperAdminRole = rawRole === 'superadmin' || rawRole === 'super_admin' || rawRole.includes('super');
   const isSchoolAdmin = rawRole === 'admin' || rawRole === 'school_admin' || rawRole === 'principal' || rawRole === 'schooladmin';
   const isTeacher = rawRole === 'teacher';
+  const isBursar = rawRole === 'bursar';
 
   const superAdminNav: NavItem[] = [
     { to: '/super-admin', icon: LayoutDashboard, label: 'Dashboard' },
@@ -83,6 +85,7 @@ const Sidebar = () => {
     { to: '/super/users', icon: Users2, label: 'User Management' },
     { to: '/super/subscriptions', icon: CreditCard, label: 'Platform Subscriptions' },
     { to: '/super/analytics', icon: PieChart, label: 'Analytics' },
+    { to: '/finance', icon: Wallet, label: 'Finance' },
     { to: '/status', icon: ClipboardList, label: 'Audit Logs' },
     { to: '/super/settings', icon: Settings, label: 'Settings' },
   ];
@@ -117,6 +120,11 @@ const Sidebar = () => {
     },
     { to: '/insights', icon: Lightbulb, label: 'Insights Center' },
   ];
+
+  // Finance: visible only to Principal/Admin/Bursar - never Teacher.
+  if (isSchoolAdmin || isBursar) {
+    schoolAdminNav.push({ to: '/finance', icon: Wallet, label: 'Finance' });
+  }
 
   // Add Teachers and Subscription for school admins only
   if (isSchoolAdmin) {

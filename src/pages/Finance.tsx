@@ -1,0 +1,721 @@
+import React, { useState, useMemo, useEffect } from 'react';
+import { useAuth } from '../useAuth';
+import { useData } from '../hooks/useData';
+import { fetchWithProxy, writeWithProxy } from '../lib/fetchProxy';
+import { Grade, School } from '../types';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import toast from 'react-hot-toast';
+import {
+  Wallet, TrendingUp, AlertTriangle, Search, X, Loader2, Printer,
+  Receipt, History, Plus, FileText, Settings2, ChevronDown,
+} from 'lucide-react';
+
+/* ══════════════════════════════════════════════════════════════════════
+   Types
+══════════════════════════════════════════════════════════════════════ */
+interface StudentRow {
+  id: number;
+  admission_number: string;
+  name: string;
+  grade_id: number;
+  grade_name: string;
+  expected: number;
+  paid: number;
+  balance: number;
+}
+interface PaymentRow {
+  id: number;
+  student_id: number;
+  amount: number;
+  payment_method: string;
+  reference_number: string | null;
+  receipt_number: string;
+  notes: string | null;
+  payment_date: string;
+  voided: boolean;
+}
+
+const TABS = ['Dashboard', 'Student Fees', 'Reports'] as const;
+type Tab = typeof TABS[number];
+
+const isSuperAdmin = (role?: string) => ['SuperAdmin', 'super_admin'].includes(role || '');
+const money = (n: number) => `KSh ${n.toLocaleString('en-KE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+const inputCls = "w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20 dark:text-white";
+
+const Finance: React.FC = () => {
+  const { user } = useAuth();
+  const superAdmin = isSuperAdmin(user?.role);
+
+  const [tab, setTab] = useState<Tab>('Dashboard');
+  const [selectedSchoolId, setSelectedSchoolId] = useState<string>(superAdmin ? '' : String(user?.school_id || ''));
+  const [term, setTerm] = useState(1);
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const [students, setStudents] = useState<StudentRow[]>([]);
+  const [feeStructureModal, setFeeStructureModal] = useState(false);
+  const [paymentModal, setPaymentModal] = useState<StudentRow | null>(null);
+  const [historyModal, setHistoryModal] = useState<StudentRow | null>(null);
+
+  const effectiveSchoolId = superAdmin ? (selectedSchoolId ? Number(selectedSchoolId) : null) : user?.school_id;
+
+  const schoolsQuery = useData<School>('schools-list-finance', 'schools',
+    { select: 'id, name', orderBy: { column: 'name', ascending: true } }, superAdmin);
+  const schools = useMemo(() => schoolsQuery.data || [], [schoolsQuery.data]);
+
+  // For non-super-admins, fetch just their own school's name (schoolsQuery
+  // above only runs for super admins, who get the full list for the picker).
+  // Note: useData's queryFn discards any result when `single: true` is passed
+  // (Array.isArray(singleObject) is false, so it silently returns []) — a
+  // pre-existing bug in the shared hook, not something to route around here.
+  // Fetching without `single` and taking the first row sidesteps it safely.
+  const ownSchoolQuery = useData<School>('own-school-finance', 'schools',
+    { select: 'id, name', filters: { id: effectiveSchoolId } },
+    !superAdmin && !!effectiveSchoolId);
+
+  const gradesQuery = useData<Grade>('grades-list-finance', 'grades',
+    { select: 'id, grade_name', ...(effectiveSchoolId ? { filters: { school_id: effectiveSchoolId } } : {}) },
+    !!effectiveSchoolId);
+  const grades = useMemo(() => {
+    const list = gradesQuery.data || [];
+    return [...list].sort((a, b) => (parseInt(a.grade_name.match(/\d+/)?.[0] || '0') - parseInt(b.grade_name.match(/\d+/)?.[0] || '0')));
+  }, [gradesQuery.data]);
+
+  /* ── Load students + fee structure + payments for the selected period ── */
+  const loadData = async () => {
+    if (!effectiveSchoolId) { setStudents([]); return; }
+    setLoading(true);
+    try {
+      const [studentsRes, structuresRes, paymentsRes] = await Promise.all([
+        fetchWithProxy('students', {
+          select: 'id, admission_number, name, grade_id, deleted_at',
+          filters: { school_id: effectiveSchoolId },
+        }),
+        fetchWithProxy('fee_structures', {
+          select: 'grade_id, amount',
+          filters: { school_id: effectiveSchoolId, term, year },
+        }),
+        fetchWithProxy('fee_payments', {
+          select: 'student_id, amount, voided',
+          filters: { school_id: effectiveSchoolId, term, year },
+        }),
+      ]);
+
+      const activeStudents = (Array.isArray(studentsRes.data) ? studentsRes.data : []).filter((s: any) => !s.deleted_at);
+      const structures: Record<number, number> = {};
+      (Array.isArray(structuresRes.data) ? structuresRes.data : []).forEach((s: any) => { structures[s.grade_id] = Number(s.amount); });
+      const paidByStudent: Record<number, number> = {};
+      (Array.isArray(paymentsRes.data) ? paymentsRes.data : []).forEach((p: any) => {
+        if (p.voided) return;
+        paidByStudent[p.student_id] = (paidByStudent[p.student_id] || 0) + Number(p.amount);
+      });
+      const gradeName = (id: number) => grades.find(g => g.id === id)?.grade_name || '—';
+
+      const rows: StudentRow[] = activeStudents.map((s: any) => {
+        const expected = structures[s.grade_id] || 0;
+        const paid = paidByStudent[s.id] || 0;
+        return {
+          id: s.id, admission_number: s.admission_number, name: s.name, grade_id: s.grade_id,
+          grade_name: gradeName(s.grade_id), expected, paid, balance: expected - paid,
+        };
+      });
+      setStudents(rows);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to load fee data.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadData(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [effectiveSchoolId, term, year, grades.length]);
+
+  const filteredStudents = useMemo(() => {
+    if (!search) return students;
+    const q = search.toLowerCase();
+    return students.filter(s => s.name.toLowerCase().includes(q) || s.admission_number.toLowerCase().includes(q));
+  }, [students, search]);
+
+  const totals = useMemo(() => ({
+    expected: students.reduce((a, s) => a + s.expected, 0),
+    collected: students.reduce((a, s) => a + s.paid, 0),
+    outstanding: students.reduce((a, s) => a + Math.max(0, s.balance), 0),
+  }), [students]);
+
+  const schoolName = schools.find(s => String(s.id) === selectedSchoolId)?.name
+    || ownSchoolQuery.data?.[0]?.name
+    || 'School';
+
+  return (
+    <div className="space-y-6">
+      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-11 h-11 rounded-xl bg-[#1e3a5f] flex items-center justify-center">
+            <Wallet className="text-white" size={22} />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Finance</h1>
+            <p className="text-slate-500 dark:text-slate-400 text-sm">Fee collection, receipts, and reports.</p>
+          </div>
+        </div>
+      </header>
+
+      {/* Period + school selectors */}
+      <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 flex flex-wrap gap-3 items-end">
+        {superAdmin && (
+          <div className="space-y-1 min-w-[200px]">
+            <label className="text-xs font-bold text-slate-500 uppercase">School</label>
+            <select value={selectedSchoolId} onChange={e => setSelectedSchoolId(e.target.value)} className={inputCls}>
+              <option value="">Select School</option>
+              {schools.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+        )}
+        <div className="space-y-1">
+          <label className="text-xs font-bold text-slate-500 uppercase">Term</label>
+          <select value={term} onChange={e => setTerm(Number(e.target.value))} className={inputCls}>
+            <option value={1}>Term 1</option><option value={2}>Term 2</option><option value={3}>Term 3</option>
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-bold text-slate-500 uppercase">Year</label>
+          <select value={year} onChange={e => setYear(Number(e.target.value))} className={inputCls}>
+            {[year - 1, year, year + 1].map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </div>
+        {effectiveSchoolId && (
+          <button onClick={() => setFeeStructureModal(true)} className="ml-auto inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300">
+            <Settings2 size={16} /> Set Fee Structure
+          </button>
+        )}
+      </div>
+
+      {!effectiveSchoolId ? (
+        <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 rounded-xl p-8 text-center text-blue-600 dark:text-blue-300 font-medium">
+          {superAdmin ? 'Select a school to view its finance data.' : 'Loading your school…'}
+        </div>
+      ) : (
+        <>
+          {/* Tabs */}
+          <div className="flex gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl w-fit">
+            {TABS.map(t => (
+              <button key={t} onClick={() => setTab(t)}
+                className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${tab === t ? 'bg-white dark:bg-slate-900 text-blue-600 shadow-sm' : 'text-slate-500'}`}>
+                {t}
+              </button>
+            ))}
+          </div>
+
+          {loading ? (
+            <div className="flex justify-center py-16"><Loader2 className="animate-spin text-blue-600" size={28} /></div>
+          ) : tab === 'Dashboard' ? (
+            <DashboardTab totals={totals} studentCount={students.length} />
+          ) : tab === 'Student Fees' ? (
+            <StudentFeesTab
+              students={filteredStudents} search={search} setSearch={setSearch}
+              onRecordPayment={setPaymentModal} onViewHistory={setHistoryModal}
+            />
+          ) : (
+            <ReportsTab
+              students={students} schoolName={schoolName} term={term} year={year}
+              effectiveSchoolId={effectiveSchoolId}
+            />
+          )}
+        </>
+      )}
+
+      {feeStructureModal && effectiveSchoolId && (
+        <FeeStructureModal
+          schoolId={effectiveSchoolId} grades={grades} term={term} year={year}
+          onClose={() => setFeeStructureModal(false)}
+          onSaved={() => { setFeeStructureModal(false); loadData(); }}
+        />
+      )}
+      {paymentModal && effectiveSchoolId && (
+        <RecordPaymentModal
+          student={paymentModal} schoolId={effectiveSchoolId} term={term} year={year}
+          schoolName={schoolName} userId={user?.id}
+          onClose={() => setPaymentModal(null)}
+          onSaved={() => { setPaymentModal(null); loadData(); }}
+        />
+      )}
+      {historyModal && (
+        <PaymentHistoryModal
+          student={historyModal} schoolName={schoolName}
+          onClose={() => setHistoryModal(null)}
+        />
+      )}
+    </div>
+  );
+};
+
+/* ══════════════════════════════════════════════════════════════════════
+   Dashboard tab
+══════════════════════════════════════════════════════════════════════ */
+const DashboardTab: React.FC<{ totals: { expected: number; collected: number; outstanding: number }; studentCount: number }> = ({ totals, studentCount }) => {
+  const pct = totals.expected > 0 ? Math.round((totals.collected / totals.expected) * 100) : 0;
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+      <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-100 dark:border-slate-800">
+        <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 text-sm font-medium mb-2"><Wallet size={16} /> Total Fees Expected</div>
+        <p className="text-3xl font-bold text-slate-900 dark:text-white">{money(totals.expected)}</p>
+        <p className="text-xs text-slate-400 mt-1">{studentCount} students</p>
+      </div>
+      <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-100 dark:border-slate-800">
+        <div className="flex items-center gap-2 text-green-600 text-sm font-medium mb-2"><TrendingUp size={16} /> Total Fees Collected</div>
+        <p className="text-3xl font-bold text-green-600">{money(totals.collected)}</p>
+        <p className="text-xs text-slate-400 mt-1">{pct}% of expected</p>
+      </div>
+      <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-100 dark:border-slate-800">
+        <div className="flex items-center gap-2 text-red-500 text-sm font-medium mb-2"><AlertTriangle size={16} /> Outstanding Balance</div>
+        <p className="text-3xl font-bold text-red-500">{money(totals.outstanding)}</p>
+      </div>
+    </div>
+  );
+};
+
+/* ══════════════════════════════════════════════════════════════════════
+   Student Fees tab
+══════════════════════════════════════════════════════════════════════ */
+const StudentFeesTab: React.FC<{
+  students: StudentRow[]; search: string; setSearch: (s: string) => void;
+  onRecordPayment: (s: StudentRow) => void; onViewHistory: (s: StudentRow) => void;
+}> = ({ students, search, setSearch, onRecordPayment, onViewHistory }) => (
+  <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800 overflow-hidden">
+    <div className="p-4 border-b border-slate-100 dark:border-slate-800">
+      <div className="relative max-w-sm">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name or admission number..."
+          className="w-full pl-9 pr-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20 dark:text-white" />
+      </div>
+    </div>
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs uppercase">
+            <th className="px-4 py-3 text-left">Admission No</th>
+            <th className="px-4 py-3 text-left">Name</th>
+            <th className="px-4 py-3 text-left">Grade</th>
+            <th className="px-4 py-3 text-right">Expected</th>
+            <th className="px-4 py-3 text-right">Paid</th>
+            <th className="px-4 py-3 text-right">Balance</th>
+            <th className="px-4 py-3 text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
+          {students.map(s => (
+            <tr key={s.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+              <td className="px-4 py-3 font-mono text-blue-600">{s.admission_number}</td>
+              <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{s.name}</td>
+              <td className="px-4 py-3 text-slate-500">{s.grade_name}</td>
+              <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-300">{money(s.expected)}</td>
+              <td className="px-4 py-3 text-right text-green-600">{money(s.paid)}</td>
+              <td className={`px-4 py-3 text-right font-bold ${s.balance > 0 ? 'text-red-500' : 'text-green-600'}`}>{money(Math.max(0, s.balance))}</td>
+              <td className="px-4 py-3 text-right">
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => onViewHistory(s)} title="Payment History" className="p-1.5 text-slate-400 hover:text-blue-600"><History size={16} /></button>
+                  <button onClick={() => onRecordPayment(s)} title="Record Payment" className="p-1.5 text-slate-400 hover:text-green-600"><Plus size={16} /></button>
+                </div>
+              </td>
+            </tr>
+          ))}
+          {students.length === 0 && (
+            <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400">No students found.</td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  </div>
+);
+
+/* ══════════════════════════════════════════════════════════════════════
+   Fee Structure modal — set expected fee per grade for the selected period
+══════════════════════════════════════════════════════════════════════ */
+const FeeStructureModal: React.FC<{
+  schoolId: number; grades: Grade[]; term: number; year: number;
+  onClose: () => void; onSaved: () => void;
+}> = ({ schoolId, grades, term, year, onClose, onSaved }) => {
+  const [amounts, setAmounts] = useState<Record<number, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [loadingExisting, setLoadingExisting] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await fetchWithProxy('fee_structures', {
+        select: 'grade_id, amount', filters: { school_id: schoolId, term, year },
+      });
+      const map: Record<number, string> = {};
+      (Array.isArray(data) ? data : []).forEach((r: any) => { map[r.grade_id] = String(r.amount); });
+      setAmounts(map);
+      setLoadingExisting(false);
+    })();
+  }, [schoolId, term, year]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      for (const g of grades) {
+        const val = amounts[g.id];
+        if (val === undefined || val === '') continue;
+        await writeWithProxy('fee_structures', 'upsert',
+          { school_id: schoolId, grade_id: g.id, term, year, amount: Number(val) },
+          undefined,
+          'school_id,grade_id,term,year'
+        );
+      }
+      toast.success('Fee structure saved.');
+      onSaved();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save fee structure.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[9997] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-2xl shadow-2xl max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b border-slate-100 dark:border-slate-800">
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white">Fee Structure — Term {term}, {year}</h2>
+          <button onClick={onClose}><X size={20} className="text-slate-400" /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          {loadingExisting ? <Loader2 className="animate-spin text-blue-600 mx-auto" /> : grades.map(g => (
+            <div key={g.id} className="flex items-center justify-between gap-3">
+              <label className="text-sm font-medium text-slate-600 dark:text-slate-300 flex-1">{g.grade_name}</label>
+              <input type="number" min={0} value={amounts[g.id] ?? ''} placeholder="0"
+                onChange={e => setAmounts(prev => ({ ...prev, [g.id]: e.target.value }))}
+                className="w-32 px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-right outline-none focus:ring-2 focus:ring-blue-500/20 dark:text-white" />
+            </div>
+          ))}
+          {!loadingExisting && grades.length === 0 && <p className="text-sm text-slate-400 text-center">No grades set up for this school yet.</p>}
+        </div>
+        <div className="p-5 border-t border-slate-100 dark:border-slate-800 flex gap-3">
+          <button onClick={onClose} className="flex-1 px-4 py-2.5 rounded-lg text-sm font-bold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold bg-blue-600 text-white disabled:opacity-50">
+            {saving ? <Loader2 size={16} className="animate-spin" /> : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ══════════════════════════════════════════════════════════════════════
+   Record Payment modal
+══════════════════════════════════════════════════════════════════════ */
+const RecordPaymentModal: React.FC<{
+  student: StudentRow; schoolId: number; term: number; year: number; schoolName: string; userId?: string;
+  onClose: () => void; onSaved: () => void;
+}> = ({ student, schoolId, term, year, schoolName, userId, onClose, onSaved }) => {
+  const [amount, setAmount] = useState('');
+  const [method, setMethod] = useState('Cash');
+  const [reference, setReference] = useState('');
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    const amt = Number(amount);
+    if (!amt || amt <= 0) { toast.error('Enter a valid amount.'); return; }
+    setSaving(true);
+    try {
+      const { data } = await writeWithProxy('fee_payments', 'insert', {
+        school_id: schoolId, student_id: student.id, term, year, amount: amt,
+        payment_method: method, reference_number: reference || null, notes: notes || null,
+        recorded_by: userId,
+      });
+      const payment = Array.isArray(data) ? data[0] : data;
+      toast.success('Payment recorded successfully.');
+      if (payment) printReceipt({ payment, student, schoolName, term, year });
+      onSaved();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to record payment.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[9997] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-2xl shadow-2xl">
+        <div className="flex items-center justify-between p-5 border-b border-slate-100 dark:border-slate-800">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900 dark:text-white">Record Payment</h2>
+            <p className="text-xs text-slate-500">{student.name} · {student.admission_number}</p>
+          </div>
+          <button onClick={onClose}><X size={20} className="text-slate-400" /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="bg-amber-50 dark:bg-amber-950/30 rounded-lg p-3 text-sm text-amber-700 dark:text-amber-300 font-medium">
+            Current balance: {money(Math.max(0, student.balance))}
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase">Amount (KSh)</label>
+            <input type="number" min={1} value={amount} onChange={e => setAmount(e.target.value)} className={inputCls} autoFocus />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase">Payment Method</label>
+            <select value={method} onChange={e => setMethod(e.target.value)} className={inputCls}>
+              {['Cash', 'M-Pesa', 'Bank Transfer', 'Cheque', 'Other'].map(m => <option key={m}>{m}</option>)}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase">Reference Number (optional)</label>
+            <input value={reference} onChange={e => setReference(e.target.value)} className={inputCls} placeholder="M-Pesa code, cheque no..." />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase">Notes (optional)</label>
+            <textarea value={notes} onChange={e => setNotes(e.target.value)} className={inputCls} rows={2} />
+          </div>
+        </div>
+        <div className="p-5 border-t border-slate-100 dark:border-slate-800 flex gap-3">
+          <button onClick={onClose} className="flex-1 px-4 py-2.5 rounded-lg text-sm font-bold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold bg-green-600 text-white disabled:opacity-50">
+            {saving ? <Loader2 size={16} className="animate-spin" /> : 'Record & Print Receipt'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ══════════════════════════════════════════════════════════════════════
+   Payment History modal
+══════════════════════════════════════════════════════════════════════ */
+const PaymentHistoryModal: React.FC<{ student: StudentRow; schoolName: string; onClose: () => void }> = ({ student, schoolName, onClose }) => {
+  const [payments, setPayments] = useState<PaymentRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await fetchWithProxy('fee_payments', {
+        select: 'id, student_id, amount, payment_method, reference_number, receipt_number, notes, payment_date, voided',
+        filters: { student_id: student.id },
+        orderBy: { column: 'payment_date', ascending: false },
+      });
+      setPayments(Array.isArray(data) ? data : []);
+      setLoading(false);
+    })();
+  }, [student.id]);
+
+  return (
+    <div className="fixed inset-0 z-[9997] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-2xl shadow-2xl max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b border-slate-100 dark:border-slate-800">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900 dark:text-white">Payment History</h2>
+            <p className="text-xs text-slate-500">{student.name} · {student.admission_number}</p>
+          </div>
+          <button onClick={onClose}><X size={20} className="text-slate-400" /></button>
+        </div>
+        <div className="p-5">
+          {loading ? <Loader2 className="animate-spin text-blue-600 mx-auto" /> : payments.length === 0 ? (
+            <p className="text-sm text-slate-400 text-center py-6">No payments recorded yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {payments.map(p => (
+                <div key={p.id} className={`flex items-center justify-between p-3 rounded-lg border ${p.voided ? 'border-red-100 bg-red-50/50 opacity-60' : 'border-slate-100 dark:border-slate-800'}`}>
+                  <div>
+                    <p className="text-sm font-bold text-slate-900 dark:text-white">{money(p.amount)} {p.voided && <span className="text-red-500 text-xs font-normal">(voided)</span>}</p>
+                    <p className="text-xs text-slate-400">{new Date(p.payment_date).toLocaleDateString()} · {p.payment_method} · {p.receipt_number}</p>
+                  </div>
+                  <button onClick={() => printReceipt({ payment: p, student, schoolName, term: 0, year: 0 })} title="Print Receipt" className="p-2 text-slate-400 hover:text-blue-600">
+                    <Printer size={16} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ══════════════════════════════════════════════════════════════════════
+   Reports tab
+══════════════════════════════════════════════════════════════════════ */
+const ReportsTab: React.FC<{ students: StudentRow[]; schoolName: string; term: number; year: number; effectiveSchoolId: number }> = ({ students, schoolName, term, year, effectiveSchoolId }) => {
+  const [statementStudentId, setStatementStudentId] = useState('');
+  const [generating, setGenerating] = useState('');
+
+  const handleCollectionReport = async () => {
+    setGenerating('collection');
+    try {
+      const { data } = await fetchWithProxy('fee_payments', {
+        select: 'student_id, amount, payment_method, receipt_number, payment_date, voided',
+        filters: { school_id: effectiveSchoolId, term, year },
+        orderBy: { column: 'payment_date', ascending: true },
+      });
+      const payments = (Array.isArray(data) ? data : []).filter((p: any) => !p.voided);
+      const doc = brandedDoc(schoolName, 'FEE COLLECTION REPORT', `Term ${term}, ${year}`);
+      autoTable(doc, {
+        startY: 45,
+        head: [['Date', 'Student', 'Admission No', 'Amount', 'Method', 'Receipt No']],
+        body: payments.map((p: any) => {
+          const s = students.find(st => st.id === p.student_id);
+          return [new Date(p.payment_date).toLocaleDateString(), s?.name || '—', s?.admission_number || '—', money(p.amount), p.payment_method, p.receipt_number];
+        }),
+        theme: 'grid', styles: { fontSize: 8 }, headStyles: { fillColor: [30, 58, 95], textColor: 255 },
+      });
+      addPageNumbers(doc);
+      doc.save(`Fee_Collection_Report_T${term}_${year}.pdf`);
+      toast.success('Fee Collection Report downloaded.');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to generate report.');
+    } finally { setGenerating(''); }
+  };
+
+  const handleOutstandingReport = () => {
+    setGenerating('outstanding');
+    const outstanding = students.filter(s => s.balance > 0).sort((a, b) => b.balance - a.balance);
+    const doc = brandedDoc(schoolName, 'OUTSTANDING BALANCES REPORT', `Term ${term}, ${year}`);
+    autoTable(doc, {
+      startY: 45,
+      head: [['Admission No', 'Student', 'Grade', 'Expected', 'Paid', 'Balance']],
+      body: outstanding.map(s => [s.admission_number, s.name, s.grade_name, money(s.expected), money(s.paid), money(s.balance)]),
+      theme: 'grid', styles: { fontSize: 8 }, headStyles: { fillColor: [30, 58, 95], textColor: 255 },
+    });
+    addPageNumbers(doc);
+    doc.save(`Outstanding_Balances_T${term}_${year}.pdf`);
+    toast.success('Outstanding Balances Report downloaded.');
+    setGenerating('');
+  };
+
+  const handleStatement = async () => {
+    if (!statementStudentId) { toast.error('Select a student first.'); return; }
+    setGenerating('statement');
+    try {
+      const student = students.find(s => String(s.id) === statementStudentId);
+      if (!student) return;
+      const { data } = await fetchWithProxy('fee_payments', {
+        select: 'amount, payment_method, receipt_number, payment_date, voided',
+        filters: { student_id: student.id },
+        orderBy: { column: 'payment_date', ascending: true },
+      });
+      const payments = (Array.isArray(data) ? data : []).filter((p: any) => !p.voided);
+      const doc = brandedDoc(schoolName, 'STUDENT FEE STATEMENT', `${student.name} (${student.admission_number})`);
+      autoTable(doc, {
+        startY: 45,
+        head: [['Date', 'Amount', 'Method', 'Receipt No']],
+        body: payments.map((p: any) => [new Date(p.payment_date).toLocaleDateString(), money(p.amount), p.payment_method, p.receipt_number]),
+        theme: 'grid', styles: { fontSize: 9 }, headStyles: { fillColor: [30, 58, 95], textColor: 255 },
+      });
+      const y = (doc as any).lastAutoTable.finalY + 10;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+      doc.text(`Total Expected: ${money(student.expected)}`, 14, y);
+      doc.text(`Total Paid: ${money(student.paid)}`, 14, y + 6);
+      doc.setTextColor(220, 38, 38);
+      doc.text(`Balance: ${money(Math.max(0, student.balance))}`, 14, y + 12);
+      addPageNumbers(doc);
+      doc.save(`Fee_Statement_${student.admission_number}.pdf`);
+      toast.success('Student Fee Statement downloaded.');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to generate statement.');
+    } finally { setGenerating(''); }
+  };
+
+  return (
+    <div className="grid md:grid-cols-3 gap-5">
+      <ReportCard icon={FileText} title="Fee Collection Report" desc="All payments received this term." loading={generating === 'collection'} onClick={handleCollectionReport} />
+      <ReportCard icon={AlertTriangle} title="Outstanding Balances Report" desc="Students who still owe fees." loading={generating === 'outstanding'} onClick={handleOutstandingReport} />
+      <div className="bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-100 dark:border-slate-800 space-y-3">
+        <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200 font-bold text-sm"><Receipt size={16} /> Student Fee Statement</div>
+        <p className="text-xs text-slate-400">Full payment history for one student.</p>
+        <select value={statementStudentId} onChange={e => setStatementStudentId(e.target.value)} className={inputCls}>
+          <option value="">Select student</option>
+          {students.map(s => <option key={s.id} value={s.id}>{s.name} — {s.admission_number}</option>)}
+        </select>
+        <button onClick={handleStatement} disabled={generating === 'statement'} className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white disabled:opacity-50">
+          {generating === 'statement' ? <Loader2 size={16} className="animate-spin" /> : 'Generate'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const ReportCard: React.FC<{ icon: any; title: string; desc: string; loading: boolean; onClick: () => void }> = ({ icon: Icon, title, desc, loading, onClick }) => (
+  <div className="bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-100 dark:border-slate-800 space-y-3">
+    <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200 font-bold text-sm"><Icon size={16} /> {title}</div>
+    <p className="text-xs text-slate-400">{desc}</p>
+    <button onClick={onClick} disabled={loading} className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white disabled:opacity-50">
+      {loading ? <Loader2 size={16} className="animate-spin" /> : 'Download PDF'}
+    </button>
+  </div>
+);
+
+/* ══════════════════════════════════════════════════════════════════════
+   Shared PDF helpers
+══════════════════════════════════════════════════════════════════════ */
+function brandedDoc(schoolName: string, title: string, subtitle: string): jsPDF {
+  const doc = new jsPDF('p', 'mm', 'a4');
+  const W = doc.internal.pageSize.width;
+  doc.setFillColor(30, 58, 95);
+  doc.rect(0, 0, W, 30, 'F');
+  doc.setFillColor(234, 179, 8);
+  doc.rect(0, 30, W, 1.5, 'F');
+  doc.setTextColor(255, 255, 255); doc.setFontSize(14); doc.setFont('helvetica', 'bold');
+  doc.text(schoolName.toUpperCase(), W / 2, 13, { align: 'center' });
+  doc.setFontSize(11); doc.setTextColor(253, 224, 71);
+  doc.text(title, W / 2, 21, { align: 'center' });
+  doc.setTextColor(30, 41, 59); doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+  doc.text(subtitle, 14, 38);
+  doc.setTextColor(100, 116, 139);
+  doc.text(`Generated: ${new Date().toLocaleDateString('en-KE', { year: 'numeric', month: 'long', day: 'numeric' })}`, W - 14, 38, { align: 'right' });
+  return doc;
+}
+
+function addPageNumbers(doc: jsPDF) {
+  const total = doc.internal.getNumberOfPages();
+  const W = doc.internal.pageSize.width;
+  for (let i = 1; i <= total; i++) {
+    doc.setPage(i);
+    const H = doc.internal.pageSize.height;
+    doc.setFontSize(8); doc.setTextColor(148, 163, 184);
+    doc.text(`Page ${i} of ${total}`, W - 14, H - 8, { align: 'right' });
+    doc.text('Generated by EduNexa Analytics', 14, H - 8);
+  }
+}
+
+function printReceipt(params: { payment: any; student: StudentRow; schoolName: string; term: number; year: number }) {
+  const { payment, student, schoolName, term, year } = params;
+  const doc = new jsPDF('p', 'mm', 'a5');
+  const W = doc.internal.pageSize.width;
+
+  doc.setFillColor(30, 58, 95); doc.rect(0, 0, W, 22, 'F');
+  doc.setFillColor(234, 179, 8); doc.rect(0, 22, W, 1.2, 'F');
+  doc.setTextColor(255, 255, 255); doc.setFontSize(13); doc.setFont('helvetica', 'bold');
+  doc.text(schoolName.toUpperCase(), W / 2, 10, { align: 'center' });
+  doc.setFontSize(10); doc.setTextColor(253, 224, 71);
+  doc.text('OFFICIAL RECEIPT', W / 2, 17, { align: 'center' });
+
+  doc.setTextColor(30, 41, 59); doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+  let y = 32;
+  const line = (label: string, value: string) => {
+    doc.setFont('helvetica', 'bold'); doc.text(label, 14, y);
+    doc.setFont('helvetica', 'normal'); doc.text(value, 60, y);
+    y += 7;
+  };
+  line('Receipt No:', payment.receipt_number);
+  line('Date:', new Date(payment.payment_date).toLocaleDateString());
+  line('Student:', student.name);
+  line('Admission No:', student.admission_number);
+  if (term) line('Term/Year:', `Term ${term}, ${year}`);
+  line('Payment Method:', payment.payment_method);
+  if (payment.reference_number) line('Reference:', payment.reference_number);
+
+  doc.setDrawColor(200); doc.line(14, y, W - 14, y); y += 8;
+  doc.setFontSize(13); doc.setFont('helvetica', 'bold');
+  doc.text('Amount Paid:', 14, y);
+  doc.setTextColor(22, 163, 74);
+  doc.text(`KSh ${Number(payment.amount).toLocaleString()}`, W - 14, y, { align: 'right' });
+
+  const H = doc.internal.pageSize.height;
+  doc.setFontSize(7); doc.setTextColor(148, 163, 184); doc.setFont('helvetica', 'normal');
+  doc.text('Generated by EduNexa Analytics', W / 2, H - 8, { align: 'center' });
+
+  doc.save(`Receipt_${payment.receipt_number}.pdf`);
+}
+
+export default Finance;

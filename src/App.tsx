@@ -26,6 +26,7 @@ const MarksEntry         = lazy(() => import('./pages/MarksEntry'));
 const Analytics          = lazy(() => import('./pages/Analytics'));
 const Reports            = lazy(() => import('./pages/Reports'));
 const Teachers           = lazy(() => import('./pages/Teachers'));
+const Finance            = lazy(() => import('./pages/Finance'));
 const OrderForm          = lazy(() => import('./pages/OrderForm'));
 const Schools            = lazy(() => import('./pages/Schools'));
 const SuperAdminDashboard = lazy(() => import('./pages/SuperAdminDashboard'));
@@ -228,6 +229,11 @@ const AppRoutes = () => {
       <Route path="/subscription" element={
         <RoleProtectedRoute allowedRoles={['Admin','admin','school_admin','Principal','SuperAdmin','super_admin']}>
           <Layout>{wrap(<Subscriptions />, 'Subscription')}</Layout>
+        </RoleProtectedRoute>
+      } />
+      <Route path="/finance" element={
+        <RoleProtectedRoute allowedRoles={['Admin','admin','school_admin','Principal','Bursar','bursar','SuperAdmin','super_admin']}>
+          <Layout>{wrap(<Finance />, 'Finance')}</Layout>
         </RoleProtectedRoute>
       } />
 

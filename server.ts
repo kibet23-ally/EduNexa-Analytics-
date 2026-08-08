@@ -16,6 +16,70 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // ── Trusted caller resolution ──────────────────────────────────────────
+  // CRITICAL: never derive role/school_id from the JWT's user_metadata.
+  // user_metadata is self-editable by any authenticated user via
+  // supabase.auth.updateUser({ data: {...} }) - trusting it here would let
+  // any account grant itself super_admin platform-wide by simply calling
+  // that from their own browser console. app_metadata is server-controlled
+  // and safer, but the only fully trustworthy source is a fresh lookup
+  // against the actual authorization table (profiles), which is what every
+  // RLS policy in the database itself is keyed on - so that's the single
+  // source of truth used here too, keeping this proxy and Postgres RLS in
+  // agreement instead of two independently-drifting authorization systems.
+  async function resolveCaller(req: express.Request): Promise<{ userId: string | null; schoolId: number | null; role: string | null; isSuperAdmin: boolean }> {
+    if (!supabaseAdmin) return { userId: null, schoolId: null, role: null, isSuperAdmin: false };
+
+    const { sessionToken } = (req.body || {}) as { sessionToken?: string };
+
+    // Legacy DB_SESSION_ path (teachers without full Supabase Auth)
+    if (sessionToken && sessionToken.startsWith('DB_SESSION_')) {
+      const tId = sessionToken.split('_')[2];
+      const { data: teacher } = await supabaseAdmin.from('teachers').select('id, school_id, role').eq('id', tId).maybeSingle();
+      if (teacher) {
+        const role = (teacher.role || '').toLowerCase();
+        return { userId: String(teacher.id), schoolId: teacher.school_id ?? null, role, isSuperAdmin: role === 'superadmin' || role === 'super_admin' };
+      }
+      return { userId: null, schoolId: null, role: null, isSuperAdmin: false };
+    }
+
+    // Bearer token path - verify the token is real, then ALWAYS look up
+    // role/school_id fresh from profiles, never from the token's own claims.
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return { userId: null, schoolId: null, role: null, isSuperAdmin: false };
+
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user } } = await supabaseAdmin.auth.getUser(token);
+    if (!user) return { userId: null, schoolId: null, role: null, isSuperAdmin: false };
+
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .select('school_id, role')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    const role = (profile?.role || '').toLowerCase();
+    return {
+      userId: user.id,
+      schoolId: profile?.school_id ?? null,
+      role,
+      isSuperAdmin: role === 'super_admin' || role === 'superadmin',
+    };
+  }
+
+  // Tables where writes require an admin-level role (school_admin/principal
+  // or super_admin) - a Teacher's valid session token is not sufficient,
+  // even though it passes school-scoping. This mirrors what the real RLS
+  // policies on these tables already require; enforced here too because
+  // this proxy uses the service-role key, which bypasses RLS entirely.
+  const ADMIN_WRITE_TABLES = new Set(['teachers', 'users', 'schools', 'guardians', 'learner_documents', 'grades', 'subjects']);
+  // Tables restricted to finance staff specifically (school_admin/principal/
+  // bursar/super_admin) - matches is_finance_staff() in Postgres.
+  const FINANCE_WRITE_TABLES = new Set(['fee_payments', 'fee_structures']);
+  const isAdminRole = (role: string | null) => !!role && ['school_admin', 'principal', 'admin'].includes(role);
+  const isFinanceRole = (role: string | null) => isAdminRole(role) || role === 'bursar';
+
+
   // Essential Middleware
   app.use(compression());
   app.use(express.json());
@@ -209,18 +273,91 @@ async function startServer() {
   });
 
   // Create School Admin Endpoint
+  // Creates a real Supabase Auth user for a staff member (Teacher/Principal/
+  // Admin) instead of storing their password in a plaintext column. This
+  // replaces the old approach where Teachers.tsx inserted directly into the
+  // `teachers` table with a raw `password` field.
+  app.post("/api/admin/create-teacher", async (req, res) => {
+    const { email, password, name, phone, role = 'Teacher' } = req.body;
+
+    if (!supabaseAdmin) {
+      return res.status(500).json({ error: "Supabase Service Key not configured on server" });
+    }
+    if (!email || !password || !name) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+    if (!['Teacher', 'Principal', 'Admin'].includes(role)) {
+      return res.status(400).json({ error: "Invalid role" });
+    }
+
+    try {
+      // Authorization: only an admin-level user (school_admin/principal) of
+      // THEIR OWN school, or a super_admin (any school), may create staff.
+      const { schoolId: callerSchoolId, isSuperAdmin, role: callerRole } = await resolveCaller(req);
+      if (!isSuperAdmin && !isAdminRole(callerRole)) {
+        return res.status(403).json({ error: "You don't have permission to add staff." });
+      }
+      const targetSchoolId = isSuperAdmin ? (req.body.schoolId ?? callerSchoolId) : callerSchoolId;
+      if (!targetSchoolId) {
+        return res.status(400).json({ error: "Could not resolve which school to add this staff member to." });
+      }
+
+      console.log(`[Admin] Creating staff account for: ${email} (role: ${role})`);
+      const cleanEmail = String(email).toLowerCase().trim();
+
+      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+        email: cleanEmail,
+        password,
+        email_confirm: true,
+        user_metadata: { name }, // display-only; never trusted for authorization (see resolveCaller)
+      });
+      if (authError) {
+        console.error(`[Admin] Auth creation failed for ${email}:`, authError.message);
+        throw authError;
+      }
+
+      const userId = authData.user.id;
+      console.log(`[Admin] Auth user created: ${userId}. Linking to DB tables...`);
+
+      const dbRole = role === 'Admin' ? 'school_admin' : role === 'Principal' ? 'school_admin' : 'teacher';
+      const [profileRes, userRes, teacherRes] = await Promise.all([
+        supabaseAdmin.from('profiles').upsert([{ id: userId, full_name: name, role: dbRole, school_id: targetSchoolId, phone: phone || null }]),
+        supabaseAdmin.from('users').insert([{ id: userId, auth_id: userId, email: cleanEmail, name, role: dbRole, school_id: targetSchoolId }]),
+        supabaseAdmin.from('teachers').insert([{ id: userId, auth_id: userId, email: cleanEmail, name, phone: phone || null, role, school_id: targetSchoolId }]),
+      ]);
+
+      if (profileRes.error) console.error(`[Admin] 'profiles' link failed:`, profileRes.error.message);
+      if (userRes.error) console.error(`[Admin] 'users' link failed:`, userRes.error.message);
+      if (teacherRes.error) console.error(`[Admin] 'teachers' link failed:`, teacherRes.error.message);
+
+      console.log(`[Admin] Staff provision complete for ${email}`);
+      res.json({ success: true, userId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[Admin Error] Staff Creation:", message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Retained for any existing callers; now properly authorized (was
+  // previously wide open to unauthenticated requests) and delegates to the
+  // same real-auth-user creation path above rather than duplicating it.
   app.post("/api/admin/create-school-admin", async (req, res) => {
     const { email, password, name, schoolId, role = 'Admin' } = req.body;
 
     if (!supabaseAdmin) {
       return res.status(500).json({ error: "Supabase Service Key not configured on server" });
     }
-
     if (!email || !password || !name || !schoolId) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
     try {
+      const { isSuperAdmin } = await resolveCaller(req);
+      if (!isSuperAdmin) {
+        return res.status(403).json({ error: "Only a super admin can provision a school admin account." });
+      }
+
       console.log(`[Admin] Starting provision for: ${email}`);
       const cleanEmail = email.toLowerCase().trim();
 
@@ -228,7 +365,7 @@ async function startServer() {
         email: cleanEmail,
         password: password,
         email_confirm: true,
-        user_metadata: { name, school_id: schoolId }
+        user_metadata: { name },
       });
 
       if (authError) {
@@ -239,11 +376,13 @@ async function startServer() {
       const userId = authData.user.id;
       console.log(`[Admin] Auth user created: ${userId}. Linking to DB tables...`);
 
-      const [userRes, teacherRes] = await Promise.all([
-        supabaseAdmin.from('users').insert([{ id: userId, email: cleanEmail, name, role, school_id: schoolId }]),
-        supabaseAdmin.from('teachers').insert([{ email: cleanEmail, name, role, school_id: schoolId, status: 'Active' }])
+      const [profileRes, userRes, teacherRes] = await Promise.all([
+        supabaseAdmin.from('profiles').upsert([{ id: userId, full_name: name, role: 'school_admin', school_id: schoolId }]),
+        supabaseAdmin.from('users').insert([{ id: userId, auth_id: userId, email: cleanEmail, name, role: 'school_admin', school_id: schoolId }]),
+        supabaseAdmin.from('teachers').insert([{ id: userId, auth_id: userId, email: cleanEmail, name, role, school_id: schoolId }]),
       ]);
 
+      if (profileRes.error) console.error(`[Admin] 'profiles' link failed:`, profileRes.error.message);
       if (userRes.error) console.error(`[Admin] 'users' table link failed:`, userRes.error.message);
       if (teacherRes.error) console.error(`[Admin] 'teachers' table link failed:`, teacherRes.error.message);
 
@@ -317,46 +456,12 @@ async function startServer() {
 
   // Data Proxy for Table-Based Teachers/Admins
   app.post("/api/proxy/fetch", async (req, res) => {
-    const { table, query, sessionToken } = req.body;
+    const { table, query } = req.body;
 
     if (!supabaseAdmin) return res.status(500).json({ error: "Service Key Missing" });
-    
+
     try {
-      let schoolId = null;
-
-      // 1. Try DB_SESSION_ (Legacy Teachers)
-      if (sessionToken && sessionToken.startsWith('DB_SESSION_')) {
-        const parts = sessionToken.split('_');
-        const tId = parts[2];
-        const { data: teacher } = await supabaseAdmin
-          .from('teachers')
-          .select('school_id')
-          .eq('id', tId)
-          .single();
-        schoolId = teacher?.school_id;
-      } 
-      
-      let isSuperAdmin = false;
-      // 2. Try Authorization Header (Modern Admins/Teachers)
-      if (!schoolId && req.headers.authorization) {
-        const token = req.headers.authorization.replace('Bearer ', '');
-        const { data: { user } } = await supabaseAdmin.auth.getUser(token);
-        if (user) {
-          const role = user.user_metadata?.role || user.app_metadata?.role;
-          if (role?.toLowerCase() === 'superadmin' || role?.toLowerCase() === 'super_admin') {
-            isSuperAdmin = true;
-          }
-
-          schoolId = user.user_metadata?.school_id || user.app_metadata?.school_id;
-          if (!schoolId) {
-            const { data: profile } = await supabaseAdmin.from('users').select('school_id, role').eq('id', user.id).maybeSingle();
-            schoolId = profile?.school_id;
-            if (profile?.role?.toLowerCase() === 'superadmin' || profile?.role?.toLowerCase() === 'super_admin') {
-              isSuperAdmin = true;
-            }
-          }
-        }
-      }
+      const { schoolId, isSuperAdmin } = await resolveCaller(req);
 
       if (!schoolId && !isSuperAdmin) {
         return res.status(401).json({ error: "Invalid or missing session token. Please re-login." });
@@ -417,46 +522,12 @@ async function startServer() {
   });
 
   app.post("/api/proxy/write", async (req, res) => {
-    const { table, operation, payload, filters, onConflict, sessionToken } = req.body;
+    const { table, operation, payload, filters, onConflict } = req.body;
 
     if (!supabaseAdmin) return res.status(500).json({ error: "Service Key Missing" });
 
     try {
-      let schoolId = null;
-
-      // 1. Try DB_SESSION_
-      if (sessionToken && sessionToken.startsWith('DB_SESSION_')) {
-        const parts = sessionToken.split('_');
-        const tId = parts[2];
-        const { data: teacher } = await supabaseAdmin
-          .from('teachers')
-          .select('school_id')
-          .eq('id', tId)
-          .single();
-        schoolId = teacher?.school_id;
-      }
-      
-      let isSuperAdmin = false;
-      // 2. Try Authorization
-      if (!schoolId && req.headers.authorization) {
-        const token = req.headers.authorization.replace('Bearer ', '');
-        const { data: { user } } = await supabaseAdmin.auth.getUser(token);
-        if (user) {
-          const role = user.user_metadata?.role || user.app_metadata?.role;
-          if (role?.toLowerCase() === 'superadmin' || role?.toLowerCase() === 'super_admin') {
-            isSuperAdmin = true;
-          }
-
-          schoolId = user.user_metadata?.school_id || user.app_metadata?.school_id;
-          if (!schoolId) {
-            const { data: profile } = await supabaseAdmin.from('users').select('school_id, role').eq('id', user.id).maybeSingle();
-            schoolId = profile?.school_id;
-            if (profile?.role?.toLowerCase() === 'superadmin' || profile?.role?.toLowerCase() === 'super_admin') {
-              isSuperAdmin = true;
-            }
-          }
-        }
-      }
+      const { schoolId, isSuperAdmin, role } = await resolveCaller(req);
 
       if (!schoolId && !isSuperAdmin) {
         return res.status(401).json({ error: "Invalid or missing session token. Please re-login." });
@@ -471,6 +542,22 @@ async function startServer() {
       // Block non-SuperAdmins from writing to global tables (security)
       if (isGlobalTable && !isSuperAdmin) {
         return res.status(403).json({ error: `You don't have permission to write to ${table}` });
+      }
+
+      // Role-based write gating: school-scoping alone (below) stops a user
+      // from touching another school's rows, but says nothing about whether
+      // this role should be able to write to this table at all. A Teacher's
+      // valid, correctly-scoped session token must still not be able to
+      // insert into `teachers`/`users`/`schools` or record fee payments -
+      // this proxy uses the service-role key, so Postgres RLS never runs to
+      // catch that on its own. Mirrors is_finance_staff()/is_school_admin().
+      if (!isSuperAdmin) {
+        if (ADMIN_WRITE_TABLES.has(table) && !isAdminRole(role)) {
+          return res.status(403).json({ error: `Your role does not have permission to modify ${table}.` });
+        }
+        if (FINANCE_WRITE_TABLES.has(table) && !isFinanceRole(role)) {
+          return res.status(403).json({ error: `Your role does not have permission to modify ${table}.` });
+        }
       }
 
       // Ensure payload or filters always have school_id IF NOT super admin
@@ -492,6 +579,24 @@ async function startServer() {
       } else if (operation === 'update') {
         let updateQuery = sbTable.update(payload);
         
+        // Apply security filters
+        if (!isSuperAdmin && schoolId) {
+          if (table === 'schools') {
+            updateQuery = updateQuery.eq('id', schoolId);
+          } else if (!isGlobalTable) {
+            updateQuery = updateQuery.eq('school_id', schoolId);
+          }
+        }
+
+        if (filters) {
+          Object.entries(filters).forEach(([key, val]) => {
+            updateQuery = updateQuery.eq(key, val);
+          });
+        }
+        result = await updateQuery.select();
+      } else if (operation === 'delete') {
+        let deleteQuery = sbTable.delete();
+
         // Apply security filters
         if (!isSuperAdmin && schoolId) {
           if (table === 'schools') {
@@ -570,4 +675,3 @@ async function startServer() {
 }
 
 startServer();
-          

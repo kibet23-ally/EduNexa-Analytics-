@@ -20,6 +20,7 @@ interface StudentRow {
   name: string;
   grade_id: number;
   grade_name: string;
+  stream?: string | null;
   expected: number;
   paid: number;
   balance: number;
@@ -34,6 +35,21 @@ interface PaymentRow {
   notes: string | null;
   payment_date: string;
   voided: boolean;
+  term: number;
+  year: number;
+  recorded_by: string | null;
+}
+interface VoteHead {
+  id?: number;
+  account_code: string;
+  purpose: string;
+  amount: string; // kept as string while editing in the modal
+}
+interface SchoolInfo {
+  name: string;
+  address?: string | null;
+  phone?: string | null;
+  email?: string | null;
 }
 
 const TABS = ['Dashboard', 'Student Fees', 'Reports'] as const;
@@ -42,6 +58,34 @@ type Tab = typeof TABS[number];
 const isSuperAdmin = (role?: string) => ['SuperAdmin', 'super_admin'].includes(role || '');
 const money = (n: number) => `KSh ${n.toLocaleString('en-KE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 const inputCls = "w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20 dark:text-white";
+
+/* ── Number → words, Kenyan-shillings receipt style ─────────────────────── */
+const ONES = ['', 'ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE', 'TEN',
+  'ELEVEN', 'TWELVE', 'THIRTEEN', 'FOURTEEN', 'FIFTEEN', 'SIXTEEN', 'SEVENTEEN', 'EIGHTEEN', 'NINETEEN'];
+const TENS = ['', '', 'TWENTY', 'THIRTY', 'FORTY', 'FIFTY', 'SIXTY', 'SEVENTY', 'EIGHTY', 'NINETY'];
+
+function threeDigitsToWords(n: number): string {
+  let out = '';
+  if (n >= 100) { out += `${ONES[Math.floor(n / 100)]} HUNDRED `; n %= 100; }
+  if (n >= 20) { out += `${TENS[Math.floor(n / 10)]} `; n %= 10; }
+  if (n > 0) out += `${ONES[n]} `;
+  return out.trim();
+}
+
+function numberToWords(amount: number): string {
+  const whole = Math.floor(amount);
+  if (whole === 0) return 'ZERO SHILLINGS ONLY';
+  const parts: string[] = [];
+  const billions = Math.floor(whole / 1_000_000_000);
+  const millions = Math.floor((whole % 1_000_000_000) / 1_000_000);
+  const thousands = Math.floor((whole % 1_000_000) / 1_000);
+  const remainder = whole % 1_000;
+  if (billions) parts.push(`${threeDigitsToWords(billions)} BILLION`);
+  if (millions) parts.push(`${threeDigitsToWords(millions)} MILLION`);
+  if (thousands) parts.push(`${threeDigitsToWords(thousands)} THOUSAND`);
+  if (remainder) parts.push(threeDigitsToWords(remainder));
+  return `${parts.join(' ')} SHILLINGS ONLY`.replace(/\s+/g, ' ').trim();
+}
 
 const Finance: React.FC = () => {
   const { user } = useAuth();
@@ -62,17 +106,17 @@ const Finance: React.FC = () => {
   const effectiveSchoolId = superAdmin ? (selectedSchoolId ? Number(selectedSchoolId) : null) : user?.school_id;
 
   const schoolsQuery = useData<School>('schools-list-finance', 'schools',
-    { select: 'id, name', orderBy: { column: 'name', ascending: true } }, superAdmin);
+    { select: 'id, name, address, phone, email', orderBy: { column: 'name', ascending: true } }, superAdmin);
   const schools = useMemo(() => schoolsQuery.data || [], [schoolsQuery.data]);
 
-  // For non-super-admins, fetch just their own school's name (schoolsQuery
+  // For non-super-admins, fetch just their own school's full info (schoolsQuery
   // above only runs for super admins, who get the full list for the picker).
   // Note: useData's queryFn discards any result when `single: true` is passed
   // (Array.isArray(singleObject) is false, so it silently returns []) — a
   // pre-existing bug in the shared hook, not something to route around here.
   // Fetching without `single` and taking the first row sidesteps it safely.
   const ownSchoolQuery = useData<School>('own-school-finance', 'schools',
-    { select: 'id, name', filters: { id: effectiveSchoolId } },
+    { select: 'id, name, address, phone, email', filters: { id: effectiveSchoolId } },
     !superAdmin && !!effectiveSchoolId);
 
   const gradesQuery = useData<Grade>('grades-list-finance', 'grades',
@@ -90,7 +134,7 @@ const Finance: React.FC = () => {
     try {
       const [studentsRes, structuresRes, paymentsRes] = await Promise.all([
         fetchWithProxy('students', {
-          select: 'id, admission_number, name, grade_id, deleted_at',
+          select: 'id, admission_number, name, grade_id, stream, deleted_at',
           filters: { school_id: effectiveSchoolId },
         }),
         fetchWithProxy('fee_structures', {
@@ -118,7 +162,7 @@ const Finance: React.FC = () => {
         const paid = paidByStudent[s.id] || 0;
         return {
           id: s.id, admission_number: s.admission_number, name: s.name, grade_id: s.grade_id,
-          grade_name: gradeName(s.grade_id), expected, paid, balance: expected - paid,
+          grade_name: gradeName(s.grade_id), stream: s.stream, expected, paid, balance: expected - paid,
         };
       });
       setStudents(rows);
@@ -143,9 +187,13 @@ const Finance: React.FC = () => {
     outstanding: students.reduce((a, s) => a + Math.max(0, s.balance), 0),
   }), [students]);
 
-  const schoolName = schools.find(s => String(s.id) === selectedSchoolId)?.name
-    || ownSchoolQuery.data?.[0]?.name
-    || 'School';
+  const school: SchoolInfo = useMemo(() => {
+    const found = schools.find(s => String(s.id) === selectedSchoolId) || ownSchoolQuery.data?.[0];
+    return {
+      name: found?.name || 'School',
+      address: found?.address, phone: found?.phone, email: found?.email,
+    };
+  }, [schools, selectedSchoolId, ownSchoolQuery.data]);
 
   return (
     <div className="space-y-6">
@@ -218,7 +266,7 @@ const Finance: React.FC = () => {
             />
           ) : (
             <ReportsTab
-              students={students} schoolName={schoolName} term={term} year={year}
+              students={students} schoolName={school.name} term={term} year={year}
               effectiveSchoolId={effectiveSchoolId}
             />
           )}
@@ -235,14 +283,14 @@ const Finance: React.FC = () => {
       {paymentModal && effectiveSchoolId && (
         <RecordPaymentModal
           student={paymentModal} schoolId={effectiveSchoolId} term={term} year={year}
-          schoolName={schoolName} userId={user?.id}
+          school={school} userId={user?.id} clerkName={user?.name || 'Accounts Clerk'}
           onClose={() => setPaymentModal(null)}
           onSaved={() => { setPaymentModal(null); loadData(); }}
         />
       )}
-      {historyModal && (
+      {historyModal && effectiveSchoolId && (
         <PaymentHistoryModal
-          student={historyModal} schoolName={schoolName}
+          student={historyModal} school={school} schoolId={effectiveSchoolId}
           onClose={() => setHistoryModal(null)}
         />
       )}
@@ -336,34 +384,75 @@ const FeeStructureModal: React.FC<{
   schoolId: number; grades: Grade[]; term: number; year: number;
   onClose: () => void; onSaved: () => void;
 }> = ({ schoolId, grades, term, year, onClose, onSaved }) => {
-  const [amounts, setAmounts] = useState<Record<number, string>>({});
+  const [selectedGradeId, setSelectedGradeId] = useState<string>(grades[0] ? String(grades[0].id) : '');
+  const [voteHeads, setVoteHeads] = useState<VoteHead[]>([]);
+  const [structureId, setStructureId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [loadingExisting, setLoadingExisting] = useState(true);
 
-  useEffect(() => {
-    (async () => {
+  const loadForGrade = async (gradeId: string) => {
+    if (!gradeId) return;
+    setLoadingExisting(true);
+    try {
       const { data } = await fetchWithProxy('fee_structures', {
-        select: 'grade_id, amount', filters: { school_id: schoolId, term, year },
+        select: 'id, amount', filters: { school_id: schoolId, grade_id: Number(gradeId), term, year },
       });
-      const map: Record<number, string> = {};
-      (Array.isArray(data) ? data : []).forEach((r: any) => { map[r.grade_id] = String(r.amount); });
-      setAmounts(map);
+      const structure = Array.isArray(data) ? data[0] : null;
+      setStructureId(structure?.id ?? null);
+      if (structure?.id) {
+        const { data: vhData } = await fetchWithProxy('fee_vote_heads', {
+          select: 'id, account_code, purpose, amount, sort_order',
+          filters: { fee_structure_id: structure.id },
+          orderBy: { column: 'sort_order', ascending: true },
+        });
+        const rows = (Array.isArray(vhData) ? vhData : []).map((v: any) => ({
+          id: v.id, account_code: v.account_code || '', purpose: v.purpose, amount: String(v.amount),
+        }));
+        setVoteHeads(rows.length ? rows : (structure.amount ? [{ account_code: '', purpose: 'School Fees', amount: String(structure.amount) }] : []));
+      } else {
+        setVoteHeads([]);
+      }
+    } finally {
       setLoadingExisting(false);
-    })();
-  }, [schoolId, term, year]);
+    }
+  };
+
+  useEffect(() => { loadForGrade(selectedGradeId); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedGradeId, schoolId, term, year]);
+
+  const addRow = () => setVoteHeads(prev => [...prev, { account_code: '', purpose: '', amount: '' }]);
+  const removeRow = (idx: number) => setVoteHeads(prev => prev.filter((_, i) => i !== idx));
+  const updateRow = (idx: number, patch: Partial<VoteHead>) =>
+    setVoteHeads(prev => prev.map((r, i) => i === idx ? { ...r, ...patch } : r));
+
+  const total = useMemo(() => voteHeads.reduce((a, v) => a + (Number(v.amount) || 0), 0), [voteHeads]);
 
   const handleSave = async () => {
+    if (!selectedGradeId) { toast.error('Select a grade first.'); return; }
+    const validRows = voteHeads.filter(v => v.purpose && Number(v.amount) > 0);
+    if (!validRows.length) { toast.error('Add at least one fee purpose with an amount.'); return; }
+
     setSaving(true);
     try {
-      for (const g of grades) {
-        const val = amounts[g.id];
-        if (val === undefined || val === '') continue;
-        await writeWithProxy('fee_structures', 'upsert',
-          { school_id: schoolId, grade_id: g.id, term, year, amount: Number(val) },
-          undefined,
-          'school_id,grade_id,term,year'
-        );
+      const { data } = await writeWithProxy('fee_structures', 'upsert',
+        { school_id: schoolId, grade_id: Number(selectedGradeId), term, year, amount: total },
+        undefined,
+        'school_id,grade_id,term,year'
+      );
+      const savedStructure = Array.isArray(data) ? data[0] : data;
+      const feeStructureId = savedStructure?.id ?? structureId;
+      if (!feeStructureId) throw new Error('Could not resolve the fee structure record.');
+
+      // Replace the vote-head breakdown wholesale for this structure -
+      // simplest way to keep additions/edits/removals all in sync.
+      await writeWithProxy('fee_vote_heads', 'delete', undefined, { fee_structure_id: feeStructureId });
+      for (let i = 0; i < validRows.length; i++) {
+        const v = validRows[i];
+        await writeWithProxy('fee_vote_heads', 'insert', {
+          fee_structure_id: feeStructureId, school_id: schoolId,
+          account_code: v.account_code || null, purpose: v.purpose, amount: Number(v.amount), sort_order: i,
+        });
       }
+
       toast.success('Fee structure saved.');
       onSaved();
     } catch (err: unknown) {
@@ -375,20 +464,46 @@ const FeeStructureModal: React.FC<{
 
   return (
     <div className="fixed inset-0 z-[9997] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-2xl shadow-2xl max-h-[85vh] overflow-y-auto">
+      <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-5 border-b border-slate-100 dark:border-slate-800">
-          <h2 className="text-lg font-bold text-slate-900 dark:text-white">Fee Structure — Term {term}, {year}</h2>
+          <div>
+            <h2 className="text-lg font-bold text-slate-900 dark:text-white">Fee Structure — Term {term}, {year}</h2>
+            <p className="text-xs text-slate-500">Break the fee down by purpose, the way it prints on the receipt.</p>
+          </div>
           <button onClick={onClose}><X size={20} className="text-slate-400" /></button>
         </div>
-        <div className="p-5 space-y-3">
-          {loadingExisting ? <Loader2 className="animate-spin text-blue-600 mx-auto" /> : grades.map(g => (
-            <div key={g.id} className="flex items-center justify-between gap-3">
-              <label className="text-sm font-medium text-slate-600 dark:text-slate-300 flex-1">{g.grade_name}</label>
-              <input type="number" min={0} value={amounts[g.id] ?? ''} placeholder="0"
-                onChange={e => setAmounts(prev => ({ ...prev, [g.id]: e.target.value }))}
-                className="w-32 px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-right outline-none focus:ring-2 focus:ring-blue-500/20 dark:text-white" />
+        <div className="p-5 space-y-4">
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase">Grade</label>
+            <select value={selectedGradeId} onChange={e => setSelectedGradeId(e.target.value)} className={inputCls}>
+              {grades.map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
+            </select>
+          </div>
+
+          {loadingExisting ? <Loader2 className="animate-spin text-blue-600 mx-auto" /> : (
+            <div className="space-y-2">
+              <div className="grid grid-cols-[80px_1fr_100px_28px] gap-2 text-xs font-bold text-slate-400 uppercase px-1">
+                <span>Code</span><span>Purpose</span><span className="text-right">Amount</span><span />
+              </div>
+              {voteHeads.map((v, idx) => (
+                <div key={idx} className="grid grid-cols-[80px_1fr_100px_28px] gap-2 items-center">
+                  <input value={v.account_code} onChange={e => updateRow(idx, { account_code: e.target.value })} placeholder="10011003"
+                    className="px-2 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-mono outline-none focus:ring-2 focus:ring-blue-500/20 dark:text-white" />
+                  <input value={v.purpose} onChange={e => updateRow(idx, { purpose: e.target.value })} placeholder="e.g. Boarding Equipment and Stores"
+                    className="px-2 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20 dark:text-white" />
+                  <input type="number" min={0} value={v.amount} onChange={e => updateRow(idx, { amount: e.target.value })} placeholder="0"
+                    className="px-2 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-right outline-none focus:ring-2 focus:ring-blue-500/20 dark:text-white" />
+                  <button onClick={() => removeRow(idx)} className="text-red-400 hover:text-red-600"><X size={16} /></button>
+                </div>
+              ))}
+              <button onClick={addRow} className="text-xs font-bold text-blue-600 flex items-center gap-1 pt-1"><Plus size={14} /> Add fee purpose</button>
+
+              <div className="flex items-center justify-between pt-3 mt-2 border-t border-slate-100 dark:border-slate-800">
+                <span className="text-sm font-bold text-slate-700 dark:text-slate-200">Total Expected</span>
+                <span className="text-lg font-bold text-blue-600">{money(total)}</span>
+              </div>
             </div>
-          ))}
+          )}
           {!loadingExisting && grades.length === 0 && <p className="text-sm text-slate-400 text-center">No grades set up for this school yet.</p>}
         </div>
         <div className="p-5 border-t border-slate-100 dark:border-slate-800 flex gap-3">
@@ -406,9 +521,9 @@ const FeeStructureModal: React.FC<{
    Record Payment modal
 ══════════════════════════════════════════════════════════════════════ */
 const RecordPaymentModal: React.FC<{
-  student: StudentRow; schoolId: number; term: number; year: number; schoolName: string; userId?: string;
+  student: StudentRow; schoolId: number; term: number; year: number; school: SchoolInfo; userId?: string; clerkName: string;
   onClose: () => void; onSaved: () => void;
-}> = ({ student, schoolId, term, year, schoolName, userId, onClose, onSaved }) => {
+}> = ({ student, schoolId, term, year, school, userId, clerkName, onClose, onSaved }) => {
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState('Cash');
   const [reference, setReference] = useState('');
@@ -427,7 +542,14 @@ const RecordPaymentModal: React.FC<{
       });
       const payment = Array.isArray(data) ? data[0] : data;
       toast.success('Payment recorded successfully.');
-      if (payment) printReceipt({ payment, student, schoolName, term, year });
+      if (payment) {
+        const voteHeads = await fetchVoteHeadsForGrade(schoolId, student.grade_id, term, year);
+        const totalPaid = student.paid + amt;
+        printReceipt({
+          payment, student, school, term, year, clerkName, voteHeads,
+          totalPaid, balanceDue: Math.max(0, student.expected - totalPaid),
+        });
+      }
       onSaved();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to record payment.');
@@ -483,14 +605,15 @@ const RecordPaymentModal: React.FC<{
 /* ══════════════════════════════════════════════════════════════════════
    Payment History modal
 ══════════════════════════════════════════════════════════════════════ */
-const PaymentHistoryModal: React.FC<{ student: StudentRow; schoolName: string; onClose: () => void }> = ({ student, schoolName, onClose }) => {
+const PaymentHistoryModal: React.FC<{ student: StudentRow; school: SchoolInfo; schoolId: number; onClose: () => void }> = ({ student, school, schoolId, onClose }) => {
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [printingId, setPrintingId] = useState<number | null>(null);
 
   useEffect(() => {
     (async () => {
       const { data } = await fetchWithProxy('fee_payments', {
-        select: 'id, student_id, amount, payment_method, reference_number, receipt_number, notes, payment_date, voided',
+        select: 'id, student_id, amount, payment_method, reference_number, receipt_number, notes, payment_date, voided, term, year, recorded_by',
         filters: { student_id: student.id },
         orderBy: { column: 'payment_date', ascending: false },
       });
@@ -498,6 +621,24 @@ const PaymentHistoryModal: React.FC<{ student: StudentRow; schoolName: string; o
       setLoading(false);
     })();
   }, [student.id]);
+
+  const handleReprint = async (p: PaymentRow) => {
+    setPrintingId(p.id);
+    try {
+      const [voteHeads, clerkName] = await Promise.all([
+        fetchVoteHeadsForGrade(schoolId, student.grade_id, p.term, p.year),
+        resolveClerkName(p.recorded_by),
+      ]);
+      // Reprints show the balance as of NOW (not as of the original payment
+      // date) since that's the figure that's actually useful on a reprint.
+      printReceipt({
+        payment: p, student, school, term: p.term, year: p.year, clerkName, voteHeads,
+        totalPaid: student.paid, balanceDue: Math.max(0, student.balance),
+      });
+    } finally {
+      setPrintingId(null);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-[9997] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
@@ -520,8 +661,8 @@ const PaymentHistoryModal: React.FC<{ student: StudentRow; schoolName: string; o
                     <p className="text-sm font-bold text-slate-900 dark:text-white">{money(p.amount)} {p.voided && <span className="text-red-500 text-xs font-normal">(voided)</span>}</p>
                     <p className="text-xs text-slate-400">{new Date(p.payment_date).toLocaleDateString()} · {p.payment_method} · {p.receipt_number}</p>
                   </div>
-                  <button onClick={() => printReceipt({ payment: p, student, schoolName, term: 0, year: 0 })} title="Print Receipt" className="p-2 text-slate-400 hover:text-blue-600">
-                    <Printer size={16} />
+                  <button onClick={() => handleReprint(p)} disabled={printingId === p.id} title="Print Receipt" className="p-2 text-slate-400 hover:text-blue-600 disabled:opacity-50">
+                    {printingId === p.id ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
                   </button>
                 </div>
               ))}
@@ -678,42 +819,144 @@ function addPageNumbers(doc: jsPDF) {
   }
 }
 
-function printReceipt(params: { payment: any; student: StudentRow; schoolName: string; term: number; year: number }) {
-  const { payment, student, schoolName, term, year } = params;
-  const doc = new jsPDF('p', 'mm', 'a5');
+/* ── Shared: load a grade's vote-head fee breakdown for a given period ──── */
+async function fetchVoteHeadsForGrade(schoolId: number, gradeId: number, term: number, year: number): Promise<VoteHead[]> {
+  if (!term || !year) return [];
+  const { data: structureData } = await fetchWithProxy('fee_structures', {
+    select: 'id', filters: { school_id: schoolId, grade_id: gradeId, term, year },
+  });
+  const structure = Array.isArray(structureData) ? structureData[0] : null;
+  if (!structure?.id) return [];
+  const { data } = await fetchWithProxy('fee_vote_heads', {
+    select: 'account_code, purpose, amount', filters: { fee_structure_id: structure.id },
+    orderBy: { column: 'sort_order', ascending: true },
+  });
+  return (Array.isArray(data) ? data : []).map((v: any) => ({ account_code: v.account_code || '', purpose: v.purpose, amount: String(v.amount) }));
+}
+
+/* ── Shared: resolve who recorded a payment, for the "Served By" line ───── */
+async function resolveClerkName(recordedBy: string | null): Promise<string> {
+  if (!recordedBy) return 'Accounts Clerk';
+  try {
+    const { data } = await fetchWithProxy('profiles', { select: 'full_name', filters: { id: recordedBy } });
+    const row = Array.isArray(data) ? data[0] : null;
+    return row?.full_name || 'Accounts Clerk';
+  } catch {
+    return 'Accounts Clerk';
+  }
+}
+
+/* ── Official payment receipt — matches the school's traditional paper
+   receipt layout: letterhead, account/date/slip details, amount in words,
+   a "Being Payment Of" purpose breakdown, totals, and a clerk sign-off. ──── */
+function printReceipt(params: {
+  payment: any; student: StudentRow; school: SchoolInfo; term: number; year: number;
+  clerkName: string; voteHeads: VoteHead[]; totalPaid: number; balanceDue: number;
+}) {
+  const { payment, student, school, term, year, clerkName, voteHeads, totalPaid, balanceDue } = params;
+  const doc = new jsPDF('p', 'mm', 'a4');
   const W = doc.internal.pageSize.width;
+  const M = 16;
+  let y = 18;
 
-  doc.setFillColor(30, 58, 95); doc.rect(0, 0, W, 22, 'F');
-  doc.setFillColor(234, 179, 8); doc.rect(0, 22, W, 1.2, 'F');
-  doc.setTextColor(255, 255, 255); doc.setFontSize(13); doc.setFont('helvetica', 'bold');
-  doc.text(schoolName.toUpperCase(), W / 2, 10, { align: 'center' });
-  doc.setFontSize(10); doc.setTextColor(253, 224, 71);
-  doc.text('OFFICIAL RECEIPT', W / 2, 17, { align: 'center' });
+  const center = (text: string, size: number, bold = true) => {
+    doc.setFontSize(size); doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setTextColor(0, 0, 0);
+    doc.text(text, W / 2, y, { align: 'center' });
+    y += size * 0.6;
+  };
 
-  doc.setTextColor(30, 41, 59); doc.setFontSize(9); doc.setFont('helvetica', 'normal');
-  let y = 32;
-  const line = (label: string, value: string) => {
-    doc.setFont('helvetica', 'bold'); doc.text(label, 14, y);
-    doc.setFont('helvetica', 'normal'); doc.text(value, 60, y);
+  // ── Letterhead ──────────────────────────────────────────────────────────
+  center(school.name.toUpperCase(), 16);
+  if (school.address) center(school.address, 9, false);
+  const contactLine = [school.phone ? `Tel: ${school.phone}` : '', school.email ? `Email: ${school.email}` : ''].filter(Boolean).join('   ');
+  if (contactLine) center(contactLine, 9, false);
+  y += 3;
+  doc.setDrawColor(0); doc.setLineWidth(0.4);
+  doc.line(M, y, W - M, y);
+  y += 8;
+
+  // ── Details block (two-column key/value, matching the paper layout) ─────
+  doc.setFontSize(10);
+  const detailLine = (label: string, value: string) => {
+    doc.setFont('helvetica', 'bold'); doc.text(label, M, y);
+    doc.setFont('helvetica', 'normal'); doc.text(value, M + 38, y);
+    y += 6.5;
+  };
+  detailLine('Account Name', student.name.toUpperCase());
+  detailLine('Adm. No.', student.admission_number);
+  detailLine('Form/Grade', `${student.grade_name}${student.stream ? ' ' + student.stream : ''}`);
+  detailLine('Date', new Date(payment.payment_date).toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' }));
+  detailLine('Time', new Date(payment.payment_date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+  if (payment.reference_number) detailLine('Bank Slip', payment.reference_number);
+  detailLine('Receipt No.', payment.receipt_number);
+  y += 4;
+
+  // ── Amount in words ───────────────────────────────────────────────────
+  doc.setFont('helvetica', 'bold'); doc.text('Amount in Words:-', M, y);
+  doc.setFont('helvetica', 'normal');
+  const wordsLines = doc.splitTextToSize(numberToWords(payment.amount), W - M * 2 - 42);
+  doc.text(wordsLines, M + 42, y);
+  y += wordsLines.length * 5.5 + 6;
+
+  // ── Being Payment Of: purpose breakdown ─────────────────────────────────
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+  doc.text('Being Payment Of:', M, y);
+  y += 3;
+
+  const rows = voteHeads.length ? voteHeads : [{ account_code: '', purpose: 'School Fees', amount: String(payment.amount) }];
+  autoTable(doc, {
+    startY: y,
+    head: [['Code', 'Description', 'Kshs.']],
+    body: rows.map(v => [v.account_code || '—', v.purpose, Number(v.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })]),
+    theme: 'plain',
+    styles: { fontSize: 9.5, cellPadding: 1.5, textColor: [0, 0, 0] },
+    headStyles: { fontStyle: 'bold', fillColor: false, textColor: [0, 0, 0] },
+    columnStyles: { 0: { cellWidth: 28, font: 'courier' }, 2: { halign: 'right', cellWidth: 32 } },
+    margin: { left: M, right: M },
+  });
+  y = (doc as any).lastAutoTable.finalY + 4;
+  doc.setDrawColor(0); doc.line(M, y, W - M, y);
+  y += 8;
+
+  // ── Totals ───────────────────────────────────────────────────────────────
+  const totalsLine = (label: string, value: string, bold = true) => {
+    doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(11);
+    doc.text(label, M, y);
+    doc.text(value, W - M, y, { align: 'right' });
     y += 7;
   };
-  line('Receipt No:', payment.receipt_number);
-  line('Date:', new Date(payment.payment_date).toLocaleDateString());
-  line('Student:', student.name);
-  line('Admission No:', student.admission_number);
-  if (term) line('Term/Year:', `Term ${term}, ${year}`);
-  line('Payment Method:', payment.payment_method);
-  if (payment.reference_number) line('Reference:', payment.reference_number);
+  totalsLine('Amount Paid', `Kshs. ${Number(payment.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`);
+  totalsLine('Total Paid (to date)', `Kshs. ${totalPaid.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, false);
+  totalsLine('Balance Due', `Kshs. ${balanceDue.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, false);
+  y += 6;
 
-  doc.setDrawColor(200); doc.line(14, y, W - 14, y); y += 8;
-  doc.setFontSize(13); doc.setFont('helvetica', 'bold');
-  doc.text('Amount Paid:', 14, y);
-  doc.setTextColor(22, 163, 74);
-  doc.text(`KSh ${Number(payment.amount).toLocaleString()}`, W - 14, y, { align: 'right' });
+  // ── Payment method / bank slip ref line ──────────────────────────────────
+  doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+  doc.text(`Payment Method: ${payment.payment_method}${payment.reference_number ? '   Bank Slip: ' + payment.reference_number : ''}`, M, y);
+  y += 14;
+
+  // ── Sign-off block ────────────────────────────────────────────────────
+  doc.setFontSize(9.5); doc.setFont('helvetica', 'normal');
+  doc.text(`Served By: ${clerkName}`, M, y);
+  doc.text(new Date().toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }), M, y + 6);
+
+  // A simple bordered "official stamp" box, mirroring the stamped/signed
+  // area on the paper receipt (a real stamp/signature is applied by hand).
+  const boxW = 55, boxH = 26;
+  doc.setDrawColor(100); doc.setLineDash([1, 1], 0);
+  doc.rect(W - M - boxW, y - 16, boxW, boxH);
+  doc.setLineDash([]);
+  doc.setFontSize(7.5); doc.setTextColor(120, 120, 120);
+  doc.text('OFFICIAL STAMP', W - M - boxW / 2, y - 3, { align: 'center' });
+
+  if (payment.voided) {
+    doc.setTextColor(220, 38, 38); doc.setFontSize(28); doc.setFont('helvetica', 'bold');
+    doc.text('VOIDED', W / 2, 150, { align: 'center', angle: 30 });
+  }
 
   const H = doc.internal.pageSize.height;
-  doc.setFontSize(7); doc.setTextColor(148, 163, 184); doc.setFont('helvetica', 'normal');
-  doc.text('Generated by EduNexa Analytics', W / 2, H - 8, { align: 'center' });
+  doc.setFontSize(7); doc.setTextColor(150, 150, 150); doc.setFont('helvetica', 'normal');
+  doc.text('Generated by EduNexa Analytics', W / 2, H - 10, { align: 'center' });
 
   doc.save(`Receipt_${payment.receipt_number}.pdf`);
 }

@@ -111,13 +111,25 @@ const Finance: React.FC = () => {
 
   // For non-super-admins, fetch just their own school's full info (schoolsQuery
   // above only runs for super admins, who get the full list for the picker).
-  // Note: useData's queryFn discards any result when `single: true` is passed
-  // (Array.isArray(singleObject) is false, so it silently returns []) — a
-  // pre-existing bug in the shared hook, not something to route around here.
-  // Fetching without `single` and taking the first row sidesteps it safely.
-  const ownSchoolQuery = useData<School>('own-school-finance', 'schools',
-    { select: 'id, name, address, phone, email', filters: { id: effectiveSchoolId } },
-    !superAdmin && !!effectiveSchoolId);
+  // Deliberately NOT using useData here: it auto-injects a `school_id: X`
+  // filter for every non-super-admin query, but the `schools` table has no
+  // school_id column (it's keyed by `id`) - that filter silently fails the
+  // query every time, which is exactly why the receipt was always falling
+  // back to the literal "School" placeholder. fetchWithProxy bypasses that
+  // auto-scoping entirely.
+  const [ownSchool, setOwnSchool] = useState<School | null>(null);
+  useEffect(() => {
+    if (superAdmin || !effectiveSchoolId) { setOwnSchool(null); return; }
+    let cancelled = false;
+    (async () => {
+      const { data } = await fetchWithProxy('schools', {
+        select: 'id, name, address, phone, email', filters: { id: effectiveSchoolId },
+      });
+      const row = Array.isArray(data) ? data[0] : null;
+      if (!cancelled) setOwnSchool(row || null);
+    })();
+    return () => { cancelled = true; };
+  }, [superAdmin, effectiveSchoolId]);
 
   const gradesQuery = useData<Grade>('grades-list-finance', 'grades',
     { select: 'id, grade_name', ...(effectiveSchoolId ? { filters: { school_id: effectiveSchoolId } } : {}) },
@@ -188,12 +200,12 @@ const Finance: React.FC = () => {
   }), [students]);
 
   const school: SchoolInfo = useMemo(() => {
-    const found = schools.find(s => String(s.id) === selectedSchoolId) || ownSchoolQuery.data?.[0];
+    const found = schools.find(s => String(s.id) === selectedSchoolId) || ownSchool;
     return {
       name: found?.name || 'School',
       address: found?.address, phone: found?.phone, email: found?.email,
     };
-  }, [schools, selectedSchoolId, ownSchoolQuery.data]);
+  }, [schools, selectedSchoolId, ownSchool]);
 
   return (
     <div className="space-y-6">
@@ -856,107 +868,125 @@ function printReceipt(params: {
   const { payment, student, school, term, year, clerkName, voteHeads, totalPaid, balanceDue } = params;
   const doc = new jsPDF('p', 'mm', 'a4');
   const W = doc.internal.pageSize.width;
-  const M = 16;
-  let y = 18;
-
-  const center = (text: string, size: number, bold = true) => {
-    doc.setFontSize(size); doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setTextColor(0, 0, 0);
-    doc.text(text, W / 2, y, { align: 'center' });
-    y += size * 0.6;
-  };
-
-  // ── Letterhead ──────────────────────────────────────────────────────────
-  center(school.name.toUpperCase(), 16);
-  if (school.address) center(school.address, 9, false);
-  const contactLine = [school.phone ? `Tel: ${school.phone}` : '', school.email ? `Email: ${school.email}` : ''].filter(Boolean).join('   ');
-  if (contactLine) center(contactLine, 9, false);
-  y += 3;
-  doc.setDrawColor(0); doc.setLineWidth(0.4);
-  doc.line(M, y, W - M, y);
-  y += 8;
-
-  // ── Details block (two-column key/value, matching the paper layout) ─────
-  doc.setFontSize(10);
-  const detailLine = (label: string, value: string) => {
-    doc.setFont('helvetica', 'bold'); doc.text(label, M, y);
-    doc.setFont('helvetica', 'normal'); doc.text(value, M + 38, y);
-    y += 6.5;
-  };
-  detailLine('Account Name', student.name.toUpperCase());
-  detailLine('Adm. No.', student.admission_number);
-  detailLine('Form/Grade', `${student.grade_name}${student.stream ? ' ' + student.stream : ''}`);
-  detailLine('Date', new Date(payment.payment_date).toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' }));
-  detailLine('Time', new Date(payment.payment_date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-  if (payment.reference_number) detailLine('Bank Slip', payment.reference_number);
-  detailLine('Receipt No.', payment.receipt_number);
-  y += 4;
-
-  // ── Amount in words ───────────────────────────────────────────────────
-  doc.setFont('helvetica', 'bold'); doc.text('Amount in Words:-', M, y);
-  doc.setFont('helvetica', 'normal');
-  const wordsLines = doc.splitTextToSize(numberToWords(payment.amount), W - M * 2 - 42);
-  doc.text(wordsLines, M + 42, y);
-  y += wordsLines.length * 5.5 + 6;
-
-  // ── Being Payment Of: purpose breakdown ─────────────────────────────────
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
-  doc.text('Being Payment Of:', M, y);
-  y += 3;
-
-  const rows = voteHeads.length ? voteHeads : [{ account_code: '', purpose: 'School Fees', amount: String(payment.amount) }];
-  autoTable(doc, {
-    startY: y,
-    head: [['Code', 'Description', 'Kshs.']],
-    body: rows.map(v => [v.account_code || '—', v.purpose, Number(v.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })]),
-    theme: 'plain',
-    styles: { fontSize: 9.5, cellPadding: 1.5, textColor: [0, 0, 0] },
-    headStyles: { fontStyle: 'bold', fillColor: false, textColor: [0, 0, 0] },
-    columnStyles: { 0: { cellWidth: 28, font: 'courier' }, 2: { halign: 'right', cellWidth: 32 } },
-    margin: { left: M, right: M },
-  });
-  y = (doc as any).lastAutoTable.finalY + 4;
-  doc.setDrawColor(0); doc.line(M, y, W - M, y);
-  y += 8;
-
-  // ── Totals ───────────────────────────────────────────────────────────────
-  const totalsLine = (label: string, value: string, bold = true) => {
-    doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(11);
-    doc.text(label, M, y);
-    doc.text(value, W - M, y, { align: 'right' });
-    y += 7;
-  };
-  totalsLine('Amount Paid', `Kshs. ${Number(payment.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`);
-  totalsLine('Total Paid (to date)', `Kshs. ${totalPaid.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, false);
-  totalsLine('Balance Due', `Kshs. ${balanceDue.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, false);
-  y += 6;
-
-  // ── Payment method / bank slip ref line ──────────────────────────────────
-  doc.setFontSize(9); doc.setFont('helvetica', 'normal');
-  doc.text(`Payment Method: ${payment.payment_method}${payment.reference_number ? '   Bank Slip: ' + payment.reference_number : ''}`, M, y);
-  y += 14;
-
-  // ── Sign-off block ────────────────────────────────────────────────────
-  doc.setFontSize(9.5); doc.setFont('helvetica', 'normal');
-  doc.text(`Served By: ${clerkName}`, M, y);
-  doc.text(new Date().toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }), M, y + 6);
-
-  // A simple bordered "official stamp" box, mirroring the stamped/signed
-  // area on the paper receipt (a real stamp/signature is applied by hand).
-  const boxW = 55, boxH = 26;
-  doc.setDrawColor(100); doc.setLineDash([1, 1], 0);
-  doc.rect(W - M - boxW, y - 16, boxW, boxH);
-  doc.setLineDash([]);
-  doc.setFontSize(7.5); doc.setTextColor(120, 120, 120);
-  doc.text('OFFICIAL STAMP', W - M - boxW / 2, y - 3, { align: 'center' });
-
-  if (payment.voided) {
-    doc.setTextColor(220, 38, 38); doc.setFontSize(28); doc.setFont('helvetica', 'bold');
-    doc.text('VOIDED', W / 2, 150, { align: 'center', angle: 30 });
-  }
-
   const H = doc.internal.pageSize.height;
-  doc.setFontSize(7); doc.setTextColor(150, 150, 150); doc.setFont('helvetica', 'normal');
-  doc.text('Generated by EduNexa Analytics', W / 2, H - 10, { align: 'center' });
+  const M = 14;
+  const SLOT_H = H / 2; // two identical copies per sheet - cut/photocopy along the middle
+
+  // Draws one full copy of the receipt, confined to the vertical band
+  // starting at `top` and SLOT_H tall.
+  const drawCopy = (top: number) => {
+    let y = top + 10;
+
+    const center = (text: string, size: number, bold = true) => {
+      doc.setFontSize(size); doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setTextColor(0, 0, 0);
+      doc.text(text, W / 2, y, { align: 'center' });
+      y += size * 0.55;
+    };
+
+    // ── Letterhead ──────────────────────────────────────────────────────
+    center(school.name.toUpperCase(), 14);
+    if (school.address) center(school.address, 8, false);
+    const contactLine = [school.phone ? `Tel: ${school.phone}` : '', school.email ? `Email: ${school.email}` : ''].filter(Boolean).join('   ');
+    if (contactLine) center(contactLine, 8, false);
+    y += 2;
+    doc.setDrawColor(0); doc.setLineWidth(0.4);
+    doc.line(M, y, W - M, y);
+    y += 6;
+
+    // ── Details — condensed into 3 rows, 2 columns each ──────────────────
+    const colL = M, colR = W / 2 + 4;
+    const cell = (x: number, label: string, value: string) => {
+      doc.setFontSize(8.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(0, 0, 0);
+      doc.text(label, x, y);
+      doc.setFont('helvetica', 'normal');
+      doc.text(value, x, y + 4.5);
+    };
+    cell(colL, 'ACCOUNT NAME', student.name.toUpperCase());
+    cell(colR, 'RECEIPT NO.', payment.receipt_number);
+    y += 10;
+    cell(colL, 'ADM. NO.', student.admission_number);
+    cell(colR, 'DATE', new Date(payment.payment_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }));
+    y += 10;
+    cell(colL, 'FORM/GRADE', `${student.grade_name}${student.stream ? ' ' + student.stream : ''}`);
+    cell(colR, 'TIME', new Date(payment.payment_date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    y += 8;
+
+    // ── Amount in words ───────────────────────────────────────────────
+    doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(0, 0, 0);
+    doc.text('Amount in Words:-', M, y);
+    doc.setFont('helvetica', 'normal');
+    const wordsLines = doc.splitTextToSize(numberToWords(payment.amount), W - M * 2 - 40);
+    doc.text(wordsLines, M + 40, y);
+    y += Math.max(wordsLines.length * 4.5, 5) + 4;
+
+    // ── Being Payment Of: purpose breakdown ───────────────────────────
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+    doc.text('Being Payment Of:', M, y);
+    y += 2;
+
+    const rows = voteHeads.length ? voteHeads : [{ account_code: '', purpose: 'School Fees', amount: String(payment.amount) }];
+    autoTable(doc, {
+      startY: y,
+      head: [['Code', 'Description', 'Kshs.']],
+      body: rows.map(v => [v.account_code || '—', v.purpose, Number(v.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })]),
+      theme: 'plain',
+      styles: { fontSize: 8.5, cellPadding: 1, textColor: [0, 0, 0] },
+      headStyles: { fontStyle: 'bold', fillColor: false, textColor: [0, 0, 0] },
+      columnStyles: { 0: { cellWidth: 24, font: 'courier' }, 2: { halign: 'right', cellWidth: 28 } },
+      margin: { left: M, right: M },
+      tableWidth: W - M * 2,
+    });
+    y = (doc as any).lastAutoTable.finalY + 3;
+    doc.setDrawColor(0); doc.line(M, y, W - M, y);
+    y += 6;
+
+    // ── Totals ───────────────────────────────────────────────────────
+    const totalsLine = (label: string, value: string, bold = true) => {
+      doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(9.5);
+      doc.text(label, M, y);
+      doc.text(value, W - M, y, { align: 'right' });
+      y += 5.5;
+    };
+    totalsLine('Amount Paid', `Kshs. ${Number(payment.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`);
+    totalsLine('Total Paid (to date)', `Kshs. ${totalPaid.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, false);
+    totalsLine('Balance Due', `Kshs. ${balanceDue.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, false);
+    y += 3;
+
+    // ── Payment method / bank slip ref ─────────────────────────────────
+    doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+    doc.text(`Payment Method: ${payment.payment_method}${payment.reference_number ? '   Bank Slip: ' + payment.reference_number : ''}`, M, y);
+    y += 9;
+
+    // ── Sign-off ───────────────────────────────────────────────────────
+    doc.setFontSize(8.5); doc.setFont('helvetica', 'normal');
+    doc.text(`Served By: ${clerkName}`, M, y);
+    doc.text(new Date().toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }), M, y + 5);
+
+    const boxW = 42, boxH = 18;
+    doc.setDrawColor(120); doc.setLineDash([1, 1], 0);
+    doc.rect(W - M - boxW, y - 12, boxW, boxH);
+    doc.setLineDash([]);
+    doc.setFontSize(6.5); doc.setTextColor(130, 130, 130);
+    doc.text('OFFICIAL STAMP', W - M - boxW / 2, y - 2, { align: 'center' });
+
+    if (payment.voided) {
+      doc.setTextColor(220, 38, 38); doc.setFontSize(22); doc.setFont('helvetica', 'bold');
+      doc.text('VOIDED', W / 2, top + SLOT_H / 2, { align: 'center', angle: 25 });
+    }
+
+    doc.setFontSize(6.5); doc.setTextColor(150, 150, 150); doc.setFont('helvetica', 'normal');
+    doc.text('Generated by EduNexa Analytics', W / 2, top + SLOT_H - 5, { align: 'center' });
+  };
+
+  drawCopy(0);
+  drawCopy(SLOT_H);
+
+  // Cut line between the two copies.
+  doc.setDrawColor(0); doc.setLineDash([2, 2], 0);
+  doc.line(M / 2, SLOT_H, W - M / 2, SLOT_H);
+  doc.setLineDash([]);
+  doc.setFontSize(6.5); doc.setTextColor(150, 150, 150);
+  doc.text('✂ cut here', M / 2, SLOT_H - 1.5);
 
   doc.save(`Receipt_${payment.receipt_number}.pdf`);
 }

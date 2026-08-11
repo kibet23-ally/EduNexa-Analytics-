@@ -178,9 +178,9 @@ const Landing = () => {
   ];
 
   const plans = [
-    { name: 'Starter', termly: 9500, yearly: 25000, desc: 'For small schools getting started', features: ['Up to 200 students', 'Student & teacher profiles', 'Basic reports', 'Email support'] },
-    { name: 'Professional', termly: 19000, yearly: 50000, desc: 'For growing institutions', features: ['Up to 1,000 students', 'Exams & CBC grading', 'Advanced analytics', 'Parent portal', 'Priority support'], highlight: true },
-    { name: 'Enterprise', termly: 34000, yearly: 90000, desc: 'For large school networks', features: ['Unlimited students', 'Multi-campus management', 'Custom integrations', 'Dedicated manager', '24/7 phone support'] },
+    { name: 'Starter', termly: 2500, yearly: 6750, desc: 'For small schools getting started', features: ['Up to 200 students', 'Student & teacher profiles', 'Basic reports', 'Email support'] },
+    { name: 'Professional', termly: 5000, yearly: 13500, desc: 'For growing institutions', features: ['Up to 1,000 students', 'Exams & CBC grading', 'Advanced analytics', 'Parent portal', 'Priority support'], highlight: true },
+    { name: 'Enterprise', termly: 9000, yearly: 24300, desc: 'For large school networks', features: ['Unlimited students', 'Multi-campus management', 'Custom integrations', 'Dedicated manager', '24/7 phone support'] },
   ];
 
   const faqs = [
@@ -543,7 +543,6 @@ const Landing = () => {
             </div>
           </div>
 
-        <div className="max-w-7xl mx-auto mt-12 pt-8 border-t border-slate-800 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-slate-500">
           <p>© {new Date().getFullYear()} EduNexa. All rights reserved.</p>
           <div className="flex items-center gap-2">
             <span className="flex h-2 w-2 rounded-full bg-emerald-500" />

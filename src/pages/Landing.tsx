@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   GraduationCap, Menu, X, ArrowRight, BookOpen, ClipboardList, Shield,
   Smartphone, BarChart3, CheckCircle, Users, Sparkles, Star, Zap,
-  TrendingUp, Globe, Award, ChevronDown, PlayCircle, Brain, Lock,
+  TrendingUp, Globe, Award, ChevronDown, Brain, Lock,
   Mail, Phone, MapPin, Twitter, Linkedin, Facebook
 } from 'lucide-react';
 
@@ -11,7 +11,7 @@ const Landing = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [openFaq, setOpenFaq] = useState<number | null>(0);
-  const [billing, setBilling] = useState<'monthly' | 'yearly'>('monthly');
+  const [billing, setBilling] = useState<'termly' | 'yearly'>('termly');
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 30);
@@ -165,8 +165,8 @@ const Landing = () => {
   ];
 
   const stats = [
-    { v: '500+', l: 'Schools' },
-    { v: '120K+', l: 'Students' },
+    { v: '20+', l: 'Schools' },
+    { v: '10K+', l: 'Students' },
     { v: '99.9%', l: 'Uptime' },
     { v: '4.9/5', l: 'Rating' },
   ];
@@ -178,9 +178,9 @@ const Landing = () => {
   ];
 
   const plans = [
-    { name: 'Starter', monthly: 2500, yearly: 25000, desc: 'For small schools getting started', features: ['Up to 200 students', 'Student & teacher profiles', 'Basic reports', 'Email support'] },
-    { name: 'Professional', monthly: 5000, yearly: 50000, desc: 'For growing institutions', features: ['Up to 1,000 students', 'Exams & CBC grading', 'Advanced analytics', 'Parent portal', 'Priority support'], highlight: true },
-    { name: 'Enterprise', monthly: 9000, yearly: 90000, desc: 'For large school networks', features: ['Unlimited students', 'Multi-campus management', 'Custom integrations', 'Dedicated manager', '24/7 phone support'] },
+    { name: 'Starter', termly: 9500, yearly: 25000, desc: 'For small schools getting started', features: ['Up to 200 students', 'Student & teacher profiles', 'Basic reports', 'Email support'] },
+    { name: 'Professional', termly: 19000, yearly: 50000, desc: 'For growing institutions', features: ['Up to 1,000 students', 'Exams & CBC grading', 'Advanced analytics', 'Parent portal', 'Priority support'], highlight: true },
+    { name: 'Enterprise', termly: 34000, yearly: 90000, desc: 'For large school networks', features: ['Unlimited students', 'Multi-campus management', 'Custom integrations', 'Dedicated manager', '24/7 phone support'] },
   ];
 
   const faqs = [
@@ -274,9 +274,6 @@ const Landing = () => {
                 Start free trial
                 <ArrowRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
               </Link>
-              <button className="inline-flex items-center gap-2 bg-white border border-slate-200 px-6 py-3.5 rounded-full font-semibold text-slate-700 hover:border-slate-300 hover:shadow-md transition">
-                <PlayCircle size={18} /> Watch demo
-              </button>
             </div>
 
             <div className="mt-10 flex items-center gap-6 text-sm text-slate-500">
@@ -391,17 +388,17 @@ const Landing = () => {
 
             <div className="inline-flex items-center bg-slate-100 rounded-full p-1 mt-8">
               <button
-                onClick={() => setBilling('monthly')}
+                onClick={() => setBilling('termly')}
                 className={`px-5 py-2 rounded-full text-sm font-semibold transition ${
-                  billing === 'monthly' ? 'bg-white shadow text-slate-900' : 'text-slate-500'
+                  billing === 'termly' ? 'bg-white shadow text-slate-900' : 'text-slate-500'
                 }`}
-              >Monthly</button>
+              >Per Term</button>
               <button
                 onClick={() => setBilling('yearly')}
                 className={`px-5 py-2 rounded-full text-sm font-semibold transition ${
                   billing === 'yearly' ? 'bg-white shadow text-slate-900' : 'text-slate-500'
                 }`}
-              >Yearly <span className="text-emerald-600 text-xs ml-1">−16%</span></button>
+              >Yearly <span className="text-emerald-600 text-xs ml-1">−12%</span></button>
             </div>
           </div>
 
@@ -426,12 +423,17 @@ const Landing = () => {
                 <div className="mt-6 flex items-baseline gap-1">
                   <span className="text-sm">KES</span>
                   <span className="text-5xl font-bold">
-                    {(billing === 'monthly' ? p.monthly : p.yearly).toLocaleString()}
+                    {(billing === 'termly' ? p.termly : p.yearly).toLocaleString()}
                   </span>
                   <span className={`text-sm ${p.highlight ? 'text-blue-200' : 'text-slate-500'}`}>
-                    /{billing === 'monthly' ? 'mo' : 'yr'}
+                    /{billing === 'termly' ? 'term' : 'yr'}
                   </span>
                 </div>
+                {billing === 'yearly' && (
+                  <p className={`text-xs mt-1 ${p.highlight ? 'text-blue-200' : 'text-slate-400'}`}>
+                    Billed once per year, covers all 3 terms
+                  </p>
+                )}
 
                 <Link
                   to="/register"
@@ -541,6 +543,7 @@ const Landing = () => {
             </div>
           </div>
 
+        <div className="max-w-7xl mx-auto mt-12 pt-8 border-t border-slate-800 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-slate-500">
           <p>© {new Date().getFullYear()} EduNexa. All rights reserved.</p>
           <div className="flex items-center gap-2">
             <span className="flex h-2 w-2 rounded-full bg-emerald-500" />

@@ -263,7 +263,7 @@ const Landing = () => {
 
             <p className="text-lg text-slate-600 mt-6 max-w-xl leading-relaxed">
               The all-in-one platform built for modern schools. Manage students, teachers,
-              exams, and analytics — beautifully unified in one premium experience.
+              exams, and analytics beautifully unified in one premium experience.
             </p>
 
             <div className="mt-8 flex flex-wrap gap-3">
@@ -286,7 +286,7 @@ const Landing = () => {
                 <div className="flex gap-0.5 text-amber-400">
                   {[...Array(5)].map((_, i) => <Star key={i} size={14} fill="currentColor" />)}
                 </div>
-                <p className="text-xs mt-0.5">Trusted by 500+ schools</p>
+                <p className="text-xs mt-0.5">Trusted by 20+ schools</p>
               </div>
             </div>
           </div>

@@ -51,7 +51,7 @@ const Pricing  = lazy(() => import('./pages/Pricing'));
 const About    = lazy(() => import('./pages/About'));
 const Contact  = lazy(() => import('./pages/Contact'));
 const Privacy  = lazy(() => import('./pages/Privacy'));
-const Terms    = lazy(() => import('./pages/Terms'));
+const Terms    = lazy(() => import('./pages/TermsAndConditions'));
 
 /* ─── Page skeleton fallback ─────────────────────────────────────────────── */
 const PageFallback = () => (

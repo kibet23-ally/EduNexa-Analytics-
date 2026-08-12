@@ -107,6 +107,8 @@ export default function Register() {
   const [submitting,    setSubmitting]   = useState(false);
   const [submitError,   setSubmitError]  = useState('');
   const [success,       setSuccess]      = useState(false);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [termsError,    setTermsError]    = useState('');
 
   /* ── Field update ─────────────────────────────────────────────── */
   const set = (k: keyof Step1Form) => (
@@ -142,7 +144,13 @@ export default function Register() {
 
   /* ── Step 1 → Step 2 ──────────────────────────────────────────── */
   const handleNext = () => {
-    if (validateStep1()) setStep(2);
+    const step1Valid = validateStep1();
+    if (!agreedToTerms) {
+      setTermsError('You must agree to the Terms and Conditions to continue.');
+    } else {
+      setTermsError('');
+    }
+    if (step1Valid && agreedToTerms) setStep(2);
   };
 
   /* ── Final submit ─────────────────────────────────────────────── */
@@ -382,18 +390,31 @@ export default function Register() {
                 </div>
               </div>
 
+              <div className="mt-6">
+                <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={agreedToTerms}
+                    onChange={e => { setAgreedToTerms(e.target.checked); if (e.target.checked) setTermsError(''); }}
+                    className="mt-0.5 w-4 h-4 rounded border-slate-300 accent-[#1e3a5f]"
+                  />
+                  <span className="text-xs text-slate-500">
+                    By registering you agree to our{' '}
+                    <Link to="/terms" target="_blank" className="underline hover:text-slate-700 font-medium">
+                      Terms and Conditions
+                    </Link>
+                  </span>
+                </label>
+                {termsError && (
+                  <p className="text-xs text-red-500 mt-1.5 ml-6">{termsError}</p>
+                )}
+              </div>
+
               <button onClick={handleNext}
-                className="mt-6 w-full py-3.5 rounded-xl text-white font-bold flex items-center justify-center gap-2 transition-all"
+                className="mt-4 w-full py-3.5 rounded-xl text-white font-bold flex items-center justify-center gap-2 transition-all"
                 style={{ background: '#1e3a5f' }}>
                 Continue to School Levels <ChevronRight size={16} />
               </button>
-
-              <p className="text-center text-xs text-slate-400 mt-4">
-                By registering you agree to our{' '}
-                <Link to="/terms" className="underline hover:text-slate-600">Terms of Service</Link>{' '}
-                and{' '}
-                <Link to="/privacy" className="underline hover:text-slate-600">Privacy Policy</Link>
-              </p>
             </div>
           )}
 
@@ -438,7 +459,7 @@ export default function Register() {
                         </div>
 
                         {/* Icon */}
-                        <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                         <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
                           style={{ background: isSelected ? level.color + '20' : '#f1f5f9', border: `1.5px solid ${level.border}` }}>
                           <Icon size={18} style={{ color: level.color }} />
                         </div>
@@ -572,3 +593,4 @@ const Field: React.FC<{
     )}
   </div>
 );
+                    

@@ -5,6 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>EduNexa Analytics</title>
 
+    <!-- Theme: applied synchronously, before any CSS/JS loads, so the page
+         never paints in the wrong theme and then flips. This has to live
+         here (not in React) because React's own code — even useLayoutEffect —
+         only runs after the JS bundle has been fetched and executed, which
+         is well after the browser's first paint. -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('edunexa-theme');
+          if (stored === 'dark') {
+            document.documentElement.classList.add('dark');
+          }
+        } catch (e) { /* noop */ }
+      })();
+    </script>
+
     <!-- PWA: theme + icons (manifest link is auto-injected by vite-plugin-pwa at build time) -->
     <meta name="theme-color" content="#1e3a5f" />
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />

@@ -10,6 +10,18 @@
    on <html>, which is why toggling never visibly changed anything. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+@layer base {
+  /* Smooths every theme flip into a quick cross-fade instead of an instant
+     cut — most noticeable when tapping the toggle repeatedly, but it also
+     just makes a single switch feel less abrupt. Scoped to color-only
+     properties so it never interferes with layout, hover movement, etc. */
+  * {
+    transition-property: background-color, border-color, color, fill, stroke, box-shadow;
+    transition-timing-function: ease;
+    transition-duration: 150ms;
+  }
+}
+
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Space Grotesk", sans-serif;

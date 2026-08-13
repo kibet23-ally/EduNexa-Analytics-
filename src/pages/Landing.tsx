@@ -398,7 +398,7 @@ const Landing = () => {
                 className={`px-5 py-2 rounded-full text-sm font-semibold transition ${
                   billing === 'yearly' ? 'bg-white shadow text-slate-900' : 'text-slate-500'
                 }`}
-              >Yearly <span className="text-emerald-600 text-xs ml-1">−12%</span></button>
+              >Yearly <span className="text-emerald-600 text-xs ml-1">−10%</span></button>
             </div>
           </div>
 

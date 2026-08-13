@@ -18,6 +18,7 @@ export interface AppUser {
   school_id: number | null;
   name: string;
   auth_id?: string;
+  theme_preference?: 'light' | 'dark';
 }
 
 export interface AuthContextValue {
@@ -29,6 +30,9 @@ export interface AuthContextValue {
   authLoading:    boolean;   // true while restoring / checking session
   sessionReady:   boolean;   // true once initial session check is done
   profileLoading: boolean;   // true while fetching user profile
+  // Theme
+  theme:          'light' | 'dark';
+  setTheme:       (theme: 'light' | 'dark') => void;
   // Actions
   signOut:        () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -41,6 +45,8 @@ export const AuthContext = createContext<AuthContextValue>({
   authLoading:     true,
   sessionReady:    false,
   profileLoading:  false,
+  theme:           'light',
+  setTheme:        () => {},
   signOut:         async () => {},
   refreshProfile:  async () => {},
 });
@@ -67,7 +73,7 @@ async function fetchProfile(userId: string): Promise<AppUser | null> {
   try {
     const queryPromise = supabase
       .from('users')
-      .select('id, email, role, school_id, name, auth_id')
+      .select('id, email, role, school_id, name, auth_id, theme_preference')
       .or(`id.eq.${userId},auth_id.eq.${userId}`)
       .maybeSingle();
 
@@ -109,6 +115,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [sessionReady,   setSessionReady]   = useState(false);
   const [profileLoading, setProfileLoading] = useState(false);
 
+  /* ── Theme ─────────────────────────────────────────────────────────────
+     `dark:` variants are gated on tailwind's `darkMode: 'class'`, so the
+     `dark` class on <html> is the only thing that actually flips them —
+     nothing previously applied it, which is why the toggle button did
+     nothing. Local storage wins on repeat visits; the DB's
+     theme_preference (synced below once the profile loads) only seeds a
+     device that hasn't chosen a preference of its own yet. */
+  const [theme, setThemeState] = useState<'light' | 'dark'>(() => {
+    try {
+      const stored = localStorage.getItem('edunexa-theme');
+      if (stored === 'light' || stored === 'dark') return stored;
+    } catch { /* noop */ }
+    return 'light';
+  });
+  const hasExplicitThemeRef = useRef(
+    (() => {
+      try { return !!localStorage.getItem('edunexa-theme'); } catch { return false; }
+    })()
+  );
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'dark') root.classList.add('dark');
+    else root.classList.remove('dark');
+    try { localStorage.setItem('edunexa-theme', theme); } catch { /* noop */ }
+  }, [theme]);
+
+  const setTheme = useCallback((t: 'light' | 'dark') => {
+    hasExplicitThemeRef.current = true;
+    setThemeState(t);
+  }, []);
+
   /* ── Load profile from DB ─────────────────────────────────────────────── */
   const loadProfile = useCallback(async (authUser: User) => {
     if (profileFetching.current) return;
@@ -129,6 +167,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (mountedRef.current) {
       setUser(profile);
       setProfileLoading(false);
+      if (profile?.theme_preference && !hasExplicitThemeRef.current) {
+        setThemeState(profile.theme_preference);
+      }
     }
     profileFetching.current = false;
   }, []);
@@ -283,9 +324,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     authLoading,
     sessionReady,
     profileLoading,
+    theme,
+    setTheme,
     signOut,
     refreshProfile,
-  }), [session, user, authLoading, sessionReady, profileLoading, signOut, refreshProfile]);
+  }), [session, user, authLoading, sessionReady, profileLoading, theme, setTheme, signOut, refreshProfile]);
 
   return (
     <AuthContext.Provider value={value}>

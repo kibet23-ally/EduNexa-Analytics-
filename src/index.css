@@ -2,6 +2,14 @@
 @import "tailwindcss";
 @config "../tailwind.config.ts";
 
+/* Tailwind v4 is CSS-first: darkMode: 'class' in tailwind.config.ts (loaded
+   above via @config) is not enough on its own — v4 still needs the dark
+   variant explicitly told to key off a class instead of the OS's
+   prefers-color-scheme media query. Without this line every dark: utility
+   in the app silently followed the OS theme regardless of what class was
+   on <html>, which is why toggling never visibly changed anything. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Space Grotesk", sans-serif;

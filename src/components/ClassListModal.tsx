@@ -380,37 +380,38 @@ async function generatePDF(params: {
   const drawHeader = () => {
     doc.setDrawColor(...PDF_COLORS.black);
     doc.setLineWidth(0.4);
-    doc.line(M, 26, W - M, 26);
+    doc.line(M, 32, W - M, 32);
 
+    // Logo top kept clear of the page border (drawn at y=10).
     if (logo) {
-      try { doc.addImage(logo.data, logo.fmt, M, 5, 18, 18); } catch { /* noop */ }
+      try { doc.addImage(logo.data, logo.fmt, M, 13, 16, 16); } catch { /* noop */ }
     }
 
     doc.setTextColor(...PDF_COLORS.black);
     doc.setFontSize(15); doc.setFont('helvetica', 'bold');
-    doc.text(schoolName.toUpperCase(), W / 2, 13, { align: 'center' });
+    doc.text(schoolName.toUpperCase(), W / 2, 19, { align: 'center' });
     if (school?.address || school?.phone) {
       doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(...PDF_COLORS.darkGray);
-      doc.text([school?.address, school?.phone].filter(Boolean).join('  |  '), W / 2, 19, { align: 'center' });
+      doc.text([school?.address, school?.phone].filter(Boolean).join('  |  '), W / 2, 25, { align: 'center' });
     }
     doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(...PDF_COLORS.black);
-    doc.text('CLASS LIST', W / 2, 24, { align: 'center' });
+    doc.text('CLASS LIST', W / 2, 30, { align: 'center' });
   };
 
   drawHeader();
 
   doc.setTextColor(...PDF_COLORS.black);
   doc.setFontSize(10); doc.setFont('helvetica', 'bold');
-  doc.text(`Class: ${gradeName}`, M, 40);
+  doc.text(`Class: ${gradeName}`, M, 46);
   doc.setFont('helvetica', 'normal'); doc.setTextColor(...PDF_COLORS.darkGray);
-  doc.text(`Downloaded: ${downloadDate}  •  Total Students: ${studentCount}`, M, 46);
+  doc.text(`Downloaded: ${downloadDate}  •  Total Students: ${studentCount}`, M, 52);
 
   autoTable(doc, {
     ...PDF_TABLE_THEME,
-    startY: 52,
+    startY: 58,
     head: [activeColumns.map(c => c.label)],
     body: rows.map(r => activeColumns.map(c => r[c.key])),
-    margin: { top: 52, left: PDF_CONTENT_X, right: PDF_CONTENT_X },
+    margin: { top: 58, left: PDF_CONTENT_X, right: PDF_CONTENT_X },
     didDrawPage: () => {
       // Header repeats on every page (autoTable's `margin.top` reserves the space).
       if (doc.internal.getCurrentPageInfo().pageNumber > 1) drawHeader();

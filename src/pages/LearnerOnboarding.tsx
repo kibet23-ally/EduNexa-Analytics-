@@ -6,6 +6,7 @@ import { fetchWithProxy, writeWithProxy } from '../lib/fetchProxy';
 import { supabase } from '../lib/supabase';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { addBorderToAllPages } from '../lib/pdfKit';
 import {
   Check, ChevronLeft, ChevronRight, Upload, User, Users, HeartPulse,
   GraduationCap, FileText, Wallet, Loader2, AlertTriangle, X, Camera,
@@ -438,6 +439,7 @@ const LearnerOnboarding: React.FC = () => {
       theme: 'grid', styles: { fontSize: 8 },
     });
 
+    addBorderToAllPages(doc);
     doc.save(`Learner_Profile_${form.admission_number || 'draft'}.pdf`);
   };
 

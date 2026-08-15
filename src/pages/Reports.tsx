@@ -157,13 +157,17 @@ function drawReportPage(
   const M = PDF.margin;
 
   /* ── 1. Header band ── */
+  // Inset 10mm on every side and shifted down 10mm so the band sits fully
+  // inside the page border (drawn later at y=10/x=10) instead of bleeding
+  // past it — it used to run edge-to-edge from (0,0), which put both the
+  // fill and the school-name text outside/across the border line.
   setColor(doc, PDF.headerBg, "fill");
-  doc.rect(0, 0, W, 38, "F");
+  doc.rect(10, 10, W - 20, 38, "F");
 
   /* Logo */
   if (school?.logo_url) {
     try {
-      doc.addImage(school.logo_url, "JPEG", M, 4, 28, 28);
+      doc.addImage(school.logo_url, "JPEG", M, 14, 28, 28);
     } catch { /* skip missing/CORS logo */ }
   }
 
@@ -171,12 +175,12 @@ function drawReportPage(
   setColor(doc, PDF.headerText, "text");
   doc.setFontSize(15);
   doc.setFont("helvetica", "bold");
-  doc.text((school?.name ?? "School").toUpperCase(), W / 2, 13, { align: "center" });
+  doc.text((school?.name ?? "School").toUpperCase(), W / 2, 23, { align: "center" });
 
   /* Accent rule */
   setColor(doc, PDF.accentLine, "draw");
   doc.setLineWidth(0.6);
-  doc.line(M + 30, 17, W - M, 17);
+  doc.line(M + 30, 27, W - M, 27);
 
   /* Motto */
   setColor(doc, PDF.accentLine, "text");
@@ -184,26 +188,26 @@ function drawReportPage(
   doc.setFont("helvetica", "italic");
   doc.text(
     school?.motto ? `"${school.motto}"` : "Excellence Through Education",
-    W / 2, 23, { align: "center" }
+    W / 2, 33, { align: "center" }
   );
 
   /* Contact row */
   const contact = [school?.address, school?.phone, school?.email].filter(Boolean).join("   ·   ");
   if (contact) {
-    setColor(doc, [180, 195, 215] as any, "text");
+    setColor(doc, [180, 180, 180] as any, "text");
     doc.setFontSize(7);
     doc.setFont("helvetica", "normal");
-    doc.text(contact, W / 2, 30, { align: "center" });
+    doc.text(contact, W / 2, 40, { align: "center" });
   }
 
   /* Document title */
   setColor(doc, PDF.headerText, "text");
   doc.setFontSize(9);
   doc.setFont("helvetica", "bold");
-  doc.text("STUDENT PROGRESS REPORT", W / 2, 36, { align: "center" });
+  doc.text("STUDENT PROGRESS REPORT", W / 2, 46, { align: "center" });
 
   /* ── 2. Info grid ── */
-  const infoY = 45;
+  const infoY = 55;
   const fields: [string, string][] = [
     ["Student Name",  student?.name ?? "—"],
     ["Admission No.", student?.admission_number ?? "—"],
@@ -352,15 +356,17 @@ function drawReportPage(
   });
 
   /* ── 7. Footer band ── */
+  // Inset to match the page border (bottom edge at y=287, sides at x=10/W-10)
+  // instead of running edge-to-edge past it.
   setColor(doc, PDF.footerBg, "fill");
-  doc.rect(0, 282, W, 15, "F");
+  doc.rect(10, 272, W - 20, 15, "F");
   setColor(doc, PDF.footerText, "text");
   doc.setFontSize(7);
   doc.setFont("helvetica", "normal");
-  if (contact) doc.text(contact, W / 2, 291, { align: "center" });
+  if (contact) doc.text(contact, W / 2, 281, { align: "center" });
   doc.setFontSize(6.5);
-  setColor(doc, [100, 116, 139] as any, "text");
-  doc.text("Confidential — For the attention of parent/guardian only", W / 2, 295, { align: "center" });
+  setColor(doc, [130, 130, 130] as any, "text");
+  doc.text("Confidential — For the attention of parent/guardian only", W / 2, 285, { align: "center" });
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -377,39 +383,41 @@ function exportRankingsPDF(opts: {
   const M = PDF.margin;
 
   /* Header */
+  // Inset + shifted down 10mm so it sits inside the border instead of
+  // bleeding past it (was rect(0,0,...), text baseline above the border).
   setColor(doc, PDF.headerBg, "fill");
-  doc.rect(0, 0, W, 36, "F");
+  doc.rect(10, 10, W - 20, 36, "F");
   if (school?.logo_url) {
-    try { doc.addImage(school.logo_url, "JPEG", M, 4, 26, 26); } catch { /* skip */ }
+    try { doc.addImage(school.logo_url, "JPEG", M, 14, 22, 22); } catch { /* skip */ }
   }
   setColor(doc, PDF.headerText, "text");
   doc.setFontSize(14);
   doc.setFont("helvetica", "bold");
-  doc.text((school?.name ?? "School").toUpperCase(), W / 2, 12, { align: "center" });
+  doc.text((school?.name ?? "School").toUpperCase(), W / 2, 22, { align: "center" });
   setColor(doc, PDF.accentLine, "draw");
   doc.setLineWidth(0.5);
-  doc.line(M + 28, 16, W - M, 16);
+  doc.line(M + 28, 26, W - M, 26);
   setColor(doc, PDF.accentLine, "text");
   doc.setFontSize(8);
   doc.setFont("helvetica", "italic");
-  doc.text(school?.motto ? `"${school.motto}"` : "", W / 2, 21, { align: "center" });
+  doc.text(school?.motto ? `"${school.motto}"` : "", W / 2, 31, { align: "center" });
   setColor(doc, PDF.headerText, "text");
   doc.setFontSize(9.5);
   doc.setFont("helvetica", "bold");
-  doc.text("CLASS PERFORMANCE ANALYSIS", W / 2, 30, { align: "center" });
+  doc.text("CLASS PERFORMANCE ANALYSIS", W / 2, 40, { align: "center" });
 
   /* Sub-header */
   setColor(doc, PDF.summaryBg, "fill");
-  doc.rect(0, 36, W, 10, "F");
+  doc.rect(10, 46, W - 20, 10, "F");
   setColor(doc, PDF.bodyText, "text");
   doc.setFontSize(8);
   doc.setFont("helvetica", "normal");
   doc.text(
     `Exam: ${exam?.exam_name ?? ""}     Term ${exam?.term ?? ""},  ${exam?.year ?? ""}     Generated: ${new Date().toLocaleDateString()}`,
-    W / 2, 42.5, { align: "center" }
+    W / 2, 52.5, { align: "center" }
   );
 
-  let curY = 52;
+  let curY = 62;
 
   /* Most Improved */
   if (mostImproved) {
@@ -506,14 +514,14 @@ function exportRankingsPDF(opts: {
   /* Footer */
   const contact = [school?.address, school?.phone, school?.email].filter(Boolean).join("   ·   ");
   setColor(doc, PDF.footerBg, "fill");
-  doc.rect(0, 282, W, 15, "F");
+  doc.rect(10, 272, W - 20, 15, "F");
   setColor(doc, PDF.footerText, "text");
   doc.setFontSize(7);
   doc.setFont("helvetica", "normal");
-  if (contact) doc.text(contact, W / 2, 291, { align: "center" });
+  if (contact) doc.text(contact, W / 2, 281, { align: "center" });
   doc.setFontSize(6.5);
   setColor(doc, [114, 114, 114] as any, "text");
-  doc.text("Confidential — School Administration Document", W / 2, 295, { align: "center" });
+  doc.text("Confidential — School Administration Document", W / 2, 285, { align: "center" });
 
   addBorderToAllPages(doc);
   doc.save(
@@ -1514,4 +1522,4 @@ const SummaryCard = ({ title, value, icon }: any) => (
 );
 
 export default Reports;
-  
+                        

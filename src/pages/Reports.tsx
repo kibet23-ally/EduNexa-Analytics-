@@ -13,6 +13,7 @@ import { supabase } from "../lib/supabase";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { addBorderToAllPages } from "../lib/pdfKit";
 
 /* ═══════════════════════════════════════════════════════════
    CBC HELPERS
@@ -82,9 +83,11 @@ interface MostImprovedRow {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   PDF DESIGN TOKENS — professional, understated palette
-   No bright colours. Charcoal headings, slate body text,
-   warm stone accent line, ivory/white page background.
+   PDF DESIGN TOKENS — monochrome, bordered, print-friendly.
+   Every color below is grayscale (R=G=B); this is the single palette
+   every PDF/document generator in the app should reference so a future
+   style change happens in one place. See also ../lib/pdfKit for the
+   shared border/footer/page-numbering helpers used across pages.
 ═══════════════════════════════════════════════════════════ */
 const PDF = {
   /* Page */
@@ -92,28 +95,28 @@ const PDF = {
   pageH: 297,
   margin: 14,
 
-  /* Palette — RGB tuples */
-  headerBg:   [30,  41,  59]  as [number,number,number], // slate-800
+  /* Palette — RGB tuples, all grayscale */
+  headerBg:   [40,  40,  40]  as [number,number,number],
   headerText: [255, 255, 255] as [number,number,number],
-  accentLine: [203, 175, 112] as [number,number,number], // warm gold/stone
-  subheadBg:  [248, 250, 252] as [number,number,number], // slate-50
-  subheadText:[30,  41,  59]  as [number,number,number],
-  bodyText:   [51,  65,  85]  as [number,number,number], // slate-700
-  mutedText:  [100, 116, 139] as [number,number,number], // slate-500
-  borderLine: [226, 232, 240] as [number,number,number], // slate-200
-  rowAlt:     [249, 250, 251] as [number,number,number], // gray-50
-  summaryBg:  [241, 245, 249] as [number,number,number], // slate-100
-  footerBg:   [30,  41,  59]  as [number,number,number],
-  footerText: [203, 213, 225] as [number,number,number], // slate-300
+  accentLine: [90,  90,  90]  as [number,number,number],
+  subheadBg:  [245, 245, 245] as [number,number,number],
+  subheadText:[40,  40,  40]  as [number,number,number],
+  bodyText:   [63,  63,  63]  as [number,number,number],
+  mutedText:  [114, 114, 114] as [number,number,number],
+  borderLine: [210, 210, 210] as [number,number,number],
+  rowAlt:     [246, 246, 246] as [number,number,number],
+  summaryBg:  [240, 240, 240] as [number,number,number],
+  footerBg:   [40,  40,  40]  as [number,number,number],
+  footerText: [220, 220, 220] as [number,number,number],
 
   /* Table header */
-  tHeadBg:    [30,  41,  59]  as [number,number,number],
+  tHeadBg:    [40,  40,  40]  as [number,number,number],
   tHeadText:  [255, 255, 255] as [number,number,number],
 
-  /* Rank medal colours */
-  gold:       [254, 240, 138] as [number,number,number],
-  silver:     [226, 232, 240] as [number,number,number],
-  bronze:     [254, 237, 213] as [number,number,number],
+  /* Rank "medal" tiers — differentiated by weight/shade only, not color */
+  gold:       [225, 225, 225] as [number,number,number],
+  silver:     [235, 235, 235] as [number,number,number],
+  bronze:     [230, 230, 230] as [number,number,number],
 };
 
 /* ── narrow utility ── */
@@ -509,9 +512,10 @@ function exportRankingsPDF(opts: {
   doc.setFont("helvetica", "normal");
   if (contact) doc.text(contact, W / 2, 291, { align: "center" });
   doc.setFontSize(6.5);
-  setColor(doc, [100, 116, 139] as any, "text");
+  setColor(doc, [114, 114, 114] as any, "text");
   doc.text("Confidential — School Administration Document", W / 2, 295, { align: "center" });
 
+  addBorderToAllPages(doc);
   doc.save(
     `${(school?.name ?? "school").replace(/\s+/g, "_")}_class_analysis_T${exam?.term ?? ""}_${exam?.year ?? ""}.pdf`
   );
@@ -814,6 +818,7 @@ const Reports = () => {
       rank: studentRank, total: totalStudents,
       teacherRemark, principalRemark, date: formattedDate,
     });
+    addBorderToAllPages(doc);
     doc.save(`${(selectedStudent?.name ?? "report").replace(/\s+/g, "_")}_T${selectedExam?.term}_${selectedExam?.year}.pdf`);
   };
 
@@ -905,6 +910,7 @@ const Reports = () => {
         ? `_${(gradesRaw.find((g: any) => g.id === bulkGradeId)?.grade_name ?? "").replace(/\s+/g, "_")}`
         : "";
 
+      addBorderToAllPages(mergedDoc);
       mergedDoc.save(
         `${(school?.name ?? "school").replace(/\s+/g, "_")}_reports_T${bulkExam.term}_${bulkExam.year}${gradeSuffix}.pdf`
       );
@@ -1508,4 +1514,4 @@ const SummaryCard = ({ title, value, icon }: any) => (
 );
 
 export default Reports;
-                        
+  

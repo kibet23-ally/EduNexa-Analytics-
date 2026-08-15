@@ -5,6 +5,10 @@ import { fetchWithProxy, writeWithProxy } from '../lib/fetchProxy';
 import { Grade, School } from '../types';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import {
+  createPdfDoc, drawPdfHeader, finalizePdf, addBorderToAllPages,
+  PDF_TABLE_THEME, PDF_COLORS, PDF_CONTENT_X, drawEmptyState, drawSummaryBlock,
+} from '../lib/pdfKit';
 import toast from 'react-hot-toast';
 import {
   Wallet, TrendingUp, AlertTriangle, Search, X, Loader2, Printer,
@@ -279,7 +283,7 @@ const Finance: React.FC = () => {
           ) : (
             <ReportsTab
               students={students} schoolName={school.name} term={term} year={year}
-              effectiveSchoolId={effectiveSchoolId}
+              effectiveSchoolId={effectiveSchoolId} grades={grades}
             />
           )}
         </>
@@ -689,8 +693,9 @@ const PaymentHistoryModal: React.FC<{ student: StudentRow; school: SchoolInfo; s
 /* ══════════════════════════════════════════════════════════════════════
    Reports tab
 ══════════════════════════════════════════════════════════════════════ */
-const ReportsTab: React.FC<{ students: StudentRow[]; schoolName: string; term: number; year: number; effectiveSchoolId: number }> = ({ students, schoolName, term, year, effectiveSchoolId }) => {
+const ReportsTab: React.FC<{ students: StudentRow[]; schoolName: string; term: number; year: number; effectiveSchoolId: number; grades: Grade[] }> = ({ students, schoolName, term, year, effectiveSchoolId, grades }) => {
   const [statementStudentId, setStatementStudentId] = useState('');
+  const [outstandingGradeId, setOutstandingGradeId] = useState('');
   const [generating, setGenerating] = useState('');
 
   const handleCollectionReport = async () => {
@@ -702,17 +707,21 @@ const ReportsTab: React.FC<{ students: StudentRow[]; schoolName: string; term: n
         orderBy: { column: 'payment_date', ascending: true },
       });
       const payments = (Array.isArray(data) ? data : []).filter((p: any) => !p.voided);
-      const doc = brandedDoc(schoolName, 'FEE COLLECTION REPORT', `Term ${term}, ${year}`);
+      const doc = createPdfDoc('p');
+      const startY = drawPdfHeader(doc, {
+        schoolName, title: 'FEE COLLECTION REPORT', subtitle: `Term ${term}, ${year}`,
+        meta: [`Generated: ${new Date().toLocaleDateString('en-KE', { year: 'numeric', month: 'long', day: 'numeric' })}`],
+      });
       autoTable(doc, {
-        startY: 45,
+        ...PDF_TABLE_THEME,
+        startY,
         head: [['Date', 'Student', 'Admission No', 'Amount', 'Method', 'Receipt No']],
         body: payments.map((p: any) => {
           const s = students.find(st => st.id === p.student_id);
           return [new Date(p.payment_date).toLocaleDateString(), s?.name || '—', s?.admission_number || '—', money(p.amount), p.payment_method, p.receipt_number];
         }),
-        theme: 'grid', styles: { fontSize: 8 }, headStyles: { fillColor: [30, 58, 95], textColor: 255 },
       });
-      addPageNumbers(doc);
+      finalizePdf(doc);
       doc.save(`Fee_Collection_Report_T${term}_${year}.pdf`);
       toast.success('Fee Collection Report downloaded.');
     } catch (err: unknown) {
@@ -721,18 +730,53 @@ const ReportsTab: React.FC<{ students: StudentRow[]; schoolName: string; term: n
   };
 
   const handleOutstandingReport = () => {
+    if (!outstandingGradeId) { toast.error('Select a class first.'); return; }
     setGenerating('outstanding');
-    const outstanding = students.filter(s => s.balance > 0).sort((a, b) => b.balance - a.balance);
-    const doc = brandedDoc(schoolName, 'OUTSTANDING BALANCES REPORT', `Term ${term}, ${year}`);
-    autoTable(doc, {
-      startY: 45,
-      head: [['Admission No', 'Student', 'Grade', 'Expected', 'Paid', 'Balance']],
-      body: outstanding.map(s => [s.admission_number, s.name, s.grade_name, money(s.expected), money(s.paid), money(s.balance)]),
-      theme: 'grid', styles: { fontSize: 8 }, headStyles: { fillColor: [30, 58, 95], textColor: 255 },
+    const grade = grades.find(g => String(g.id) === outstandingGradeId);
+    const gradeName = grade?.grade_name || 'Selected Class';
+
+    // Class + tenant scoping happens entirely against `students`, which was
+    // already fetched scoped to effectiveSchoolId (the authenticated user's
+    // own school — see loadData() above). Filtering further by grade_id
+    // here is a client-side narrowing of an already tenant-safe list, never
+    // a new query a caller could redirect to another school's data; RLS on
+    // the server backs this regardless of what the client sends.
+    const outstanding = students
+      .filter(s => s.grade_id === grade?.id && s.balance > 0)
+      .sort((a, b) => b.balance - a.balance);
+
+    const doc = createPdfDoc('p');
+    const dateStr = new Date().toLocaleDateString('en-KE', { year: 'numeric', month: 'long', day: 'numeric' });
+    const startY = drawPdfHeader(doc, {
+      schoolName, title: 'OUTSTANDING FEES REPORT',
+      meta: [`CLASS: ${gradeName}`, `DATE: ${dateStr}`],
     });
-    addPageNumbers(doc);
-    doc.save(`Outstanding_Balances_T${term}_${year}.pdf`);
-    toast.success('Outstanding Balances Report downloaded.');
+
+    if (outstanding.length === 0) {
+      drawEmptyState(doc, `No outstanding fee balances found for ${gradeName}.`, startY);
+      finalizePdf(doc);
+    } else {
+      autoTable(doc, {
+        ...PDF_TABLE_THEME,
+        startY,
+        head: [['Admission No', 'Student Name', 'Class', 'Amount Due', 'Amount Paid', 'Outstanding Balance']],
+        body: outstanding.map(s => [s.admission_number, s.name, s.grade_name, money(s.expected), money(s.paid), money(s.balance)]),
+      });
+      const totals = outstanding.reduce((a, s) => ({
+        due: a.due + s.expected, paid: a.paid + s.paid, balance: a.balance + s.balance,
+      }), { due: 0, paid: 0, balance: 0 });
+      const afterTable = (doc as any).lastAutoTable.finalY + 8;
+      drawSummaryBlock(doc, [
+        ['Total students with outstanding balances', String(outstanding.length)],
+        ['Total amount due', money(totals.due)],
+        ['Total amount paid', money(totals.paid)],
+        ['Total outstanding balance', money(totals.balance)],
+      ], afterTable);
+      finalizePdf(doc);
+    }
+
+    doc.save(`Outstanding_Fees_${gradeName.replace(/\s+/g, '_')}_T${term}_${year}.pdf`);
+    toast.success('Outstanding Fees Report downloaded.');
     setGenerating('');
   };
 
@@ -748,20 +792,23 @@ const ReportsTab: React.FC<{ students: StudentRow[]; schoolName: string; term: n
         orderBy: { column: 'payment_date', ascending: true },
       });
       const payments = (Array.isArray(data) ? data : []).filter((p: any) => !p.voided);
-      const doc = brandedDoc(schoolName, 'STUDENT FEE STATEMENT', `${student.name} (${student.admission_number})`);
+      const doc = createPdfDoc('p');
+      const startY = drawPdfHeader(doc, {
+        schoolName, title: 'STUDENT FEE STATEMENT', subtitle: `${student.name} (${student.admission_number})`,
+      });
       autoTable(doc, {
-        startY: 45,
+        ...PDF_TABLE_THEME,
+        startY,
         head: [['Date', 'Amount', 'Method', 'Receipt No']],
         body: payments.map((p: any) => [new Date(p.payment_date).toLocaleDateString(), money(p.amount), p.payment_method, p.receipt_number]),
-        theme: 'grid', styles: { fontSize: 9 }, headStyles: { fillColor: [30, 58, 95], textColor: 255 },
       });
-      const y = (doc as any).lastAutoTable.finalY + 10;
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
-      doc.text(`Total Expected: ${money(student.expected)}`, 14, y);
-      doc.text(`Total Paid: ${money(student.paid)}`, 14, y + 6);
-      doc.setTextColor(220, 38, 38);
-      doc.text(`Balance: ${money(Math.max(0, student.balance))}`, 14, y + 12);
-      addPageNumbers(doc);
+      const afterTable = (doc as any).lastAutoTable.finalY + 8;
+      drawSummaryBlock(doc, [
+        ['Total Expected', money(student.expected)],
+        ['Total Paid', money(student.paid)],
+        ['Balance', money(Math.max(0, student.balance))],
+      ], afterTable);
+      finalizePdf(doc);
       doc.save(`Fee_Statement_${student.admission_number}.pdf`);
       toast.success('Student Fee Statement downloaded.');
     } catch (err: unknown) {
@@ -772,7 +819,17 @@ const ReportsTab: React.FC<{ students: StudentRow[]; schoolName: string; term: n
   return (
     <div className="grid md:grid-cols-3 gap-5">
       <ReportCard icon={FileText} title="Fee Collection Report" desc="All payments received this term." loading={generating === 'collection'} onClick={handleCollectionReport} />
-      <ReportCard icon={AlertTriangle} title="Outstanding Balances Report" desc="Students who still owe fees." loading={generating === 'outstanding'} onClick={handleOutstandingReport} />
+      <div className="bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-100 dark:border-slate-800 space-y-3">
+        <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200 font-bold text-sm"><AlertTriangle size={16} /> Outstanding Fees Report</div>
+        <p className="text-xs text-slate-400">Select a class to see who still owes fees.</p>
+        <select value={outstandingGradeId} onChange={e => setOutstandingGradeId(e.target.value)} className={inputCls}>
+          <option value="">Select class</option>
+          {grades.map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
+        </select>
+        <button onClick={handleOutstandingReport} disabled={generating === 'outstanding' || !outstandingGradeId} className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white disabled:opacity-50">
+          {generating === 'outstanding' ? <Loader2 size={16} className="animate-spin" /> : 'Generate PDF'}
+        </button>
+      </div>
       <div className="bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-100 dark:border-slate-800 space-y-3">
         <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200 font-bold text-sm"><Receipt size={16} /> Student Fee Statement</div>
         <p className="text-xs text-slate-400">Full payment history for one student.</p>
@@ -799,37 +856,11 @@ const ReportCard: React.FC<{ icon: any; title: string; desc: string; loading: bo
 );
 
 /* ══════════════════════════════════════════════════════════════════════
-   Shared PDF helpers
+   PDF helpers now come from ../lib/pdfKit (createPdfDoc, drawPdfHeader,
+   finalizePdf) — every report in this file uses those instead of its
+   own letterhead/footer logic, so styling stays centralized and
+   monochrome/bordered across the whole app.
 ══════════════════════════════════════════════════════════════════════ */
-function brandedDoc(schoolName: string, title: string, subtitle: string): jsPDF {
-  const doc = new jsPDF('p', 'mm', 'a4');
-  const W = doc.internal.pageSize.width;
-  doc.setFillColor(30, 58, 95);
-  doc.rect(0, 0, W, 30, 'F');
-  doc.setFillColor(234, 179, 8);
-  doc.rect(0, 30, W, 1.5, 'F');
-  doc.setTextColor(255, 255, 255); doc.setFontSize(14); doc.setFont('helvetica', 'bold');
-  doc.text(schoolName.toUpperCase(), W / 2, 13, { align: 'center' });
-  doc.setFontSize(11); doc.setTextColor(253, 224, 71);
-  doc.text(title, W / 2, 21, { align: 'center' });
-  doc.setTextColor(30, 41, 59); doc.setFontSize(9); doc.setFont('helvetica', 'normal');
-  doc.text(subtitle, 14, 38);
-  doc.setTextColor(100, 116, 139);
-  doc.text(`Generated: ${new Date().toLocaleDateString('en-KE', { year: 'numeric', month: 'long', day: 'numeric' })}`, W - 14, 38, { align: 'right' });
-  return doc;
-}
-
-function addPageNumbers(doc: jsPDF) {
-  const total = doc.internal.getNumberOfPages();
-  const W = doc.internal.pageSize.width;
-  for (let i = 1; i <= total; i++) {
-    doc.setPage(i);
-    const H = doc.internal.pageSize.height;
-    doc.setFontSize(8); doc.setTextColor(148, 163, 184);
-    doc.text(`Page ${i} of ${total}`, W - 14, H - 8, { align: 'right' });
-    doc.text('Generated by EduNexa Analytics', 14, H - 8);
-  }
-}
 
 /* ── Shared: load a grade's vote-head fee breakdown for a given period ──── */
 async function fetchVoteHeadsForGrade(schoolId: number, gradeId: number, term: number, year: number): Promise<VoteHead[]> {
@@ -970,7 +1001,7 @@ function printReceipt(params: {
     doc.text('OFFICIAL STAMP', W - M - boxW / 2, y - 2, { align: 'center' });
 
     if (payment.voided) {
-      doc.setTextColor(220, 38, 38); doc.setFontSize(22); doc.setFont('helvetica', 'bold');
+      doc.setTextColor(...PDF_COLORS.darkGray); doc.setFontSize(22); doc.setFont('helvetica', 'bold');
       doc.text('VOIDED', W / 2, top + SLOT_H / 2, { align: 'center', angle: 25 });
     }
 
@@ -988,6 +1019,7 @@ function printReceipt(params: {
   doc.setFontSize(6.5); doc.setTextColor(150, 150, 150);
   doc.text('✂ cut here', M / 2, SLOT_H - 1.5);
 
+  addBorderToAllPages(doc);
   doc.save(`Receipt_${payment.receipt_number}.pdf`);
 }
 

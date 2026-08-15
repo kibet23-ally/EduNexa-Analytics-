@@ -401,12 +401,12 @@ const LearnerOnboarding: React.FC = () => {
   const printProfile = () => {
     const doc = new jsPDF();
     doc.setFontSize(16); doc.setFont('helvetica', 'bold');
-    doc.text('LEARNER PROFILE', 105, 16, { align: 'center' });
+    doc.text('LEARNER PROFILE', 105, 20, { align: 'center' });
     doc.setFontSize(10); doc.setFont('helvetica', 'normal');
-    doc.text(`${form.first_name} ${form.middle_name} ${form.last_name}`.replace(/\s+/g, ' '), 105, 24, { align: 'center' });
+    doc.text(`${form.first_name} ${form.middle_name} ${form.last_name}`.replace(/\s+/g, ' '), 105, 28, { align: 'center' });
 
     autoTable(doc, {
-      startY: 32,
+      startY: 36,
       head: [['Field', 'Value']],
       body: [
         ['Admission No', form.admission_number], ['ULI Number', form.uli_number],
@@ -814,3 +814,4 @@ async function centerCropSquare(file: File, size: number): Promise<File> {
 }
 
 export default LearnerOnboarding;
+   

@@ -9,6 +9,7 @@ import { BarChart3, Award, FileSpreadsheet, FileText } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { addBorderToAllPages } from '../lib/pdfKit';
 
 interface jsPDFWithAutoTable extends jsPDF {
   lastAutoTable: { finalY: number };
@@ -288,14 +289,14 @@ const Analytics = () => {
     doc.text(`EXAM PERFORMANCE SUMMARY: ${gradeName} - ${examName}`, 148, 45, { align: "center" });
     doc.setFontSize(12);
     doc.text("Top 5 Students", 20, 55);
-    autoTable(doc, { startY: 60, margin: { right: 150 }, head: [['Rank', 'Name', 'Avg Points']], body: data.stats.top5.map((s, i) => [i + 1, s.name, s.avgPoints]), theme: 'striped', headStyles: { fillColor: [22, 163, 74] } });
+    autoTable(doc, { startY: 60, margin: { right: 150 }, head: [['Rank', 'Name', 'Avg Points']], body: data.stats.top5.map((s, i) => [i + 1, s.name, s.avgPoints]), theme: 'striped', headStyles: { fillColor: [80, 80, 80], textColor: [255, 255, 255] } });
     const top5Y = (doc as jsPDFWithAutoTable).lastAutoTable.finalY;
     doc.text("Bottom 5 Students", 160, 55);
-    autoTable(doc, { startY: 60, margin: { left: 150 }, head: [['Rank', 'Name', 'Avg Points']], body: data.stats.bottom5.map((s, i) => [data.stats.totalStudents - 4 + i, s.name, s.avgPoints]), theme: 'striped', headStyles: { fillColor: [220, 38, 38] } });
+    autoTable(doc, { startY: 60, margin: { left: 150 }, head: [['Rank', 'Name', 'Avg Points']], body: data.stats.bottom5.map((s, i) => [data.stats.totalStudents - 4 + i, s.name, s.avgPoints]), theme: 'striped', headStyles: { fillColor: [80, 80, 80], textColor: [255, 255, 255] } });
     const bottom5Y = (doc as jsPDFWithAutoTable).lastAutoTable.finalY;
     const summaryY = Math.max(top5Y, bottom5Y) + 15;
     doc.text("Subject Performance Analysis", 20, summaryY);
-    autoTable(doc, { startY: summaryY + 5, head: [['Subject', 'Average Points', 'Grade']], body: data.subjectAverages.map(sub => [sub.name, sub.average, getOverallGrade(sub.average)]), theme: 'grid', headStyles: { fillColor: [30, 58, 138] } });
+    autoTable(doc, { startY: summaryY + 5, head: [['Subject', 'Average Points', 'Grade']], body: data.subjectAverages.map(sub => [sub.name, sub.average, getOverallGrade(sub.average)]), theme: 'grid', headStyles: { fillColor: [40, 40, 40], textColor: [255, 255, 255] } });
     const subjectY = (doc as jsPDFWithAutoTable).lastAutoTable.finalY + 15;
     if (data.stats.mostImproved) {
       doc.setFont("helvetica", "bold");
@@ -308,7 +309,8 @@ const Analytics = () => {
     doc.text(`FULL STUDENT RANKINGS: ${gradeName} - ${examName}`, 148, 45, { align: "center" });
     const headers = ['Rank', 'Name', ...data.subjects.map(sub => sub.subject_name), 'Avg Points', 'Total', 'Grade'];
     const body = data.rankedStudents.map((s, i) => [i + 1, s.name, ...data.subjects.map(sub => s.subjectMarks[sub.id]), s.avgPoints, s.totalScore, getOverallGrade(s.avgPoints)]);
-    autoTable(doc, { startY: 55, head: [headers], body, theme: 'grid', styles: { fontSize: 8, cellPadding: 2 }, headStyles: { fillColor: [30, 58, 138], textColor: 255 } });
+    autoTable(doc, { startY: 55, head: [headers], body, theme: 'grid', styles: { fontSize: 8, cellPadding: 2 }, headStyles: { fillColor: [40, 40, 40], textColor: [255, 255, 255] } });
+    addBorderToAllPages(doc);
     doc.save(`Performance_Report_${gradeName}_${examName}.pdf`);
   };
 
@@ -519,4 +521,4 @@ const Analytics = () => {
 };
 
 export default Analytics;
-    
+       

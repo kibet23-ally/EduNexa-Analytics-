@@ -164,7 +164,6 @@ const Attendance = () => {
 
   const [page, setPage] = useState(0);
   const [selectedGrade, setSelectedGrade] = useState<string>('');
-  const [selectedSubject, setSelectedSubject] = useState<string>('');
   const [selectedDate, setSelectedDate] = useState<string>(
     new Date().toISOString().split('T')[0],
   );
@@ -176,62 +175,70 @@ const Attendance = () => {
   >({});
 
   const attendanceMutation = useDataMutation('attendance');
+  const lessonReportMutation = useDataMutation('lesson_absence_reports');
 
+  const isAdmin = user?.role === 'Admin' || user?.role === 'Principal' || user?.role === 'SuperAdmin';
+  const isTeacherRole = user?.role === 'Teacher';
+
+  // Every grade in the school (admins can take attendance for any class).
   const gradesQuery = useData<Grade>(
     'grades-all',
     'grades',
-    { select: 'id, grade_name', orderBy: { column: 'grade_name', ascending: true } },
+    { select: 'id, grade_name, class_teacher_id', orderBy: { column: 'grade_name', ascending: true } },
     !!user?.school_id,
   );
+  const allGrades = useMemo(() => gradesQuery.data || [], [gradesQuery.data]);
+
+  const sortFn = (a: Grade, b: Grade) => {
+    const numA = parseInt(a.grade_name.match(/\d+/)?.[0] || '0');
+    const numB = parseInt(b.grade_name.match(/\d+/)?.[0] || '0');
+    if (numA !== numB) return numA - numB;
+    return a.grade_name.localeCompare(b.grade_name);
+  };
+
+  // The class(es) this teacher is the official Class Teacher of — the
+  // official daily-attendance workflow (Select Class → Date → Mark → Save)
+  // is scoped to exactly these, per the "class teacher is primary" model.
+  const myClassGrades = useMemo(
+    () => (isTeacherRole ? allGrades.filter(g => g.class_teacher_id === user?.id) : []),
+    [allGrades, isTeacherRole, user?.id],
+  );
+
+  // Admins can take/view official attendance for any class; a Class
+  // Teacher only for their own; a plain subject teacher (no class
+  // assignment) doesn't get the official marking grid at all — see
+  // `canTakeOfficialAttendance` below.
+  const availableGrades = useMemo(
+    () => [...(isAdmin ? allGrades : myClassGrades)].sort(sortFn),
+    [isAdmin, allGrades, myClassGrades],
+  );
+
+  const canTakeOfficialAttendance = isAdmin || myClassGrades.length > 0;
+
+  // Subject teachers who are NOT a class teacher of anything still get a
+  // subject list, for the lightweight "report a lesson absence" flow
+  // (never writes to the official attendance table).
   const subjectsQuery = useData<Subject>(
-    'subjects-all',
-    'subjects',
-    { select: 'id, subject_name' },
-    !!user?.school_id,
+    'subjects-all', 'subjects', { select: 'id, subject_name' },
+    !!user?.school_id && isTeacherRole && myClassGrades.length === 0,
   );
   const assignmentsQuery = useData<TeacherAssignment>(
-    'teacher-assignments-active',
-    'teacher_assignments',
-    {
-      select: '*, grades(grade_name), subjects(subject_name)',
-      filters: { is_active: true },
-    },
-    !!user?.school_id && user?.role === 'Teacher',
+    'teacher-assignments-active', 'teacher_assignments',
+    { select: '*, grades(grade_name), subjects(subject_name)', filters: { is_active: true } },
+    !!user?.school_id && isTeacherRole && myClassGrades.length === 0,
   );
-
-  const isTeacher = user?.role === 'Teacher';
   const assignments = useMemo(() => assignmentsQuery.data || [], [assignmentsQuery.data]);
+  const [reportSubject, setReportSubject] = useState('');
+  const [reportGrade, setReportGrade] = useState('');
+  const [reportStudent, setReportStudent] = useState('');
+  const [reportRemarks, setReportRemarks] = useState('');
 
-  const teacherSubjects = useMemo(() => {
-    const all = subjectsQuery.data || [];
-    if (!isTeacher) return all;
-    const assignedIds = new Set(assignments.map((a) => a.subject_id));
-    return all.filter((s) => assignedIds.has(s.id));
-  }, [subjectsQuery.data, isTeacher, assignments]);
-
-  const teacherGrades = useMemo(() => {
-    const all = gradesQuery.data || [];
-    const sortFn = (a: Grade, b: Grade) => {
-      const numA = parseInt(a.grade_name.match(/\d+/)?.[0] || '0');
-      const numB = parseInt(b.grade_name.match(/\d+/)?.[0] || '0');
-      if (numA !== numB) return numA - numB;
-      return a.grade_name.localeCompare(b.grade_name);
-    };
-    if (!isTeacher) return [...all].sort(sortFn);
-
-    let filtered = all;
-    if (selectedSubject) {
-      const subId = Number(selectedSubject);
-      const ids = new Set(
-        assignments.filter((a) => a.subject_id === subId).map((a) => a.grade_id),
-      );
-      filtered = all.filter((g) => ids.has(g.id));
-    } else {
-      const ids = new Set(assignments.map((a) => a.grade_id));
-      filtered = all.filter((g) => ids.has(g.id));
+  // Auto-select the single class for a one-class Class Teacher.
+  useEffect(() => {
+    if (!selectedGrade && myClassGrades.length === 1) {
+      setSelectedGrade(String(myClassGrades[0].id));
     }
-    return [...filtered].sort(sortFn);
-  }, [gradesQuery.data, isTeacher, assignments, selectedSubject]);
+  }, [myClassGrades, selectedGrade]);
 
   const studentsQuery = useData<Student>(
     'students-attendance',
@@ -249,18 +256,40 @@ const Attendance = () => {
     [studentsQuery.data],
   );
 
-  const lastStudentsRef = useRef<string>('');
+  // Existing official attendance already saved for this class + date, so
+  // re-opening a date to edit shows real statuses instead of resetting
+  // everyone back to Present.
+  const existingQuery = useData<{ student_id: number; status: AttendanceStatus; remarks: string | null; subject_id: number | null }>(
+    'attendance-existing',
+    'attendance',
+    { select: 'student_id, status, remarks, subject_id', filters: { grade_id: selectedGrade ? Number(selectedGrade) : undefined, date: selectedDate } },
+    !!user?.school_id && !!selectedGrade && !!selectedDate,
+  );
+  const existingByStudent = useMemo(() => {
+    const map: Record<number, { status: AttendanceStatus; remarks: string }> = {};
+    (existingQuery.data || []).forEach(r => {
+      if (r.subject_id === null || r.subject_id === undefined) {
+        map[r.student_id] = { status: r.status, remarks: r.remarks || '' };
+      }
+    });
+    return map;
+  }, [existingQuery.data]);
+
+  const lastKeyRef = useRef<string>('');
   useEffect(() => {
-    const ids = students.map((s) => s.id).join(',');
-    if (students.length > 0 && ids !== lastStudentsRef.current) {
+    const key = students.map((s) => s.id).join(',') + '|' + selectedDate + '|' + JSON.stringify(existingByStudent);
+    if (students.length > 0 && key !== lastKeyRef.current) {
       const initial: typeof attendanceData = {};
       students.forEach((s) => {
-        initial[s.id] = { student_id: s.id, status: 'present', remarks: '' };
+        const existing = existingByStudent[s.id];
+        initial[s.id] = existing
+          ? { student_id: s.id, status: existing.status, remarks: existing.remarks }
+          : { student_id: s.id, status: 'present', remarks: '' };
       });
       setAttendanceData(initial);
-      lastStudentsRef.current = ids;
+      lastKeyRef.current = key;
     }
-  }, [students]);
+  }, [students, existingByStudent, selectedDate]);
 
   useEffect(() => {
     if (!toast) return;
@@ -287,34 +316,54 @@ const Attendance = () => {
     return { ...t, total, rate };
   }, [attendanceData, students]);
 
-  const handleSubjectChange = (val: string) => {
-    setSelectedSubject(val);
-    if (isTeacher && val) {
-      const subId = Number(val);
-      const ids = new Set(
-        assignments.filter((a) => a.subject_id === subId).map((a) => a.grade_id),
-      );
-      if (selectedGrade && !ids.has(Number(selectedGrade))) setSelectedGrade('');
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isReadOnly) return;
-    if (!selectedGrade || !selectedSubject) {
-      setToast({ kind: 'err', text: 'Select a subject and grade first.' });
+    if (!selectedGrade) {
+      setToast({ kind: 'err', text: 'Select a class first.' });
       return;
     }
     try {
       const payload = Object.values(attendanceData).map((record) => ({
         ...record,
         grade_id: Number(selectedGrade),
-        subject_id: Number(selectedSubject),
+        subject_id: null,
         date: selectedDate,
         school_id: user?.school_id,
+        teacher_id: user?.id,
       }));
-      await attendanceMutation.mutateAsync({ operation: 'insert', payload });
+      await attendanceMutation.mutateAsync({
+        operation: 'upsert',
+        payload,
+        onConflict: 'school_id,student_id,date,subject_key',
+      });
       setToast({ kind: 'ok', text: `Attendance saved for ${payload.length} students.` });
+    } catch (err: unknown) {
+      const error = err as Error;
+      setToast({ kind: 'err', text: 'Failed: ' + error.message });
+    }
+  };
+
+  const handleReportAbsence = async () => {
+    if (!reportGrade || !reportSubject || !reportStudent) {
+      setToast({ kind: 'err', text: 'Select class, subject and student first.' });
+      return;
+    }
+    try {
+      await lessonReportMutation.mutateAsync({
+        operation: 'insert',
+        payload: {
+          school_id: user?.school_id,
+          grade_id: Number(reportGrade),
+          subject_id: Number(reportSubject),
+          student_id: Number(reportStudent),
+          reported_by: user?.id,
+          report_date: selectedDate,
+          remarks: reportRemarks || null,
+        },
+      });
+      setToast({ kind: 'ok', text: 'Lesson absence reported to the class teacher.' });
+      setReportStudent(''); setReportRemarks('');
     } catch (err: unknown) {
       const error = err as Error;
       setToast({ kind: 'err', text: 'Failed: ' + error.message });
@@ -330,6 +379,70 @@ const Attendance = () => {
       return next;
     });
   };
+
+  // Plain subject teacher, not a class teacher of any grade: show the
+  // lightweight "report a lesson absence" view instead of the official
+  // marking grid — they're not required (or permitted) to take daily
+  // attendance themselves.
+  if (!canTakeOfficialAttendance) {
+    const reportGrades = [...new Set(assignments.map(a => a.grade_id))]
+      .map(id => allGrades.find(g => g.id === id)).filter(Boolean) as Grade[];
+    const reportSubjects = (subjectsQuery.data || []).filter(s =>
+      assignments.some(a => a.subject_id === s.id && (!reportGrade || a.grade_id === Number(reportGrade))));
+    const reportStudentsQuery = students; // reuse below via effect-free simple fetch is overkill; keep minimal
+
+    return (
+      <div className="relative min-h-screen text-slate-900">
+        <Aurora />
+        <div className="max-w-3xl mx-auto p-6 md:p-10 space-y-6">
+          <div className="rounded-[2rem] border border-white/60 bg-gradient-to-br from-indigo-950 via-indigo-900 to-violet-900 text-white p-8">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 border border-white/20 text-[10px] font-black uppercase tracking-[0.2em] text-cyan-200">
+              <Sparkles size={12} /> Lesson Absence
+            </div>
+            <h1 className="mt-3 text-2xl md:text-3xl font-bold">Report a Lesson Absence</h1>
+            <p className="mt-1.5 text-sm text-indigo-200 max-w-lg">
+              Daily official attendance is taken by each class's Class Teacher. You can still
+              flag a student who missed your lesson — this doesn't create a duplicate attendance record.
+            </p>
+          </div>
+          <GlassCard className="p-6 space-y-5">
+            <Field label="Class" icon={UserCheck}>
+              <select value={reportGrade} onChange={e => { setReportGrade(e.target.value); setReportStudent(''); }}
+                className="w-full bg-white/70 border border-slate-200 rounded-xl px-4 py-3 text-sm font-semibold text-slate-800 outline-none">
+                <option value="">Select class</option>
+                {reportGrades.map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
+              </select>
+            </Field>
+            <Field label="Subject" icon={BookOpen}>
+              <select value={reportSubject} onChange={e => setReportSubject(e.target.value)}
+                className="w-full bg-white/70 border border-slate-200 rounded-xl px-4 py-3 text-sm font-semibold text-slate-800 outline-none">
+                <option value="">Select subject</option>
+                {reportSubjects.map(s => <option key={s.id} value={s.id}>{s.subject_name}</option>)}
+              </select>
+            </Field>
+            <Field label="Student Admission No." icon={Search}>
+              <input type="text" value={reportStudent} onChange={e => setReportStudent(e.target.value)}
+                placeholder="Enter the student's numeric ID"
+                className="w-full bg-white/70 border border-slate-200 rounded-xl px-4 py-3 text-sm font-semibold text-slate-800 outline-none" />
+            </Field>
+            <Field label="Remarks (optional)" icon={FileText}>
+              <input type="text" value={reportRemarks} onChange={e => setReportRemarks(e.target.value)}
+                className="w-full bg-white/70 border border-slate-200 rounded-xl px-4 py-3 text-sm font-semibold text-slate-800 outline-none" />
+            </Field>
+            <button onClick={handleReportAbsence} disabled={lessonReportMutation.isPending}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-400 to-sky-500 text-indigo-950 text-sm font-bold shadow-lg disabled:opacity-50">
+              <Save size={16} /> {lessonReportMutation.isPending ? 'Sending…' : 'Report Absence'}
+            </button>
+          </GlassCard>
+          {toast && (
+            <div className={cn('rounded-xl px-4 py-3 text-sm font-semibold', toast.kind === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700')}>
+              {toast.text}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   /* ─────────────────────────────── render ─────────────────────────────── */
   return (
@@ -373,8 +486,7 @@ const Attendance = () => {
                 disabled={
                   attendanceMutation.isPending ||
                   isReadOnly ||
-                  !selectedGrade ||
-                  !selectedSubject
+                  !selectedGrade
                 }
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-400 to-sky-500 text-indigo-950 text-sm font-bold shadow-lg shadow-cyan-500/30 hover:shadow-cyan-400/50 transition disabled:opacity-50"
               >
@@ -396,29 +508,15 @@ const Attendance = () => {
 
         {/* Controls */}
         <GlassCard className="p-6">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
-            <Field label="Subject" icon={BookOpen}>
-              <select
-                value={selectedSubject}
-                onChange={(e) => handleSubjectChange(e.target.value)}
-                className="w-full bg-white/70 border border-slate-200 rounded-xl px-4 py-3 text-sm font-semibold text-slate-800 focus:ring-2 focus:ring-indigo-400 focus:border-transparent outline-none"
-              >
-                <option value="">Select Subject</option>
-                {teacherSubjects.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.subject_name}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Grade" icon={UserCheck}>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            <Field label={isAdmin ? 'Class' : 'Your Class'} icon={UserCheck}>
               <select
                 value={selectedGrade}
                 onChange={(e) => setSelectedGrade(e.target.value)}
                 className="w-full bg-white/70 border border-slate-200 rounded-xl px-4 py-3 text-sm font-semibold text-slate-800 focus:ring-2 focus:ring-indigo-400 focus:border-transparent outline-none"
               >
-                <option value="">Select Grade</option>
-                {teacherGrades.map((g) => (
+                <option value="">Select Class</option>
+                {availableGrades.map((g) => (
                   <option key={g.id} value={g.id}>
                     {g.grade_name}
                   </option>
@@ -650,3 +748,4 @@ const Attendance = () => {
 };
 
 export default Attendance;
+            

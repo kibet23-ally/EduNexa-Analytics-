@@ -13,7 +13,7 @@ import {
 import { TableSkeleton } from '../components/ui/Skeleton';
 
 const PAGE_SIZE = 50;
-const ROLES = ['Teacher', 'Principal', 'Admin'] as const;
+const ROLES = ['Teacher', 'Principal', 'Admin', 'Bursar'] as const;
 
 interface TeacherRow {
   id: string;
@@ -37,6 +37,7 @@ const ROLE_BADGE: Record<string, string> = {
   Teacher: 'bg-blue-50 text-blue-700 dark:bg-blue-950/40',
   Admin: 'bg-purple-50 text-purple-700 dark:bg-purple-950/40',
   Principal: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40',
+  Bursar: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40',
   SuperAdmin: 'bg-slate-100 text-slate-600 dark:bg-slate-800',
 };
 
@@ -67,9 +68,10 @@ const Teachers = () => {
   );
   const gradesQuery = useData<Grade>(
     'grades-list', 'grades',
-    { select: 'id, grade_name', orderBy: { column: 'grade_name' } },
+    { select: 'id, grade_name, class_teacher_id', orderBy: { column: 'grade_name' } },
     !!user?.school_id
   );
+  const gradesMutation = useDataMutation('grades');
   const assignmentsQuery = useData<AssignmentRecord>(
     'assignments-list', 'teacher_assignments',
     { select: '*, teachers:teacher_id(id, name), subjects:subject_id(id, subject_name), grades:grade_id(id, grade_name)' },
@@ -85,6 +87,24 @@ const Teachers = () => {
   const [teacherForm, setTeacherForm] = useState(emptyForm);
   const [isEditing, setIsEditing] = useState(false);
   const [assignForm, setAssignForm] = useState({ teacher_id: '', subject_id: '', grade_id: '' });
+  const [classTeacherGrade, setClassTeacherGrade] = useState('');
+  const [classTeacherPick, setClassTeacherPick] = useState('');
+  const [savingClassTeacher, setSavingClassTeacher] = useState(false);
+
+  const handleAssignClassTeacher = async () => {
+    if (!classTeacherGrade) { toast.error('Select a class first.'); return; }
+    setSavingClassTeacher(true);
+    try {
+      await gradesMutation.mutateAsync({
+        operation: 'update',
+        payload: { class_teacher_id: classTeacherPick || null },
+        filters: { id: Number(classTeacherGrade) },
+      });
+      toast.success(classTeacherPick ? 'Class teacher assigned.' : 'Class teacher removed.');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to assign class teacher.');
+    } finally { setSavingClassTeacher(false); }
+  };
 
   const allTeachers = useMemo(() => {
     const data = teachersQuery.data || [];
@@ -385,6 +405,40 @@ const Teachers = () => {
                 </div>
               ))
             )}
+          </div>
+        </div>
+
+        {/* ── Class Teacher Assignment ───────────────────────────────── */}
+        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800 overflow-hidden">
+          <div className="p-4 border-b border-slate-100 dark:border-slate-800 font-bold text-slate-900 dark:text-white">
+            Class Teacher Assignment
+          </div>
+          <div className="p-4 space-y-3">
+            <p className="text-xs text-slate-400">The Class Teacher is responsible for that class's daily attendance.</p>
+            <select
+              value={classTeacherGrade}
+              onChange={e => {
+                const gid = e.target.value;
+                setClassTeacherGrade(gid);
+                const g = (gradesQuery.data || []).find(gr => String(gr.id) === gid);
+                setClassTeacherPick(g?.class_teacher_id || '');
+              }}
+              className={inputCls}
+            >
+              <option value="">Select class</option>
+              {(gradesQuery.data || []).map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
+            </select>
+            <select value={classTeacherPick} onChange={e => setClassTeacherPick(e.target.value)} className={inputCls} disabled={!classTeacherGrade}>
+              <option value="">No class teacher</option>
+              {allTeachers.filter(t => !t.deleted_at).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+            <button
+              onClick={handleAssignClassTeacher}
+              disabled={!classTeacherGrade || savingClassTeacher}
+              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white disabled:opacity-50"
+            >
+              {savingClassTeacher ? <Loader2 size={16} className="animate-spin" /> : 'Save'}
+            </button>
           </div>
         </div>
       </div>

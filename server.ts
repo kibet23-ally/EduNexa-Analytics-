@@ -286,7 +286,7 @@ async function startServer() {
     if (!email || !password || !name) {
       return res.status(400).json({ error: "Missing required fields" });
     }
-    if (!['Teacher', 'Principal', 'Admin'].includes(role)) {
+    if (!['Teacher', 'Principal', 'Admin', 'Bursar'].includes(role)) {
       return res.status(400).json({ error: "Invalid role" });
     }
 
@@ -319,7 +319,7 @@ async function startServer() {
       const userId = authData.user.id;
       console.log(`[Admin] Auth user created: ${userId}. Linking to DB tables...`);
 
-      const dbRole = role === 'Admin' ? 'school_admin' : role === 'Principal' ? 'school_admin' : 'teacher';
+      const dbRole = role === 'Admin' ? 'school_admin' : role === 'Principal' ? 'school_admin' : role === 'Bursar' ? 'bursar' : 'teacher';
       const [profileRes, userRes, teacherRes] = await Promise.all([
         supabaseAdmin.from('profiles').upsert([{ id: userId, full_name: name, role: dbRole, school_id: targetSchoolId, phone: phone || null }]),
         supabaseAdmin.from('users').insert([{ id: userId, auth_id: userId, email: cleanEmail, name, role: dbRole, school_id: targetSchoolId }]),
@@ -675,3 +675,5 @@ async function startServer() {
 }
 
 startServer();
+
+  

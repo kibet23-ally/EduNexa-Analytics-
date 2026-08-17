@@ -33,6 +33,7 @@ export interface Grade {
   id: number;
   grade_name: string;
   school_id: number;
+  class_teacher_id?: string | null;
 }
 
 export interface Subject {

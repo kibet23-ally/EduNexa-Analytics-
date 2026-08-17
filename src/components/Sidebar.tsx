@@ -110,14 +110,14 @@ const Sidebar = () => {
         { to: '/marks', label: 'Marks Entry' },
       ]
     },
-    {
+    ...(!isBursar ? [{
       icon: UserCheck,
       label: 'Attendance',
       subItems: [
         { to: '/attendance', label: 'Take Attendance' },
         { to: '/attendance/report', label: 'Attendance Report' },
       ]
-    },
+    }] : []),
     { to: '/insights', icon: Lightbulb, label: 'Insights Center' },
   ];
 

@@ -196,8 +196,16 @@ const AppRoutes = () => {
       <Route path="/subjects"          element={<ProtectedRoute><Layout>{wrap(<Subjects />, 'Subjects')}</Layout></ProtectedRoute>} />
       <Route path="/exams"             element={<ProtectedRoute><Layout>{wrap(<Exams />, 'Exams')}</Layout></ProtectedRoute>} />
       <Route path="/marks"             element={<ProtectedRoute><Layout>{wrap(<MarksEntry />, 'Marks Entry')}</Layout></ProtectedRoute>} />
-      <Route path="/attendance"        element={<ProtectedRoute><Layout>{wrap(<Attendance />, 'Attendance')}</Layout></ProtectedRoute>} />
-      <Route path="/attendance/report" element={<ProtectedRoute><Layout>{wrap(<AttendanceReport />, 'Attendance Report')}</Layout></ProtectedRoute>} />
+      <Route path="/attendance" element={
+        <RoleProtectedRoute allowedRoles={['Teacher','teacher','Admin','admin','school_admin','Principal','principal','SuperAdmin','super_admin']}>
+          <Layout>{wrap(<Attendance />, 'Attendance')}</Layout>
+        </RoleProtectedRoute>
+      } />
+      <Route path="/attendance/report" element={
+        <RoleProtectedRoute allowedRoles={['Teacher','teacher','Admin','admin','school_admin','Principal','principal','SuperAdmin','super_admin']}>
+          <Layout>{wrap(<AttendanceReport />, 'Attendance Report')}</Layout>
+        </RoleProtectedRoute>
+      } />
       <Route path="/analytics"         element={<ProtectedRoute><Layout>{wrap(<Analytics />, 'Analytics')}</Layout></ProtectedRoute>} />
       <Route path="/reports"           element={<ProtectedRoute><Layout>{wrap(<Reports />, 'Reports')}</Layout></ProtectedRoute>} />
       <Route path="/settings"          element={<ProtectedRoute><Layout>{wrap(<SettingsPage />, 'Settings')}</Layout></ProtectedRoute>} />

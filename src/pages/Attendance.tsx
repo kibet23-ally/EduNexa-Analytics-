@@ -177,8 +177,10 @@ const Attendance = () => {
   const attendanceMutation = useDataMutation('attendance');
   const lessonReportMutation = useDataMutation('lesson_absence_reports');
 
-  const isAdmin = user?.role === 'Admin' || user?.role === 'Principal' || user?.role === 'SuperAdmin';
-  const isTeacherRole = user?.role === 'Teacher';
+  const rawRole = (user?.role || '').toLowerCase();
+  const isAdmin = rawRole === 'admin' || rawRole === 'school_admin' || rawRole === 'schooladmin'
+    || rawRole === 'principal' || rawRole === 'superadmin' || rawRole === 'super_admin';
+  const isTeacherRole = rawRole === 'teacher';
 
   // Every grade in the school (admins can take attendance for any class).
   const gradesQuery = useData<Grade>(
@@ -748,4 +750,3 @@ const Attendance = () => {
 };
 
 export default Attendance;
-            

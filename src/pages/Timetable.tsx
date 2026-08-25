@@ -196,8 +196,15 @@ const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; sett
   const [maxPerDay, setMaxPerDay] = useState(settings?.max_lessons_per_day_per_teacher ?? 6);
   const [form, setForm] = useState({ label: '', start_time: '', end_time: '', period_type: 'lesson' as Period['period_type'] });
   const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [fixingOrder, setFixingOrder] = useState(false);
 
-  const defaults = periods.filter(p => p.day === null).sort((a, b) => a.period_index - b.period_index);
+  // Display (and the "is this in order" check) is driven by actual clock
+  // time, not period_index — that field is meant to represent
+  // chronological sequence, but periods added out of order can leave it
+  // scrambled relative to start_time (exactly what happened here).
+  const byTime = [...periods.filter(p => p.day === null)].sort((a, b) => a.start_time.localeCompare(b.start_time));
+  const isOutOfOrder = byTime.some((p, i) => i > 0 && p.period_index < byTime[i - 1].period_index);
 
   const saveSettings = async () => {
     setSaving(true);
@@ -216,7 +223,7 @@ const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; sett
     if (!form.label || !form.start_time || !form.end_time) { toast.error('Fill in label, start and end time.'); return; }
     setSaving(true);
     try {
-      const nextIndex = (defaults[defaults.length - 1]?.period_index ?? 0) + 1;
+      const nextIndex = (byTime[byTime.length - 1]?.period_index ?? 0) + 1;
       await periodsMutation.mutateAsync({
         operation: 'insert',
         payload: { school_id: schoolId, academic_year: year, term, day: null, period_index: nextIndex, ...form },
@@ -232,6 +239,34 @@ const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; sett
       await periodsMutation.mutateAsync({ operation: 'delete', filters: { id } });
       toast.success('Period removed.');
     } catch (err: unknown) { toast.error(err instanceof Error ? err.message : 'Failed to remove period.'); }
+  };
+
+  const saveEdit = async (id: number, updates: { label: string; start_time: string; end_time: string; period_type: Period['period_type'] }) => {
+    setSaving(true);
+    try {
+      await periodsMutation.mutateAsync({ operation: 'update', payload: updates, filters: { id } });
+      toast.success('Period updated.');
+      setEditingId(null);
+    } catch (err: unknown) { toast.error(err instanceof Error ? err.message : 'Failed to update period.'); }
+    finally { setSaving(false); }
+  };
+
+    // Renumbers period_index to match actual start_time order. Goes through
+  // a temporary negative range first — updating straight to 1..N would
+  // collide with the (school_id, academic_year, term, day, period_index)
+  // uniqueness constraint the moment two rows' target indices overlap.
+  const fixOrder = async () => {
+    setFixingOrder(true);
+    try {
+      for (let i = 0; i < byTime.length; i++) {
+        await periodsMutation.mutateAsync({ operation: 'update', payload: { period_index: -(i + 1) }, filters: { id: byTime[i].id } });
+      }
+      for (let i = 0; i < byTime.length; i++) {
+        await periodsMutation.mutateAsync({ operation: 'update', payload: { period_index: i + 1 }, filters: { id: byTime[i].id } });
+      }
+      toast.success('Period order fixed to match actual times.');
+    } catch (err: unknown) { toast.error(err instanceof Error ? err.message : 'Failed to fix order.'); }
+    finally { setFixingOrder(false); }
   };
 
   return (
@@ -256,17 +291,34 @@ const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; sett
       </div>
 
       <div className={cardCls}>
-        <div className="p-4 border-b border-slate-100 dark:border-slate-800 font-bold text-sm text-slate-900 dark:text-white">Period Grid (applies to every working day by default)</div>
+        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
+          <div className="font-bold text-sm text-slate-900 dark:text-white">Period Grid (applies to every working day by default)</div>
+          {isOutOfOrder && (
+            <button onClick={fixOrder} disabled={fixingOrder} className="text-xs font-bold text-amber-600 flex items-center gap-1.5 disabled:opacity-50">
+              {fixingOrder ? <Loader2 size={13} className="animate-spin" /> : <AlertTriangle size={13} />} Fix Order
+            </button>
+          )}
+        </div>
+        {isOutOfOrder && (
+          <div className="mx-4 mt-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-amber-700 dark:text-amber-300 text-xs">
+            Some periods' internal sequence doesn't match their actual clock time (this can happen if periods were added out of order). This affects double-period logic even though the list below is shown in the correct time order. Click "Fix Order" to renumber them to match.
+          </div>
+        )}
         <div className="p-4 space-y-2">
-          {defaults.map(p => (
+          {byTime.map(p => editingId === p.id ? (
+            <EditPeriodRow key={p.id} period={p} saving={saving} onCancel={() => setEditingId(null)} onSave={updates => saveEdit(p.id, updates)} />
+          ) : (
             <div key={p.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 text-sm">
-              <span className="font-semibold text-slate-700 dark:text-slate-200">{p.label}</span>
+              <span className="font-semibold text-slate-700 dark:text-slate-200 w-16">{p.label}</span>
               <span className="text-slate-400">{p.start_time.slice(0, 5)} – {p.end_time.slice(0, 5)}</span>
               <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-500">{p.period_type}</span>
-              <button onClick={() => removePeriod(p.id)} className="text-red-400 hover:text-red-600"><Trash2 size={14} /></button>
+              <div className="flex items-center gap-3">
+                <button onClick={() => setEditingId(p.id)} className="text-blue-500 hover:text-blue-700 text-xs font-bold">Edit</button>
+                <button onClick={() => removePeriod(p.id)} className="text-red-400 hover:text-red-600"><Trash2 size={14} /></button>
+              </div>
             </div>
           ))}
-          {defaults.length === 0 && <p className="text-center text-slate-400 text-sm py-6">No periods configured yet.</p>}
+          {byTime.length === 0 && <p className="text-center text-slate-400 text-sm py-6">No periods configured yet.</p>}
 
           <div className="grid grid-cols-2 md:grid-cols-5 gap-2 pt-3 border-t border-slate-100 dark:border-slate-800 mt-3">
             <input placeholder="Label e.g. Period 1" value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} className={inputCls} />
@@ -281,6 +333,37 @@ const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; sett
             </button>
           </div>
         </div>
+      </div>
+    </div>
+  );
+};
+
+const EditPeriodRow: React.FC<{
+  period: Period; saving: boolean; onCancel: () => void;
+  onSave: (updates: { label: string; start_time: string; end_time: string; period_type: Period['period_type'] }) => void;
+}> = ({ period, saving, onCancel, onSave }) => {
+  const [label, setLabel] = useState(period.label);
+  const [start, setStart] = useState(period.start_time.slice(0, 5));
+  const [end, setEnd] = useState(period.end_time.slice(0, 5));
+  const [type, setType] = useState(period.period_type);
+
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-5 gap-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900">
+      <input value={label} onChange={e => setLabel(e.target.value)} className={inputCls} />
+      <input type="time" value={start} onChange={e => setStart(e.target.value)} className={inputCls} />
+      <input type="time" value={end} onChange={e => setEnd(e.target.value)} className={inputCls} />
+      <select value={type} onChange={e => setType(e.target.value as Period['period_type'])} className={inputCls}>
+        <option value="lesson">Lesson</option><option value="break">Break</option><option value="lunch">Lunch</option>
+        <option value="games">Games</option><option value="assembly">Assembly</option><option value="activity">Activity</option>
+      </select>
+      <div className="flex items-center gap-2">
+        <button disabled={saving} onClick={() => onSave({ label, start_time: start, end_time: end, period_type: type })}
+          className="flex-1 px-2 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold disabled:opacity-50">
+          {saving ? '…' : 'Save'}
+        </button>
+        <button onClick={onCancel} className="px-2 py-2 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold">
+          <X size={14} />
+        </button>
       </div>
     </div>
   );

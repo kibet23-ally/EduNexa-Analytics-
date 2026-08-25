@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import {
   Calendar, Clock, Wand2, LayoutGrid, GraduationCap,
@@ -6,7 +6,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../useAuth';
 import { useData, useDataMutation } from '../hooks/useData';
-import { Grade, Subject, TeacherAssignment } from '../types';
+import { fetchWithProxy } from '../lib/fetchProxy';
+import { Grade, Subject, TeacherAssignment, School } from '../types';
 import {
   Day, DAY_LABELS, Period, Requirement, Entry, periodsForDay,
   checkCollision, generateTimetable, validateTimetable, ValidationReport,
@@ -32,6 +33,19 @@ const Timetable = () => {
   const [year, setYear] = useState(new Date().getFullYear());
   const [term, setTerm] = useState(1);
   const [tab, setTab] = useState<Tab>('Dashboard');
+
+  const [school, setSchool] = useState<School | null>(null);
+  useEffect(() => {
+    if (!user?.school_id) { setSchool(null); return; }
+    let cancelled = false;
+    (async () => {
+      const { data } = await fetchWithProxy('schools', { select: 'id, name', filters: { id: user.school_id } });
+      const row = Array.isArray(data) ? data[0] : null;
+      if (!cancelled) setSchool(row || null);
+    })();
+    return () => { cancelled = true; };
+  }, [user?.school_id]);
+  const schoolName = school?.name || 'School';
 
   const settingsQuery = useData<TTSettings>('tt-settings', 'timetable_settings', { select: '*', filters: { academic_year: year, term } }, !!user?.school_id);
   const settings = (settingsQuery.data && settingsQuery.data[0]) || null;
@@ -72,7 +86,7 @@ const Timetable = () => {
   if (isTeacherRole && !canManage) {
     return <MyTimetableView user={user} entries={entries} periods={periods} workingDays={workingDays}
       gradeName={gradeName} subjectCode={subjectCode} teacherName={teacherName}
-      schoolName={user?.name ? '' : ''} year={year} term={term} setYear={setYear} setTerm={setTerm} />;
+      schoolName={schoolName} year={year} term={term} setYear={setYear} setTerm={setTerm} />;
   }
 
   if (!canManage) {
@@ -111,30 +125,30 @@ const Timetable = () => {
         <DashboardTab settings={settings} periods={periods} entries={entries} requirements={requirements} grades={grades} year={year} term={term} />
       )}
       {tab === 'Periods & Breaks' && (
-        <PeriodsTab year={year} term={term} periods={periods} settings={settings} workingDays={workingDays} />
+        <PeriodsTab year={year} term={term} periods={periods} settings={settings} workingDays={workingDays} schoolId={user?.school_id} />
       )}
       {tab === 'Subjects & Teachers' && (
         <RequirementsTab reqsRaw={reqsQuery.data || []} grades={grades} subjects={subjects} teachers={teachers} />
       )}
       {tab === 'Generate' && (
         <GenerateTab year={year} term={term} requirements={requirements} periods={periods} workingDays={workingDays}
-          gradeName={gradeName} subjectName={subjectName} teacherName={teacherName} existingCount={entries.length} />
+          gradeName={gradeName} subjectName={subjectName} teacherName={teacherName} existingCount={entries.length} schoolId={user?.school_id} />
       )}
       {tab === 'Master Timetable' && (
         <GridTab title="Master Timetable" scope="all" grades={grades} entries={entries} periods={periods} workingDays={workingDays}
           subjectCode={subjectCode} teacherInitials={teacherInitials} gradeName={gradeName} subjectName={subjectName} teacherName={teacherName}
-          onExport={() => exportMasterTimetablePdf(grades, entries, { schoolName: user?.name || 'School', academicYear: year, term, workingDays, allPeriods: periods }, subjectCode, teacherInitials)}
+          onExport={() => exportMasterTimetablePdf(grades, entries, { schoolName, academicYear: year, term, workingDays, allPeriods: periods }, subjectCode, teacherInitials)}
           year={year} term={term} />
       )}
       {tab === 'Class Timetables' && (
         <ClassTimetablesTab grades={grades} entries={entries} periods={periods} workingDays={workingDays}
           subjectCode={subjectCode} teacherInitials={teacherInitials} gradeName={gradeName} subjectName={subjectName} teacherName={teacherName}
-          year={year} term={term} schoolName={user?.name || 'School'} />
+          year={year} term={term} schoolName={schoolName} />
       )}
       {tab === 'Teacher Timetables' && (
         <TeacherTimetablesTab teachers={teachers} entries={entries} periods={periods} workingDays={workingDays}
           subjectCode={subjectCode} gradeName={gradeName} subjectName={subjectName} teacherName={teacherName}
-          year={year} term={term} schoolName={user?.name || 'School'} />
+          year={year} term={term} schoolName={schoolName} />
       )}
       {tab === 'Validation' && (
         <ValidationTab entries={entries} requirements={requirements} gradeName={gradeName} teacherName={teacherName} subjectName={subjectName} />
@@ -174,8 +188,8 @@ const DashboardTab: React.FC<{ settings: TTSettings | null; periods: Period[]; e
 };
 
 /* ═══════════════════════════ Periods & Breaks ═══════════════════════════ */
-const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; settings: TTSettings | null; workingDays: Day[] }> =
-({ year, term, periods, settings, workingDays }) => {
+const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; settings: TTSettings | null; workingDays: Day[]; schoolId?: number }> =
+({ year, term, periods, settings, workingDays, schoolId }) => {
   const settingsMutation = useDataMutation('timetable_settings');
   const periodsMutation = useDataMutation('timetable_periods');
   const [days, setDays] = useState<Day[]>(workingDays);
@@ -190,7 +204,7 @@ const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; sett
     try {
       await settingsMutation.mutateAsync({
         operation: 'upsert',
-        payload: { academic_year: year, term, working_days: days, max_lessons_per_day_per_teacher: maxPerDay },
+        payload: { school_id: schoolId, academic_year: year, term, working_days: days, max_lessons_per_day_per_teacher: maxPerDay },
         onConflict: 'school_id,academic_year,term',
       });
       toast.success('Timetable settings saved.');
@@ -205,7 +219,7 @@ const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; sett
       const nextIndex = (defaults[defaults.length - 1]?.period_index ?? 0) + 1;
       await periodsMutation.mutateAsync({
         operation: 'insert',
-        payload: { academic_year: year, term, day: null, period_index: nextIndex, ...form },
+        payload: { school_id: schoolId, academic_year: year, term, day: null, period_index: nextIndex, ...form },
       });
       setForm({ label: '', start_time: '', end_time: '', period_type: 'lesson' });
       toast.success('Period added.');
@@ -335,8 +349,8 @@ const RequirementRow: React.FC<{ r: TeacherAssignment; teacherName: string; subj
 /* ═══════════════════════════ Generate ═══════════════════════════ */
 const GenerateTab: React.FC<{
   year: number; term: number; requirements: Requirement[]; periods: Period[]; workingDays: Day[];
-  gradeName: (id: number) => string; subjectName: (id: number) => string; teacherName: (id: string) => string; existingCount: number;
-}> = ({ year, term, requirements, periods, workingDays, gradeName, subjectName, teacherName, existingCount }) => {
+  gradeName: (id: number) => string; subjectName: (id: number) => string; teacherName: (id: string) => string; existingCount: number; schoolId?: number;
+}> = ({ year, term, requirements, periods, workingDays, gradeName, subjectName, teacherName, existingCount, schoolId }) => {
   const entriesMutation = useDataMutation('timetable_entries');
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<ReturnType<typeof generateTimetable> | null>(null);
@@ -365,7 +379,7 @@ const GenerateTab: React.FC<{
       await entriesMutation.mutateAsync({ operation: 'delete', filters: { academic_year: year, term } });
       await entriesMutation.mutateAsync({
         operation: 'insert',
-        payload: res.entries.map(e => ({ ...e, academic_year: year, term })),
+        payload: res.entries.map(e => ({ ...e, school_id: schoolId, academic_year: year, term })),
       });
       toast.success(`Generated ${res.entries.length} lesson entries.`);
     } catch (err: unknown) {
@@ -624,7 +638,7 @@ const MyTimetableView: React.FC<{
   user: any; entries: Entry[]; periods: Period[]; workingDays: Day[];
   gradeName: (id: number) => string; subjectCode: (id: number) => string; teacherName: (id: string) => string;
   schoolName: string; year: number; term: number; setYear: (y: number) => void; setTerm: (t: number) => void;
-}> = ({ user, entries, periods, workingDays, gradeName, subjectCode, year, term, setYear, setTerm }) => {
+}> = ({ user, entries, periods, workingDays, gradeName, subjectCode, schoolName, year, term, setYear, setTerm }) => {
   const gradeShort = (id: number) => gradeName(id).replace(/[^A-Za-z0-9]/g, '').slice(0, 6);
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-5">
@@ -637,7 +651,7 @@ const MyTimetableView: React.FC<{
           <select value={term} onChange={e => setTerm(Number(e.target.value))} className={inputCls + ' w-32'}>
             <option value={1}>Term 1</option><option value={2}>Term 2</option><option value={3}>Term 3</option>
           </select>
-          <button onClick={() => exportTeacherTimetablePdf(user?.name || 'Teacher', entries, { schoolName: '', academicYear: year, term, workingDays, allPeriods: periods }, subjectCode, gradeShort)}
+          <button onClick={() => exportTeacherTimetablePdf(user?.name || 'Teacher', entries, { schoolName, academicYear: year, term, workingDays, allPeriods: periods }, subjectCode, gradeShort)}
             className="px-3 py-2 rounded-lg bg-slate-800 text-white text-xs font-bold flex items-center gap-1.5"><Download size={13} /> Download PDF</button>
         </div>
       </div>

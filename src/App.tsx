@@ -27,6 +27,7 @@ const Analytics          = lazy(() => import('./pages/Analytics'));
 const Reports            = lazy(() => import('./pages/Reports'));
 const Teachers           = lazy(() => import('./pages/Teachers'));
 const Finance            = lazy(() => import('./pages/Finance'));
+const Timetable           = lazy(() => import('./pages/Timetable'));
 const OrderForm          = lazy(() => import('./pages/OrderForm'));
 const Schools            = lazy(() => import('./pages/Schools'));
 const SuperAdminDashboard = lazy(() => import('./pages/SuperAdminDashboard'));
@@ -242,6 +243,11 @@ const AppRoutes = () => {
       <Route path="/finance" element={
         <RoleProtectedRoute allowedRoles={['Admin','admin','school_admin','Principal','Bursar','bursar','SuperAdmin','super_admin']}>
           <Layout>{wrap(<Finance />, 'Finance')}</Layout>
+        </RoleProtectedRoute>
+      } />
+      <Route path="/timetable" element={
+        <RoleProtectedRoute allowedRoles={['Admin','admin','school_admin','Principal','principal','SuperAdmin','super_admin','Timetabler','timetabler','Teacher','teacher']}>
+          <Layout>{wrap(<Timetable />, 'Timetable')}</Layout>
         </RoleProtectedRoute>
       } />
 

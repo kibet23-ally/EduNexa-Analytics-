@@ -18,6 +18,7 @@ import {
   UserCheck,
   Lightbulb,
   Wallet,
+  CalendarDays,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -78,6 +79,7 @@ const Sidebar = () => {
   const isSchoolAdmin = rawRole === 'admin' || rawRole === 'school_admin' || rawRole === 'principal' || rawRole === 'schooladmin';
   const isTeacher = rawRole === 'teacher';
   const isBursar = rawRole === 'bursar';
+  const isTimetabler = rawRole === 'timetabler';
 
   const superAdminNav: NavItem[] = [
     { to: '/super-admin', icon: LayoutDashboard, label: 'Dashboard' },
@@ -86,6 +88,7 @@ const Sidebar = () => {
     { to: '/super/subscriptions', icon: CreditCard, label: 'Platform Subscriptions' },
     { to: '/super/analytics', icon: PieChart, label: 'Analytics' },
     { to: '/finance', icon: Wallet, label: 'Finance' },
+    { to: '/timetable', icon: CalendarDays, label: 'Timetable' },
     { to: '/status', icon: ClipboardList, label: 'Audit Logs' },
     { to: '/super/settings', icon: Settings, label: 'Settings' },
   ];
@@ -124,6 +127,12 @@ const Sidebar = () => {
   // Finance: visible only to Principal/Admin/Bursar - never Teacher.
   if (isSchoolAdmin || isBursar) {
     schoolAdminNav.push({ to: '/finance', icon: Wallet, label: 'Finance' });
+  }
+
+  // Timetable: full editor for Admin/Principal/Timetabler; Teacher gets a
+  // read-only view of their own timetable via the same route. Never Bursar.
+  if (isSchoolAdmin || isTimetabler || isTeacher) {
+    schoolAdminNav.push({ to: '/timetable', icon: CalendarDays, label: 'Timetable' });
   }
 
   // Add Teachers and Subscription for school admins only

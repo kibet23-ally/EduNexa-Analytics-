@@ -43,6 +43,17 @@ export interface Subject {
   school_id: number;
 }
 
+export interface TeacherAssignment {
+  id: number;
+  teacher_id: string;
+  subject_id: number;
+  grade_id: number;
+  school_id?: number;
+  is_active?: boolean;
+  lessons_per_week?: number;
+  allow_double?: boolean;
+}
+
 export interface Student {
   id: number;
   name: string;

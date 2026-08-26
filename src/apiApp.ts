@@ -59,11 +59,25 @@ export function createApiApp() {
     const { data: { user } } = await supabaseAdmin.auth.getUser(token);
     if (!user) return { userId: null, schoolId: null, role: null, isSuperAdmin: false };
 
-    const { data: profile } = await supabaseAdmin
+    // Try profiles first; fall back to users table (both may exist
+    // depending on migration state — users is the authoritative table
+    // in this project's schema).
+    let profile: { school_id: any; role: string } | null = null;
+    const { data: profileData } = await supabaseAdmin
       .from('profiles')
       .select('school_id, role')
       .eq('id', user.id)
       .maybeSingle();
+    profile = profileData;
+
+    if (!profile?.role) {
+      const { data: userData } = await supabaseAdmin
+        .from('users')
+        .select('school_id, role')
+        .eq('id', user.id)
+        .maybeSingle();
+      if (userData) profile = userData;
+    }
 
     const role = (profile?.role || '').toLowerCase();
     return {
@@ -117,7 +131,15 @@ export function createApiApp() {
     if (req.path === '/api/health') return next();
 
     // Skip verification for login/auth routes to prevent loops
-    const authRoutes = ['/api/auth/teacher-login', '/api/admin/reset-password', '/api/admin/create-school-admin'];
+    // NOTE: create-teacher and create-school-admin do their own auth via
+    // resolveCaller() inside the route handler — don't let the subscription
+    // middleware block them before the handler even runs.
+    const authRoutes = [
+      '/api/auth/teacher-login',
+      '/api/admin/reset-password',
+      '/api/admin/create-school-admin',
+      '/api/admin/create-teacher',
+    ];
     if (authRoutes.includes(req.path)) return next();
 
     try {

@@ -215,17 +215,17 @@ async function startServer() {
 
   // Admin Password Reset Endpoint (Bypasses Frontend CORS issues)
   app.post("/api/admin/reset-password", async (req, res) => {
-    const { email, newPassword } = req.body;
-
-    if (!supabaseAdmin) {
-      return res.status(500).json({ error: "Supabase Service Key not configured on server" });
-    }
-
-    if (!email || !newPassword) {
-      return res.status(400).json({ error: "Email and New Password are required" });
-    }
-
     try {
+      const { email, newPassword } = req.body || {};
+
+      if (!supabaseAdmin) {
+        return res.status(500).json({ error: "Supabase Service Key not configured on server" });
+      }
+
+      if (!email || !newPassword) {
+        return res.status(400).json({ error: "Email and New Password are required" });
+      }
+
       console.log(`[Admin] Resetting password for: ${email}`);
       const cleanEmail = email.toLowerCase().trim();
       
@@ -278,19 +278,19 @@ async function startServer() {
   // replaces the old approach where Teachers.tsx inserted directly into the
   // `teachers` table with a raw `password` field.
   app.post("/api/admin/create-teacher", async (req, res) => {
-    const { email, password, name, phone, role = 'Teacher' } = req.body;
-
-    if (!supabaseAdmin) {
-      return res.status(500).json({ error: "Supabase Service Key not configured on server" });
-    }
-    if (!email || !password || !name) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
-    if (!['Teacher', 'Principal', 'Admin', 'Bursar'].includes(role)) {
-      return res.status(400).json({ error: "Invalid role" });
-    }
-
     try {
+      const { email, password, name, phone, role = 'Teacher' } = req.body || {};
+
+      if (!supabaseAdmin) {
+        return res.status(500).json({ error: "Supabase Service Key not configured on server" });
+      }
+      if (!email || !password || !name) {
+        return res.status(400).json({ error: "Missing required fields" });
+      }
+      if (!['Teacher', 'Principal', 'Admin', 'Bursar'].includes(role)) {
+        return res.status(400).json({ error: "Invalid role" });
+      }
+
       // Authorization: only an admin-level user (school_admin/principal) of
       // THEIR OWN school, or a super_admin (any school), may create staff.
       const { schoolId: callerSchoolId, isSuperAdmin, role: callerRole } = await resolveCaller(req);
@@ -343,16 +343,16 @@ async function startServer() {
   // previously wide open to unauthenticated requests) and delegates to the
   // same real-auth-user creation path above rather than duplicating it.
   app.post("/api/admin/create-school-admin", async (req, res) => {
-    const { email, password, name, schoolId, role = 'Admin' } = req.body;
-
-    if (!supabaseAdmin) {
-      return res.status(500).json({ error: "Supabase Service Key not configured on server" });
-    }
-    if (!email || !password || !name || !schoolId) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
-
     try {
+      const { email, password, name, schoolId, role = 'Admin' } = req.body || {};
+
+      if (!supabaseAdmin) {
+        return res.status(500).json({ error: "Supabase Service Key not configured on server" });
+      }
+      if (!email || !password || !name || !schoolId) {
+        return res.status(400).json({ error: "Missing required fields" });
+      }
+
       const { isSuperAdmin } = await resolveCaller(req);
       if (!isSuperAdmin) {
         return res.status(403).json({ error: "Only a super admin can provision a school admin account." });
@@ -397,13 +397,16 @@ async function startServer() {
 
   // Teacher Login Endpoint (For teachers without Supabase Auth)
   app.post("/api/auth/teacher-login", async (req, res) => {
-    const { email, password } = req.body;
-
-    if (!supabaseAdmin) {
-      return res.status(500).json({ error: "Supabase Service Key not configured on server" });
-    }
-
     try {
+      const { email, password } = req.body || {};
+
+      if (!supabaseAdmin) {
+        return res.status(500).json({ error: "Supabase Service Key not configured on server" });
+      }
+      if (!email || !password) {
+        return res.status(400).json({ error: "Email and password are required" });
+      }
+
       const cleanEmail = email.toLowerCase().trim();
       console.log(`[Login] Teacher login attempt for: ${cleanEmail}`);
 
@@ -456,11 +459,11 @@ async function startServer() {
 
   // Data Proxy for Table-Based Teachers/Admins
   app.post("/api/proxy/fetch", async (req, res) => {
-    const { table, query } = req.body;
-
-    if (!supabaseAdmin) return res.status(500).json({ error: "Service Key Missing" });
-
     try {
+      const { table, query } = req.body || {};
+      if (!supabaseAdmin) return res.status(500).json({ error: "Service Key Missing" });
+      if (!table || !query) return res.status(400).json({ error: "Missing table or query" });
+
       const { schoolId, isSuperAdmin } = await resolveCaller(req);
 
       if (!schoolId && !isSuperAdmin) {
@@ -522,11 +525,11 @@ async function startServer() {
   });
 
   app.post("/api/proxy/write", async (req, res) => {
-    const { table, operation, payload, filters, onConflict } = req.body;
-
-    if (!supabaseAdmin) return res.status(500).json({ error: "Service Key Missing" });
-
     try {
+      const { table, operation, payload, filters, onConflict } = req.body || {};
+      if (!supabaseAdmin) return res.status(500).json({ error: "Service Key Missing" });
+      if (!table || !operation) return res.status(400).json({ error: "Missing table or operation" });
+
       const { schoolId, isSuperAdmin, role } = await resolveCaller(req);
 
       if (!schoolId && !isSuperAdmin) {
@@ -668,12 +671,34 @@ async function startServer() {
     });
   }
 
+  // Last-resort safety net: if any route ever throws outside its own
+  // try/catch (or explicitly calls next(err)), this guarantees the client
+  // still gets a real JSON error response instead of a connection that
+  // gets dropped with an empty body — which is exactly what "Unexpected
+  // end of JSON input" on the client means. Every route above now also
+  // wraps its own logic in try/catch, so this is a backstop, not the
+  // primary fix.
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error('[Unhandled Server Error]', req.method, req.path, err);
+    if (res.headersSent) return next(err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Unexpected server error.' });
+  });
+
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`EduNexa Analytics Server running on http://localhost:${PORT}`);
     console.log("Status: API Data Proxy Enabled. Compression Active.");
   });
 }
 
-startServer();
+// Defensive logging only — does not exit the process, since a crash here
+// would take down every school's session, not just the one request that
+// triggered it. Routes should always catch their own errors (see above);
+// this just makes sure nothing fails completely silently if one doesn't.
+process.on('unhandledRejection', (reason) => {
+  console.error('[Unhandled Rejection]', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[Uncaught Exception]', err);
+});
 
-  
+startServer();

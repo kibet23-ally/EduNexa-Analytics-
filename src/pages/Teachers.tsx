@@ -188,7 +188,10 @@ const Teachers = () => {
             password: teacherForm.password, role: teacherForm.role,
           }),
         });
-        const result = await res.json();
+        let result: any = {};
+        try { result = await res.json(); } catch {
+          throw new Error(res.ok ? 'Server returned an unexpected empty response.' : `Server error (${res.status}). Please try again.`);
+        }
         if (!res.ok) throw new Error(result.error || 'Failed to add teacher.');
         toast.success('Teacher added successfully.');
         teachersQuery.refetch?.();

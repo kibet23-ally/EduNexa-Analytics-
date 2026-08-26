@@ -198,6 +198,8 @@ const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; sett
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [fixingOrder, setFixingOrder] = useState(false);
+  const [overrideForm, setOverrideForm] = useState({ day: '' as Day | '', period_index: '', label: '', period_type: 'assembly' as Period['period_type'] });
+  const [savingOverride, setSavingOverride] = useState(false);
 
   // Display (and the "is this in order" check) is driven by actual clock
   // time, not period_index — that field is meant to represent
@@ -241,6 +243,36 @@ const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; sett
     } catch (err: unknown) { toast.error(err instanceof Error ? err.message : 'Failed to remove period.'); }
   };
 
+  const saveOverride = async () => {
+    if (!overrideForm.day || !overrideForm.period_index) { toast.error('Pick a day and a period first.'); return; }
+    const base = byTime.find(p => p.period_index === Number(overrideForm.period_index));
+    if (!base) return;
+    setSavingOverride(true);
+    try {
+      await periodsMutation.mutateAsync({
+        operation: 'upsert',
+        payload: {
+          school_id: schoolId, academic_year: year, term, day: overrideForm.day,
+          period_index: base.period_index, start_time: base.start_time, end_time: base.end_time,
+          label: overrideForm.label || base.label, period_type: overrideForm.period_type,
+        },
+        onConflict: 'school_id,academic_year,term,day,period_index',
+      });
+      toast.success(`${DAY_LABELS[overrideForm.day]} period ${base.period_index} overridden.`);
+      setOverrideForm({ day: '', period_index: '', label: '', period_type: 'assembly' });
+    } catch (err: unknown) { toast.error(err instanceof Error ? err.message : 'Failed to save override.'); }
+    finally { setSavingOverride(false); }
+  };
+
+  const overrides = periods.filter(p => p.day !== null).sort((a, b) => (a.day! > b.day! ? 1 : -1) || a.period_index - b.period_index);
+
+  const removeOverride = async (id: number) => {
+    try {
+      await periodsMutation.mutateAsync({ operation: 'delete', filters: { id } });
+      toast.success('Override removed — that day reverts to the default period grid.');
+    } catch (err: unknown) { toast.error(err instanceof Error ? err.message : 'Failed to remove override.'); }
+  };
+
   const saveEdit = async (id: number, updates: { label: string; start_time: string; end_time: string; period_type: Period['period_type'] }) => {
     setSaving(true);
     try {
@@ -251,7 +283,7 @@ const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; sett
     finally { setSaving(false); }
   };
 
-    // Renumbers period_index to match actual start_time order. Goes through
+  // Renumbers period_index to match actual start_time order. Goes through
   // a temporary negative range first — updating straight to 1..N would
   // collide with the (school_id, academic_year, term, day, period_index)
   // uniqueness constraint the moment two rows' target indices overlap.
@@ -330,6 +362,44 @@ const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; sett
             </select>
             <button onClick={addPeriod} disabled={saving} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-bold flex items-center justify-center gap-1.5 disabled:opacity-50">
               <Plus size={14} /> Add
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className={cardCls}>
+        <div className="p-4 border-b border-slate-100 dark:border-slate-800 font-bold text-sm text-slate-900 dark:text-white">Day-Specific Overrides</div>
+        <p className="px-4 pt-3 text-xs text-slate-400">
+          Use this when one day differs from the default grid — e.g. Assembly only on Monday and Friday, or a shorter Friday. An override only replaces that one day's period; every other day keeps the default.
+        </p>
+        <div className="p-4 space-y-2">
+          {overrides.map(o => (
+            <div key={o.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 text-sm">
+              <span className="font-semibold text-slate-700 dark:text-slate-200 w-20">{DAY_LABELS[o.day as Day]}</span>
+              <span className="text-slate-500 w-16">Period {o.period_index}</span>
+              <span className="text-slate-400">{o.start_time.slice(0, 5)} – {o.end_time.slice(0, 5)}</span>
+              <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-500">{o.label}</span>
+              <button onClick={() => removeOverride(o.id)} className="text-red-400 hover:text-red-600"><Trash2 size={14} /></button>
+            </div>
+          ))}
+          {overrides.length === 0 && <p className="text-center text-slate-400 text-sm py-4">No overrides yet — every day follows the default grid above.</p>}
+
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 pt-3 border-t border-slate-100 dark:border-slate-800 mt-3">
+            <select value={overrideForm.day} onChange={e => setOverrideForm(f => ({ ...f, day: e.target.value as Day }))} className={inputCls}>
+              <option value="">Day</option>
+              {days.map(d => <option key={d} value={d}>{DAY_LABELS[d]}</option>)}
+            </select>
+            <select value={overrideForm.period_index} onChange={e => setOverrideForm(f => ({ ...f, period_index: e.target.value }))} className={inputCls}>
+              <option value="">Period</option>
+              {byTime.map(p => <option key={p.id} value={p.period_index}>{p.label} ({p.start_time.slice(0, 5)}-{p.end_time.slice(0, 5)})</option>)}
+            </select>
+            <input placeholder="Label e.g. Assembly" value={overrideForm.label} onChange={e => setOverrideForm(f => ({ ...f, label: e.target.value }))} className={inputCls} />
+            <select value={overrideForm.period_type} onChange={e => setOverrideForm(f => ({ ...f, period_type: e.target.value as Period['period_type'] }))} className={inputCls}>
+              <option value="lesson">Lesson</option><option value="break">Break</option><option value="lunch">Lunch</option>
+              <option value="games">Games</option><option value="assembly">Assembly</option><option value="activity">Activity</option>
+            </select>
+            <button onClick={saveOverride} disabled={savingOverride} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-bold flex items-center justify-center gap-1.5 disabled:opacity-50">
+              <Plus size={14} /> Override
             </button>
           </div>
         </div>

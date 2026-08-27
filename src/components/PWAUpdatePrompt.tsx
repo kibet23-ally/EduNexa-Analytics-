@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useRegisterSW } from 'virtual:pwa-register/react';
 import { RefreshCw, X } from 'lucide-react';
 
@@ -8,8 +9,24 @@ import { RefreshCw, X } from 'lucide-react';
  * service worker itself only ever precaches static build assets (JS/CSS/
  * icons/fonts) - see vite.config.ts - so "new version available" here means
  * exactly that: new app code, never new/stale data.
+ *
+ * Update checks are deliberately aggressive - a school admin leaving a tab
+ * open for a while shouldn't be stuck on stale code any longer than
+ * necessary. Every one of these calls the same cheap registration.update()
+ * (a small HTTP request for sw.js, most often a 304), so firing it from
+ * several triggers costs very little:
+ *  - immediately on load
+ *  - on every in-app route change (this component lives inside
+ *    BrowserRouter specifically so useLocation() can drive this)
+ *  - whenever the tab/window regains visibility OR focus (some browsers
+ *    fire one but not the other in certain embedding contexts)
+ *  - whenever the network comes back online
+ *  - every 5 minutes regardless, for a tab left open and idle
  */
 const PWAUpdatePrompt: React.FC = () => {
+  const location = useLocation();
+  const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
+
   const {
     needRefresh: [needRefresh, setNeedRefresh],
     updateServiceWorker,
@@ -18,27 +35,34 @@ const PWAUpdatePrompt: React.FC = () => {
                       // for Chrome's install criteria to be met promptly.
     onRegisteredSW(swUrl, registration) {
       if (!registration) return;
-
-      // Check for a new version right away (don't wait for the hourly poll -
-      // a user reopening the app shortly after a deploy should be offered
-      // the update promptly instead of silently running stale cached code).
+      registrationRef.current = registration;
       registration.update().catch(() => {});
-
-      // Re-check whenever the tab regains focus/visibility - covers the
-      // common case of a long-lived open tab that was backgrounded during
-      // a deploy.
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') {
-          registration.update().catch(() => {});
-        }
-      });
-
-      // Also poll periodically for tabs that are simply left open and idle.
-      setInterval(() => {
-        registration.update().catch(() => {});
-      }, 60 * 60 * 1000); // hourly is plenty for a dashboard app
     },
   });
+
+  useEffect(() => {
+    const checkNow = () => registrationRef.current?.update().catch(() => {});
+
+    const onVisibility = () => { if (document.visibilityState === 'visible') checkNow(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', checkNow);
+    window.addEventListener('online', checkNow);
+
+    const intervalId = setInterval(checkNow, 5 * 60 * 1000); // every 5 minutes
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', checkNow);
+      window.removeEventListener('online', checkNow);
+      clearInterval(intervalId);
+    };
+  }, []);
+
+  // Re-check on every in-app navigation - cheap, and catches a deploy that
+  // landed while the user was actively clicking around rather than idle.
+  useEffect(() => {
+    registrationRef.current?.update().catch(() => {});
+  }, [location.pathname]);
 
   if (!needRefresh) return null;
 

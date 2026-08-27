@@ -283,7 +283,7 @@ const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; sett
     finally { setSaving(false); }
   };
 
-  // Renumbers period_index to match actual start_time order. Goes through
+    // Renumbers period_index to match actual start_time order. Goes through
   // a temporary negative range first — updating straight to 1..N would
   // collide with the (school_id, academic_year, term, day, period_index)
   // uniqueness constraint the moment two rows' target indices overlap.
@@ -507,12 +507,16 @@ const GenerateTab: React.FC<{
   const entriesMutation = useDataMutation('timetable_entries');
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<ReturnType<typeof generateTimetable> | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
 
   const runGenerate = async () => {
     if (requirements.length === 0) { toast.error('No lesson requirements configured yet.'); return; }
     if (periods.filter(p => p.period_type === 'lesson').length === 0) { toast.error('No lesson periods configured yet.'); return; }
     setRunning(true);
     setResult(null);
+    setSaveError(null);
+    setSaved(false);
     // Yield to the browser so the spinner actually paints before the
     // (synchronous, potentially CPU-heavy) backtracking search runs.
     await new Promise(r => setTimeout(r, 30));
@@ -534,9 +538,16 @@ const GenerateTab: React.FC<{
         operation: 'insert',
         payload: res.entries.map(e => ({ ...e, school_id: schoolId, academic_year: year, term })),
       });
+      setSaved(true);
       toast.success(`Generated ${res.entries.length} lesson entries.`);
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Generated successfully but failed to save.');
+      // Supabase/PostgREST errors are often plain objects with a .message
+      // property but are NOT `instanceof Error` - checking that first was
+      // silently discarding the real reason and showing a generic fallback
+      // instead of what actually went wrong.
+      const message = (err as any)?.message || (typeof err === 'string' ? err : null) || 'Failed to save the generated timetable.';
+      setSaveError(message);
+      toast.error(message);
     }
   };
 
@@ -565,7 +576,13 @@ const GenerateTab: React.FC<{
           </ul>
         </div>
       )}
-      {result && result.success && (
+      {result && result.success && saveError && (
+        <div className="p-4 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900">
+          <div className="font-bold text-red-700 dark:text-red-300 text-sm mb-1">A collision-free schedule was computed, but saving it failed.</div>
+          <p className="text-xs text-red-600 dark:text-red-400">{saveError}</p>
+        </div>
+      )}
+      {result && result.success && saved && (
         <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 flex items-center gap-2 text-emerald-700 dark:text-emerald-300 text-sm font-bold">
           <CheckCircle2 size={16} /> Timetable generated and saved — {result.entries.length} entries, zero collisions.
         </div>

@@ -303,13 +303,14 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <AppRoutes />
+        {/* Mounted once, globally, inside the Router so PWAUpdatePrompt can
+            react to route changes as one of its update-check triggers: */}
+        {/* - OfflineScreen: full-screen takeover the instant the browser goes offline. */}
+        {/* - PWAUpdatePrompt: small banner when a newly deployed version is ready. */}
+        {/* Neither of these caches or serves any app data - see vite.config.ts. */}
+        <OfflineScreen />
+        <PWAUpdatePrompt />
       </BrowserRouter>
-      {/* Mounted once, globally: */}
-      {/* - OfflineScreen: full-screen takeover the instant the browser goes offline. */}
-      {/* - PWAUpdatePrompt: small banner when a newly deployed version is ready. */}
-      {/* Neither of these caches or serves any app data - see vite.config.ts. */}
-      <OfflineScreen />
-      <PWAUpdatePrompt />
     </AuthProvider>
   );
 }

@@ -152,7 +152,8 @@ interface Task {
   isDouble: boolean;
 }
 
-const MAX_BACKTRACK_STEPS = 250_000;
+const MAX_BACKTRACK_STEPS = 400_000;
+const MAX_ATTEMPTS = 6;
 
 export interface GenerationResult {
   success: boolean;
@@ -230,60 +231,75 @@ export function generateTimetable(
     return { success: false, entries: [], unplaced: requirements.map(r => ({ requirement: r, reason: 'No lesson periods are configured yet — set up Periods & Breaks first.' })) };
   }
 
-  const placed: Entry[] = [];
-  const classBusy = new Set<string>();   // `${day}|${periodId}|${grade_id}`
-  const teacherBusy = new Set<string>(); // `${day}|${periodId}|${teacher_id}`
+  // One backtracking search, with its own step budget. Re-shuffling slot
+  // order between attempts (via orderedSlots' internal shuffledCopy) means
+  // an attempt that gets stuck thrashing in one bad branch doesn't doom
+  // the whole generation - a fresh attempt often finds a very different,
+  // successful path through the same problem.
+  function attemptOnce(): { solved: boolean; placed: Entry[]; gaveUp: boolean } {
+    const placed: Entry[] = [];
+    const classBusy = new Set<string>();   // `${day}|${periodId}|${grade_id}`
+    const teacherBusy = new Set<string>(); // `${day}|${periodId}|${teacher_id}`
+    let steps = 0;
+    let gaveUp = false;
 
-  let steps = 0;
-  let gaveUp = false;
+    function tryPlace(taskIndex: number): boolean {
+      if (taskIndex >= tasks.length) return true;
+      if (++steps > MAX_BACKTRACK_STEPS) { gaveUp = true; return false; }
 
-  function tryPlace(taskIndex: number): boolean {
-    if (taskIndex >= tasks.length) return true;
-    if (++steps > MAX_BACKTRACK_STEPS) { gaveUp = true; return false; }
+      const task = tasks[taskIndex];
+      const { teacher_id, grade_id, subject_id } = task.requirement;
+      const isPriority = prioritySubjectIds?.has(subject_id) ?? false;
 
-    const task = tasks[taskIndex];
-    const { teacher_id, grade_id, subject_id } = task.requirement;
-    const isPriority = prioritySubjectIds?.has(subject_id) ?? false;
+      if (task.isDouble) {
+        for (const slot of orderedSlots(doubleSlots, isPriority)) {
+          const k1c = `${slot.day}|${slot.firstId}|${grade_id}`, k1t = `${slot.day}|${slot.firstId}|${teacher_id}`;
+          const k2c = `${slot.day}|${slot.secondId}|${grade_id}`, k2t = `${slot.day}|${slot.secondId}|${teacher_id}`;
+          if (classBusy.has(k1c) || classBusy.has(k2c) || teacherBusy.has(k1t) || teacherBusy.has(k2t)) continue;
 
-    if (task.isDouble) {
-      for (const slot of orderedSlots(doubleSlots, isPriority)) {
-        const k1c = `${slot.day}|${slot.firstId}|${grade_id}`, k1t = `${slot.day}|${slot.firstId}|${teacher_id}`;
-        const k2c = `${slot.day}|${slot.secondId}|${grade_id}`, k2t = `${slot.day}|${slot.secondId}|${teacher_id}`;
-        if (classBusy.has(k1c) || classBusy.has(k2c) || teacherBusy.has(k1t) || teacherBusy.has(k2t)) continue;
+          const groupId = generateUuid();
+          classBusy.add(k1c); classBusy.add(k2c); teacherBusy.add(k1t); teacherBusy.add(k2t);
+          const e1: Entry = { day: slot.day, period_id: slot.firstId, grade_id, subject_id, teacher_id, is_double_period: true, double_group_id: groupId };
+          const e2: Entry = { day: slot.day, period_id: slot.secondId, grade_id, subject_id, teacher_id, is_double_period: true, double_group_id: groupId };
+          placed.push(e1, e2);
 
-        const groupId = generateUuid();
-        classBusy.add(k1c); classBusy.add(k2c); teacherBusy.add(k1t); teacherBusy.add(k2t);
-        const e1: Entry = { day: slot.day, period_id: slot.firstId, grade_id, subject_id, teacher_id, is_double_period: true, double_group_id: groupId };
-        const e2: Entry = { day: slot.day, period_id: slot.secondId, grade_id, subject_id, teacher_id, is_double_period: true, double_group_id: groupId };
-        placed.push(e1, e2);
+          if (tryPlace(taskIndex + 1)) return true;
+
+          placed.pop(); placed.pop();
+          classBusy.delete(k1c); classBusy.delete(k2c); teacherBusy.delete(k1t); teacherBusy.delete(k2t);
+          if (gaveUp) return false;
+        }
+        return false;
+      }
+
+      for (const slot of orderedSlots(singleSlots, isPriority)) {
+        const kc = `${slot.day}|${slot.periodId}|${grade_id}`, kt = `${slot.day}|${slot.periodId}|${teacher_id}`;
+        if (classBusy.has(kc) || teacherBusy.has(kt)) continue;
+
+        classBusy.add(kc); teacherBusy.add(kt);
+        const e: Entry = { day: slot.day, period_id: slot.periodId, grade_id, subject_id, teacher_id, is_double_period: false };
+        placed.push(e);
 
         if (tryPlace(taskIndex + 1)) return true;
 
-        placed.pop(); placed.pop();
-        classBusy.delete(k1c); classBusy.delete(k2c); teacherBusy.delete(k1t); teacherBusy.delete(k2t);
+        placed.pop();
+        classBusy.delete(kc); teacherBusy.delete(kt);
         if (gaveUp) return false;
       }
       return false;
     }
 
-    for (const slot of orderedSlots(singleSlots, isPriority)) {
-      const kc = `${slot.day}|${slot.periodId}|${grade_id}`, kt = `${slot.day}|${slot.periodId}|${teacher_id}`;
-      if (classBusy.has(kc) || teacherBusy.has(kt)) continue;
-
-      classBusy.add(kc); teacherBusy.add(kt);
-      const e: Entry = { day: slot.day, period_id: slot.periodId, grade_id, subject_id, teacher_id, is_double_period: false };
-      placed.push(e);
-
-      if (tryPlace(taskIndex + 1)) return true;
-
-      placed.pop();
-      classBusy.delete(kc); teacherBusy.delete(kt);
-      if (gaveUp) return false;
-    }
-    return false;
+    const solved = tryPlace(0);
+    return { solved, placed, gaveUp };
   }
 
-  const solved = tryPlace(0);
+  let best: { solved: boolean; placed: Entry[]; gaveUp: boolean } | null = null;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const result = attemptOnce();
+    if (result.solved) { best = result; break; }
+    if (!best || result.placed.length > best.placed.length) best = result;
+  }
+  const { solved, placed, gaveUp } = best!;
 
   if (!solved) {
     // Identify which requirements are under-served in the best attempt

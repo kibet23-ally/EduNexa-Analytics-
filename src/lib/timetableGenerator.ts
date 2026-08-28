@@ -164,6 +164,7 @@ export function generateTimetable(
   requirements: Requirement[],
   periods: Period[],
   workingDays: Day[],
+  prioritySubjectIds?: Set<number>,
 ): GenerationResult {
   // Flatten each requirement's weekly lesson count into discrete tasks.
   // Double-allowed requirements pair lessons into double-blocks where the
@@ -189,17 +190,40 @@ export function generateTimetable(
   requirements.forEach(r => loadByTeacher.set(r.teacher_id, (loadByTeacher.get(r.teacher_id) || 0) + r.lessons_per_week));
   tasks.sort((a, b) => (loadByTeacher.get(b.requirement.teacher_id) || 0) - (loadByTeacher.get(a.requirement.teacher_id) || 0));
 
+  // Morning/mid-morning vs afternoon, derived from the actual configured
+  // schedule rather than hardcoded period numbers: everything before the
+  // first lunch period counts as morning. If no lunch period is
+  // configured, fall back to a fixed 12:00 cutoff.
+  const lunchStart = periods.find(p => p.period_type === 'lunch')?.start_time
+    ?? [...periods].sort((a, b) => a.start_time.localeCompare(b.start_time)).find(p => p.start_time >= '12:00:00')?.start_time
+    ?? '12:00:00';
+  const isMorningPeriod = (p: Period) => p.start_time < lunchStart;
+
   // Candidate (day, periodId) lesson slots, and for doubles (day, firstId, secondId).
-  const singleSlots: { day: Day; periodId: number }[] = [];
-  const doubleSlots: { day: Day; firstId: number; secondId: number }[] = [];
+  const singleSlots: { day: Day; periodId: number; morning: boolean }[] = [];
+  const doubleSlots: { day: Day; firstId: number; secondId: number; morning: boolean }[] = [];
   for (const day of workingDays) {
     const dayPeriods = periodsForDay(periods, day).filter(p => p.period_type === 'lesson').sort((a, b) => a.period_index - b.period_index);
-    dayPeriods.forEach(p => singleSlots.push({ day, periodId: p.id }));
+    dayPeriods.forEach(p => singleSlots.push({ day, periodId: p.id, morning: isMorningPeriod(p) }));
     for (let i = 0; i < dayPeriods.length - 1; i++) {
       if (dayPeriods[i + 1].period_index === dayPeriods[i].period_index + 1) {
-        doubleSlots.push({ day, firstId: dayPeriods[i].id, secondId: dayPeriods[i + 1].id });
+        doubleSlots.push({ day, firstId: dayPeriods[i].id, secondId: dayPeriods[i + 1].id, morning: isMorningPeriod(dayPeriods[i]) });
       }
     }
+  }
+
+  // For a priority subject (Languages/Mathematics/Science, as configured
+  // by the caller), try morning/mid-morning slots first, falling back to
+  // afternoon ones only if morning is full. Other subjects try afternoon
+  // first, leaving morning slots free for priority subjects where
+  // possible. This is a soft ordering preference, not a hard constraint -
+  // the solver still backtracks into the other half of the day rather
+  // than fail outright, so it can never make a schedule that was
+  // otherwise achievable suddenly infeasible.
+  function orderedSlots<T extends { morning: boolean }>(slots: T[], isPriority: boolean): T[] {
+    const morning = shuffledCopy(slots.filter(s => s.morning));
+    const afternoon = shuffledCopy(slots.filter(s => !s.morning));
+    return isPriority ? [...morning, ...afternoon] : [...afternoon, ...morning];
   }
 
   if (singleSlots.length === 0) {
@@ -210,7 +234,6 @@ export function generateTimetable(
   const classBusy = new Set<string>();   // `${day}|${periodId}|${grade_id}`
   const teacherBusy = new Set<string>(); // `${day}|${periodId}|${teacher_id}`
 
-  const seed = shuffledCopy;
   let steps = 0;
   let gaveUp = false;
 
@@ -220,14 +243,15 @@ export function generateTimetable(
 
     const task = tasks[taskIndex];
     const { teacher_id, grade_id, subject_id } = task.requirement;
+    const isPriority = prioritySubjectIds?.has(subject_id) ?? false;
 
     if (task.isDouble) {
-      for (const slot of seed(doubleSlots)) {
+      for (const slot of orderedSlots(doubleSlots, isPriority)) {
         const k1c = `${slot.day}|${slot.firstId}|${grade_id}`, k1t = `${slot.day}|${slot.firstId}|${teacher_id}`;
         const k2c = `${slot.day}|${slot.secondId}|${grade_id}`, k2t = `${slot.day}|${slot.secondId}|${teacher_id}`;
         if (classBusy.has(k1c) || classBusy.has(k2c) || teacherBusy.has(k1t) || teacherBusy.has(k2t)) continue;
 
-        const groupId = `dbl-${taskIndex}`;
+        const groupId = generateUuid();
         classBusy.add(k1c); classBusy.add(k2c); teacherBusy.add(k1t); teacherBusy.add(k2t);
         const e1: Entry = { day: slot.day, period_id: slot.firstId, grade_id, subject_id, teacher_id, is_double_period: true, double_group_id: groupId };
         const e2: Entry = { day: slot.day, period_id: slot.secondId, grade_id, subject_id, teacher_id, is_double_period: true, double_group_id: groupId };
@@ -242,7 +266,7 @@ export function generateTimetable(
       return false;
     }
 
-    for (const slot of seed(singleSlots)) {
+    for (const slot of orderedSlots(singleSlots, isPriority)) {
       const kc = `${slot.day}|${slot.periodId}|${grade_id}`, kt = `${slot.day}|${slot.periodId}|${teacher_id}`;
       if (classBusy.has(kc) || teacherBusy.has(kt)) continue;
 
@@ -286,6 +310,18 @@ export function generateTimetable(
   }
 
   return { success: true, entries: placed, unplaced: [] };
+}
+
+function generateUuid(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  // Fallback UUID v4 for older browsers - the double_group_id column is
+  // typed uuid in the database, so a plain string tag like "dbl-1" is
+  // rejected outright ("invalid input syntax for type uuid").
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
 
 function shuffledCopy<T>(arr: T[]): T[] {

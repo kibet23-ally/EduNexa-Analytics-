@@ -231,6 +231,22 @@ export function generateTimetable(
     return { success: false, entries: [], unplaced: requirements.map(r => ({ requirement: r, reason: 'No lesson periods are configured yet — set up Periods & Breaks first.' })) };
   }
 
+  // With "at most one lesson per subject per day" now enforced, a subject
+  // needing more lessons/week than there are working days - without
+  // double periods allowed - can never be satisfied, no matter how many
+  // attempts run. Report that specifically instead of a generic timeout.
+  const impossibleUpfront = requirements.filter(r => !r.allow_double && r.lessons_per_week > workingDays.length);
+  if (impossibleUpfront.length > 0) {
+    return {
+      success: false,
+      entries: [],
+      unplaced: impossibleUpfront.map(r => ({
+        requirement: r,
+        reason: `${r.lessons_per_week} lessons/week requested across only ${workingDays.length} working days, but double periods aren't enabled for this subject — a subject without doubles can have at most one lesson per day. Enable "Double Allowed" for this assignment or reduce its weekly lesson count.`,
+      })),
+    };
+  }
+
   // One backtracking search, with its own step budget. Re-shuffling slot
   // order between attempts (via orderedSlots' internal shuffledCopy) means
   // an attempt that gets stuck thrashing in one bad branch doesn't doom
@@ -240,6 +256,11 @@ export function generateTimetable(
     const placed: Entry[] = [];
     const classBusy = new Set<string>();   // `${day}|${periodId}|${grade_id}`
     const teacherBusy = new Set<string>(); // `${day}|${periodId}|${teacher_id}`
+    // A class+subject combo may only appear once per day - either one
+    // single lesson, or one double-block - never two separate singles
+    // (which would look identical to an unrequested double period), and
+    // never a single tacked onto the same day as a double.
+    const subjectDayBusy = new Set<string>(); // `${day}|${grade_id}|${subject_id}`
     let steps = 0;
     let gaveUp = false;
 
@@ -253,12 +274,14 @@ export function generateTimetable(
 
       if (task.isDouble) {
         for (const slot of orderedSlots(doubleSlots, isPriority)) {
+          const sd = `${slot.day}|${grade_id}|${subject_id}`;
+          if (subjectDayBusy.has(sd)) continue;
           const k1c = `${slot.day}|${slot.firstId}|${grade_id}`, k1t = `${slot.day}|${slot.firstId}|${teacher_id}`;
           const k2c = `${slot.day}|${slot.secondId}|${grade_id}`, k2t = `${slot.day}|${slot.secondId}|${teacher_id}`;
           if (classBusy.has(k1c) || classBusy.has(k2c) || teacherBusy.has(k1t) || teacherBusy.has(k2t)) continue;
 
           const groupId = generateUuid();
-          classBusy.add(k1c); classBusy.add(k2c); teacherBusy.add(k1t); teacherBusy.add(k2t);
+          classBusy.add(k1c); classBusy.add(k2c); teacherBusy.add(k1t); teacherBusy.add(k2t); subjectDayBusy.add(sd);
           const e1: Entry = { day: slot.day, period_id: slot.firstId, grade_id, subject_id, teacher_id, is_double_period: true, double_group_id: groupId };
           const e2: Entry = { day: slot.day, period_id: slot.secondId, grade_id, subject_id, teacher_id, is_double_period: true, double_group_id: groupId };
           placed.push(e1, e2);
@@ -266,24 +289,26 @@ export function generateTimetable(
           if (tryPlace(taskIndex + 1)) return true;
 
           placed.pop(); placed.pop();
-          classBusy.delete(k1c); classBusy.delete(k2c); teacherBusy.delete(k1t); teacherBusy.delete(k2t);
+          classBusy.delete(k1c); classBusy.delete(k2c); teacherBusy.delete(k1t); teacherBusy.delete(k2t); subjectDayBusy.delete(sd);
           if (gaveUp) return false;
         }
         return false;
       }
 
       for (const slot of orderedSlots(singleSlots, isPriority)) {
+        const sd = `${slot.day}|${grade_id}|${subject_id}`;
+        if (subjectDayBusy.has(sd)) continue;
         const kc = `${slot.day}|${slot.periodId}|${grade_id}`, kt = `${slot.day}|${slot.periodId}|${teacher_id}`;
         if (classBusy.has(kc) || teacherBusy.has(kt)) continue;
 
-        classBusy.add(kc); teacherBusy.add(kt);
+        classBusy.add(kc); teacherBusy.add(kt); subjectDayBusy.add(sd);
         const e: Entry = { day: slot.day, period_id: slot.periodId, grade_id, subject_id, teacher_id, is_double_period: false };
         placed.push(e);
 
         if (tryPlace(taskIndex + 1)) return true;
 
         placed.pop();
-        classBusy.delete(kc); teacherBusy.delete(kt);
+        classBusy.delete(kc); teacherBusy.delete(kt); subjectDayBusy.delete(sd);
         if (gaveUp) return false;
       }
       return false;

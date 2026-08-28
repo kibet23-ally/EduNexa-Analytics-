@@ -132,7 +132,7 @@ const Timetable = () => {
       )}
       {tab === 'Generate' && (
         <GenerateTab year={year} term={term} requirements={requirements} periods={periods} workingDays={workingDays}
-          gradeName={gradeName} subjectName={subjectName} teacherName={teacherName} existingCount={entries.length} schoolId={user?.school_id} />
+          gradeName={gradeName} subjectName={subjectName} teacherName={teacherName} existingCount={entries.length} schoolId={user?.school_id} subjects={subjects} />
       )}
       {tab === 'Master Timetable' && (
         <GridTab title="Master Timetable" scope="all" grades={grades} entries={entries} periods={periods} workingDays={workingDays}
@@ -283,7 +283,7 @@ const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; sett
     finally { setSaving(false); }
   };
 
-    // Renumbers period_index to match actual start_time order. Goes through
+  // Renumbers period_index to match actual start_time order. Goes through
   // a temporary negative range first — updating straight to 1..N would
   // collide with the (school_id, academic_year, term, day, period_index)
   // uniqueness constraint the moment two rows' target indices overlap.
@@ -502,13 +502,27 @@ const RequirementRow: React.FC<{ r: TeacherAssignment; teacherName: string; subj
 /* ═══════════════════════════ Generate ═══════════════════════════ */
 const GenerateTab: React.FC<{
   year: number; term: number; requirements: Requirement[]; periods: Period[]; workingDays: Day[];
-  gradeName: (id: number) => string; subjectName: (id: number) => string; teacherName: (id: string) => string; existingCount: number; schoolId?: number;
-}> = ({ year, term, requirements, periods, workingDays, gradeName, subjectName, teacherName, existingCount, schoolId }) => {
+  gradeName: (id: number) => string; subjectName: (id: number) => string; teacherName: (id: string) => string; existingCount: number; schoolId?: number; subjects: Subject[];
+}> = ({ year, term, requirements, periods, workingDays, gradeName, subjectName, teacherName, existingCount, schoolId, subjects }) => {
   const entriesMutation = useDataMutation('timetable_entries');
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<ReturnType<typeof generateTimetable> | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+
+  // Languages, Mathematics, and Science get first claim on morning/mid-
+  // morning lesson slots (see generateTimetable's ordering logic) - a soft
+  // preference, matched by keyword against each subject's actual name
+  // rather than hardcoded IDs, so it keeps working as subjects are added
+  // or renamed.
+  const PRIORITY_KEYWORDS = [
+    'english', 'kiswahili', 'kizungu', 'french', 'german', 'arabic', 'language', 'literature',
+    'math',
+    'science', 'biology', 'chemistry', 'physics',
+  ];
+  const prioritySubjectIds = new Set(
+    subjects.filter(s => PRIORITY_KEYWORDS.some(k => s.subject_name.toLowerCase().includes(k))).map(s => s.id)
+  );
 
   const runGenerate = async () => {
     if (requirements.length === 0) { toast.error('No lesson requirements configured yet.'); return; }
@@ -520,7 +534,7 @@ const GenerateTab: React.FC<{
     // Yield to the browser so the spinner actually paints before the
     // (synchronous, potentially CPU-heavy) backtracking search runs.
     await new Promise(r => setTimeout(r, 30));
-    const res = generateTimetable(requirements, periods, workingDays);
+    const res = generateTimetable(requirements, periods, workingDays, prioritySubjectIds);
     setResult(res);
     setRunning(false);
 

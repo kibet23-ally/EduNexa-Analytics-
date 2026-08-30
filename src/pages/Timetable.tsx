@@ -740,7 +740,7 @@ const ClassTimetablesTab: React.FC<{
         <select value={gradeId} onChange={e => setGradeId(Number(e.target.value))} className={inputCls + ' w-56'}>
           {grades.map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
         </select>
-        <button disabled={!grade} onClick={() => grade && exportClassTimetablePdf(grade.grade_name, entries, { schoolName, academicYear: year, term, workingDays, allPeriods: periods }, subjectCode, teacherInitials)}
+        <button disabled={!grade} onClick={() => grade && exportClassTimetablePdf(grade.grade_name, grade.id, entries, { schoolName, academicYear: year, term, workingDays, allPeriods: periods }, subjectCode, teacherInitials)}
           className="px-3 py-2 rounded-lg bg-slate-800 text-white text-xs font-bold flex items-center gap-1.5 disabled:opacity-50"><Download size={13} /> Download PDF</button>
       </div>
       <div className={cardCls + ' p-2'}>
@@ -765,7 +765,7 @@ const TeacherTimetablesTab: React.FC<{
         <select value={teacherId} onChange={e => setTeacherId(e.target.value)} className={inputCls + ' w-56'}>
           {teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
         </select>
-        <button disabled={!teacher} onClick={() => teacher && exportTeacherTimetablePdf(teacher.name, entries, { schoolName, academicYear: year, term, workingDays, allPeriods: periods }, subjectCode, gradeShort)}
+        <button disabled={!teacher} onClick={() => teacher && exportTeacherTimetablePdf(teacher.name, teacher.id, entries, { schoolName, academicYear: year, term, workingDays, allPeriods: periods }, subjectCode, gradeShort)}
           className="px-3 py-2 rounded-lg bg-slate-800 text-white text-xs font-bold flex items-center gap-1.5 disabled:opacity-50"><Download size={13} /> Download PDF</button>
       </div>
       <div className={cardCls + ' p-2'}>
@@ -835,7 +835,7 @@ const MyTimetableView: React.FC<{
           <select value={term} onChange={e => setTerm(Number(e.target.value))} className={inputCls + ' w-32'}>
             <option value={1}>Term 1</option><option value={2}>Term 2</option><option value={3}>Term 3</option>
           </select>
-          <button onClick={() => exportTeacherTimetablePdf(user?.name || 'Teacher', entries, { schoolName, academicYear: year, term, workingDays, allPeriods: periods }, subjectCode, gradeShort)}
+          <button onClick={() => exportTeacherTimetablePdf(user?.name || 'Teacher', user?.id, entries, { schoolName, academicYear: year, term, workingDays, allPeriods: periods }, subjectCode, gradeShort)}
             className="px-3 py-2 rounded-lg bg-slate-800 text-white text-xs font-bold flex items-center gap-1.5"><Download size={13} /> Download PDF</button>
         </div>
       </div>

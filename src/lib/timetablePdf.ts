@@ -108,7 +108,7 @@ function drawGrid(
 }
 
 export function exportClassTimetablePdf(
-  gradeName: string, entries: Entry[], meta: GridMeta,
+  gradeName: string, gradeId: number, entries: Entry[], meta: GridMeta,
   subjectCode: (id: number) => string, teacherInitials: (id: string) => string,
 ) {
   const doc = createPdfDoc('l');
@@ -118,8 +118,14 @@ export function exportClassTimetablePdf(
     subtitle: `Academic Year ${meta.academicYear} · Term ${meta.term}`,
     meta: [`Generated: ${new Date().toLocaleDateString('en-KE', { year: 'numeric', month: 'long', day: 'numeric' })}`],
   });
+  // Periods aren't grade-specific - every grade shares the same period_id
+  // set - so without filtering by grade_id here, a lookup keyed only on
+  // (day, period_id) can match a DIFFERENT grade's lesson that happens to
+  // share the same slot, showing up as extra/wrong entries in this
+  // grade's PDF even though the underlying data is correct.
+  const gradeEntries = entries.filter(e => e.grade_id === gradeId);
   drawGrid(doc, startY, meta, (day, period) => {
-    const e = entries.find(x => x.day === day && x.period_id === period.id);
+    const e = gradeEntries.find(x => x.day === day && x.period_id === period.id);
     if (!e) return '';
     return `${subjectCode(e.subject_id)}\n${teacherInitials(e.teacher_id)}`;
   });
@@ -128,7 +134,7 @@ export function exportClassTimetablePdf(
 }
 
 export function exportTeacherTimetablePdf(
-  teacherName: string, entries: Entry[], meta: GridMeta,
+  teacherName: string, teacherId: string, entries: Entry[], meta: GridMeta,
   subjectCode: (id: number) => string, gradeShort: (id: number) => string,
 ) {
   const doc = createPdfDoc('l');
@@ -138,8 +144,12 @@ export function exportTeacherTimetablePdf(
     subtitle: `Academic Year ${meta.academicYear} · Term ${meta.term}`,
     meta: [`Generated: ${new Date().toLocaleDateString('en-KE', { year: 'numeric', month: 'long', day: 'numeric' })}`],
   });
+  // Same fix as exportClassTimetablePdf: filter to this teacher's own
+  // entries before matching by (day, period_id), since period IDs are
+  // shared across every teacher too.
+  const teacherEntries = entries.filter(e => e.teacher_id === teacherId);
   drawGrid(doc, startY, meta, (day, period) => {
-    const e = entries.find(x => x.day === day && x.period_id === period.id);
+    const e = teacherEntries.find(x => x.day === day && x.period_id === period.id);
     if (!e) return 'FREE';
     return `${gradeShort(e.grade_id)}\n${subjectCode(e.subject_id)}`;
   });

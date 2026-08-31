@@ -217,7 +217,7 @@ const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; sett
         onConflict: 'school_id,academic_year,term',
       });
       toast.success('Timetable settings saved.');
-    } catch (err: unknown) { toast.error(err instanceof Error ? err.message : 'Failed to save settings.'); }
+    } catch (err: unknown) { toast.error((err as any)?.message || 'Failed to save settings.'); }
     finally { setSaving(false); }
   };
 
@@ -232,7 +232,7 @@ const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; sett
       });
       setForm({ label: '', start_time: '', end_time: '', period_type: 'lesson' });
       toast.success('Period added.');
-    } catch (err: unknown) { toast.error(err instanceof Error ? err.message : 'Failed to add period.'); }
+    } catch (err: unknown) { toast.error((err as any)?.message || 'Failed to add period.'); }
     finally { setSaving(false); }
   };
 
@@ -240,7 +240,7 @@ const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; sett
     try {
       await periodsMutation.mutateAsync({ operation: 'delete', filters: { id } });
       toast.success('Period removed.');
-    } catch (err: unknown) { toast.error(err instanceof Error ? err.message : 'Failed to remove period.'); }
+    } catch (err: unknown) { toast.error((err as any)?.message || 'Failed to remove period.'); }
   };
 
   const saveOverride = async () => {
@@ -260,7 +260,7 @@ const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; sett
       });
       toast.success(`${DAY_LABELS[overrideForm.day]} period ${base.period_index} overridden.`);
       setOverrideForm({ day: '', period_index: '', label: '', period_type: 'assembly' });
-    } catch (err: unknown) { toast.error(err instanceof Error ? err.message : 'Failed to save override.'); }
+    } catch (err: unknown) { toast.error((err as any)?.message || 'Failed to save override.'); }
     finally { setSavingOverride(false); }
   };
 
@@ -270,7 +270,7 @@ const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; sett
     try {
       await periodsMutation.mutateAsync({ operation: 'delete', filters: { id } });
       toast.success('Override removed — that day reverts to the default period grid.');
-    } catch (err: unknown) { toast.error(err instanceof Error ? err.message : 'Failed to remove override.'); }
+    } catch (err: unknown) { toast.error((err as any)?.message || 'Failed to remove override.'); }
   };
 
   const saveEdit = async (id: number, updates: { label: string; start_time: string; end_time: string; period_type: Period['period_type'] }) => {
@@ -279,7 +279,7 @@ const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; sett
       await periodsMutation.mutateAsync({ operation: 'update', payload: updates, filters: { id } });
       toast.success('Period updated.');
       setEditingId(null);
-    } catch (err: unknown) { toast.error(err instanceof Error ? err.message : 'Failed to update period.'); }
+    } catch (err: unknown) { toast.error((err as any)?.message || 'Failed to update period.'); }
     finally { setSaving(false); }
   };
 
@@ -297,7 +297,7 @@ const PeriodsTab: React.FC<{ year: number; term: number; periods: Period[]; sett
         await periodsMutation.mutateAsync({ operation: 'update', payload: { period_index: i + 1 }, filters: { id: byTime[i].id } });
       }
       toast.success('Period order fixed to match actual times.');
-    } catch (err: unknown) { toast.error(err instanceof Error ? err.message : 'Failed to fix order.'); }
+    } catch (err: unknown) { toast.error((err as any)?.message || 'Failed to fix order.'); }
     finally { setFixingOrder(false); }
   };
 
@@ -450,7 +450,7 @@ const RequirementsTab: React.FC<{ reqsRaw: TeacherAssignment[]; grades: Grade[];
     try {
       await mutation.mutateAsync({ operation: 'update', payload: { lessons_per_week, allow_double }, filters: { id } });
       toast.success('Requirement updated.');
-    } catch (err: unknown) { toast.error(err instanceof Error ? err.message : 'Failed to update.'); }
+    } catch (err: unknown) { toast.error((err as any)?.message || 'Failed to update.'); }
     finally { setSaving(null); }
   };
 
@@ -690,7 +690,7 @@ const GridTab: React.FC<{
     try {
       await entriesMutation.mutateAsync({ operation: 'update', payload: { day, period_id: period.id }, filters: { id: selected.id } });
       toast.success('Lesson moved.');
-    } catch (err: unknown) { toast.error(err instanceof Error ? err.message : 'Failed to move lesson.'); }
+    } catch (err: unknown) { toast.error((err as any)?.message || 'Failed to move lesson.'); }
     setSelected(null);
   };
 

@@ -153,7 +153,7 @@ interface Task {
 }
 
 const MAX_BACKTRACK_STEPS = 400_000;
-const MAX_ATTEMPTS = 6;
+const MAX_ATTEMPTS = 10;
 
 export interface GenerationResult {
   success: boolean;
@@ -185,11 +185,31 @@ export function generateTimetable(
     }
   }
 
-  // Most-constrained-first: teachers with a heavier total weekly load are
-  // scheduled first, since they have the least slack later on.
+  // Most-constrained-first task ordering - the core principle behind
+  // professional timetabling engines: place the hardest-to-satisfy
+  // lessons while the schedule is still empty and flexible, rather than
+  // filling it with easy lessons first and only discovering the hard
+  // ones don't fit once most of the week is already locked in.
+  //
+  // Two factors make a task harder to place:
+  //  1. Teacher weekly load - a heavily-loaded teacher has fewer free
+  //     slots left to work with as the week fills up.
+  //  2. Teacher grade-spread - a teacher who teaches multiple grades has
+  //     their availability constrained simultaneously by every one of
+  //     those grades' own schedules, not just their own subject's needs.
   const loadByTeacher = new Map<string, number>();
   requirements.forEach(r => loadByTeacher.set(r.teacher_id, (loadByTeacher.get(r.teacher_id) || 0) + r.lessons_per_week));
-  tasks.sort((a, b) => (loadByTeacher.get(b.requirement.teacher_id) || 0) - (loadByTeacher.get(a.requirement.teacher_id) || 0));
+  const gradesByTeacher = new Map<string, Set<number>>();
+  requirements.forEach(r => {
+    if (!gradesByTeacher.has(r.teacher_id)) gradesByTeacher.set(r.teacher_id, new Set());
+    gradesByTeacher.get(r.teacher_id)!.add(r.grade_id);
+  });
+  tasks.sort((a, b) => {
+    const spreadA = gradesByTeacher.get(a.requirement.teacher_id)?.size ?? 1;
+    const spreadB = gradesByTeacher.get(b.requirement.teacher_id)?.size ?? 1;
+    if (spreadB !== spreadA) return spreadB - spreadA;
+    return (loadByTeacher.get(b.requirement.teacher_id) || 0) - (loadByTeacher.get(a.requirement.teacher_id) || 0);
+  });
 
   // Morning/mid-morning vs afternoon, derived from the actual configured
   // schedule rather than hardcoded period numbers: everything before the

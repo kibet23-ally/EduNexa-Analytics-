@@ -244,7 +244,14 @@ export function generateTimetable(
   function orderedSlots<T extends { morning: boolean }>(slots: T[], isPriority: boolean): T[] {
     const morning = shuffledCopy(slots.filter(s => s.morning));
     const afternoon = shuffledCopy(slots.filter(s => !s.morning));
-    return isPriority ? [...morning, ...afternoon] : [...afternoon, ...morning];
+    // Every task fills the day front-to-back now, not just priority
+    // subjects - this is what actually pushes leftover slack toward the
+    // afternoon instead of leaving gaps scattered through the morning.
+    // Priority subjects still get first claim on morning in practice,
+    // since they're processed earlier in the most-constrained-first task
+    // order above; this only controls each individual task's own slot
+    // search, not which tasks run first.
+    return [...morning, ...afternoon];
   }
 
   if (singleSlots.length === 0) {

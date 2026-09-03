@@ -11,6 +11,7 @@ import { Grade, Subject, TeacherAssignment, School } from '../types';
 import {
   Day, DAY_LABELS, Period, Requirement, Entry, periodsForDay,
   checkCollision, generateTimetable, validateTimetable, ValidationReport,
+  checkFeasibility, FeasibilityReport, ProgressUpdate,
 } from '../lib/timetableGenerator';
 import { exportClassTimetablePdf, exportTeacherTimetablePdf, exportMasterTimetablePdf } from '../lib/timetablePdf';
 
@@ -132,7 +133,8 @@ const Timetable = () => {
       )}
       {tab === 'Generate' && (
         <GenerateTab year={year} term={term} requirements={requirements} periods={periods} workingDays={workingDays}
-          gradeName={gradeName} subjectName={subjectName} teacherName={teacherName} existingCount={entries.length} schoolId={user?.school_id} subjects={subjects} />
+          gradeName={gradeName} subjectName={subjectName} teacherName={teacherName} existingCount={entries.length} schoolId={user?.school_id} subjects={subjects}
+          maxLessonsPerDayPerTeacher={settings?.max_lessons_per_day_per_teacher ?? null} />
       )}
       {tab === 'Master Timetable' && (
         <GridTab title="Master Timetable" scope="all" grades={grades} entries={entries} periods={periods} workingDays={workingDays}
@@ -503,12 +505,15 @@ const RequirementRow: React.FC<{ r: TeacherAssignment; teacherName: string; subj
 const GenerateTab: React.FC<{
   year: number; term: number; requirements: Requirement[]; periods: Period[]; workingDays: Day[];
   gradeName: (id: number) => string; subjectName: (id: number) => string; teacherName: (id: string) => string; existingCount: number; schoolId?: number; subjects: Subject[];
-}> = ({ year, term, requirements, periods, workingDays, gradeName, subjectName, teacherName, existingCount, schoolId, subjects }) => {
+  maxLessonsPerDayPerTeacher: number | null;
+}> = ({ year, term, requirements, periods, workingDays, gradeName, subjectName, teacherName, existingCount, schoolId, subjects, maxLessonsPerDayPerTeacher }) => {
   const entriesMutation = useDataMutation('timetable_entries');
   const [running, setRunning] = useState(false);
-  const [result, setResult] = useState<ReturnType<typeof generateTimetable> | null>(null);
+  const [progress, setProgress] = useState<ProgressUpdate | null>(null);
+  const [result, setResult] = useState<Awaited<ReturnType<typeof generateTimetable>> | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [precheck, setPrecheck] = useState<FeasibilityReport | null>(null);
 
   // Languages, Mathematics, and Science get first claim on morning/mid-
   // morning lesson slots (see generateTimetable's ordering logic) - a soft
@@ -524,6 +529,10 @@ const GenerateTab: React.FC<{
     subjects.filter(s => PRIORITY_KEYWORDS.some(k => s.subject_name.toLowerCase().includes(k))).map(s => s.id)
   );
 
+  const runPrecheck = () => {
+    setPrecheck(checkFeasibility(requirements, periods, workingDays, { maxLessonsPerDayPerTeacher, gradeName, teacherName, subjectName }));
+  };
+
   const runGenerate = async () => {
     if (requirements.length === 0) { toast.error('No lesson requirements configured yet.'); return; }
     if (periods.filter(p => p.period_type === 'lesson').length === 0) { toast.error('No lesson periods configured yet.'); return; }
@@ -531,11 +540,14 @@ const GenerateTab: React.FC<{
     setResult(null);
     setSaveError(null);
     setSaved(false);
-    // Yield to the browser so the spinner actually paints before the
-    // (synchronous, potentially CPU-heavy) backtracking search runs.
-    await new Promise(r => setTimeout(r, 30));
-    const res = generateTimetable(requirements, periods, workingDays, prioritySubjectIds);
+    setProgress({ phase: 'validating', message: 'Running pre-generation checks…' });
+
+    const res = await generateTimetable(requirements, periods, workingDays, {
+      prioritySubjectIds, maxLessonsPerDayPerTeacher, gradeName, teacherName, subjectName,
+      onProgress: setProgress,
+    });
     setResult(res);
+    setPrecheck(res.feasibility);
     setRunning(false);
 
     if (!res.success) {
@@ -573,21 +585,56 @@ const GenerateTab: React.FC<{
           Academic Year {year}, Term {term} · {requirements.reduce((s, r) => s + r.lessons_per_week, 0)} lessons required across {requirements.length} assignments · {existingCount} currently scheduled.
         </p>
         <p className="text-xs text-slate-400 mb-4">
-          Generating replaces every existing entry for this term with a freshly computed, collision-free schedule. If a fully conflict-free timetable cannot be found, nothing is saved and the specific blockers are listed below.
+          Generating replaces every existing entry for this term with a freshly computed, collision-free schedule, using a real constraint-satisfaction solver (MRV + forward checking + backtracking). If a fully conflict-free timetable cannot be found, nothing is saved and the specific blockers are listed below.
         </p>
-        <button onClick={runGenerate} disabled={running} className="px-5 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-bold flex items-center gap-2 disabled:opacity-50">
-          {running ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />} {running ? 'Generating…' : 'Generate Timetable'}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={runGenerate} disabled={running} className="px-5 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-bold flex items-center gap-2 disabled:opacity-50">
+            {running ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />} {running ? 'Generating…' : 'Generate Timetable'}
+          </button>
+          <button onClick={runPrecheck} disabled={running} className="px-4 py-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-sm font-bold flex items-center gap-2 disabled:opacity-50">
+            <ShieldCheck size={16} /> Run Pre-Check
+          </button>
+        </div>
+        {running && progress && (
+          <div className="mt-4 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 text-blue-700 dark:text-blue-300 text-xs font-semibold flex items-center gap-2">
+            <Loader2 size={13} className="animate-spin" /> {progress.message}
+            {progress.total ? ` (${progress.placed ?? 0}/${progress.total})` : ''}
+          </div>
+        )}
       </div>
+
+      {precheck && (
+        <div className={cardCls + ' p-5 space-y-2'}>
+          <div className={`font-bold text-sm flex items-center gap-2 ${precheck.ready ? 'text-emerald-600' : 'text-red-600'}`}>
+            {precheck.ready ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+            TIMETABLE PRE-CHECK — {precheck.ready ? 'READY TO GENERATE' : 'CANNOT GENERATE'}
+          </div>
+          <ul className="space-y-1 text-xs">
+            {precheck.checks.map((c, i) => (
+              <li key={i} className={c.ok ? 'text-emerald-600' : 'text-red-600'}>
+                {c.ok ? '✓' : '✗'} {c.label}{c.detail ? ` — ${c.detail}` : ''}
+              </li>
+            ))}
+          </ul>
+          {precheck.blockers.length > 0 && (
+            <ul className="mt-2 space-y-1 text-xs text-red-600 dark:text-red-400 list-disc ml-4">
+              {precheck.blockers.map((b, i) => <li key={i}>{b}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
 
       {result && !result.success && (
         <div className="p-4 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900">
-          <div className="font-bold text-red-700 dark:text-red-300 text-sm mb-2">Unable to generate a conflict-free timetable.</div>
-          <ul className="space-y-1 text-xs text-red-600 dark:text-red-400">
-            {result.unplaced.map((u, i) => (
-              <li key={i}>• {gradeName(u.requirement.grade_id)} — {subjectName(u.requirement.subject_id)} ({teacherName(u.requirement.teacher_id)}): {u.reason}</li>
-            ))}
+          <div className="font-bold text-red-700 dark:text-red-300 text-sm mb-2">TIMETABLE GENERATION FAILED</div>
+          <ul className="space-y-1 text-xs text-red-600 dark:text-red-400 list-disc ml-4">
+            {result.diagnostics.map((d, i) => <li key={i}>{d}</li>)}
           </ul>
+        </div>
+      )}
+      {result && result.success && result.diagnostics.length > 0 && (
+        <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-amber-700 dark:text-amber-300 text-xs">
+          {result.diagnostics.map((d, i) => <p key={i}>{d}</p>)}
         </div>
       )}
       {result && result.success && saveError && (

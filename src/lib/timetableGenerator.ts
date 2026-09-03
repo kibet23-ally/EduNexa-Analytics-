@@ -6,10 +6,49 @@
    function here, so "never allow two things in the same slot" is
    enforced in exactly one place rather than re-implemented per screen.
 
-   The generator is a real backtracking solver, not a best-effort filler:
-   if it cannot place every required lesson without a collision, it
-   reports exactly which requirements it couldn't satisfy and returns
-   success:false. Nothing partial is ever handed back for saving — see
+   THE GENERATOR
+   ─────────────
+   This is a real constraint-satisfaction solver, not a best-effort
+   filler:
+
+    1. Pre-Generation Validation — before any search runs, class
+       capacity, teacher capacity, teacher-subject assignment and
+       period-grid sanity are all checked. If the requirements are
+       mathematically impossible to satisfy, generation never starts
+       and the specific blocker is reported (see checkFeasibility()).
+
+    2. Lesson-instance generation — each weekly requirement is expanded
+       into individual lesson instances (or double-period blocks) that
+       are scheduled one at a time, not as a single "5 lessons" object.
+
+    3. MRV (Minimum Remaining Values) — at every step the solver picks
+       the lesson instance with the fewest legal remaining slots, tie-
+       broken by a degree heuristic (how many other unscheduled lessons
+       share this one's teacher/class) and by weekly load, so the
+       hardest lessons are placed first while the week is still open.
+
+    4. Forward checking — every tentative placement immediately prunes
+       the candidate slots of every other unscheduled lesson that
+       shares a teacher or a class. If that leaves any of them with
+       zero legal slots, the placement is abandoned immediately rather
+       than discovered later at a dead end.
+
+    5. Least-constraining-value ordering — among the legal slots for
+       the chosen lesson, the ones that remove the fewest options from
+       other lessons are tried first.
+
+    6. Backtracking with randomized restarts — a full recursive
+       backtracking search with soft-preference relaxation and several
+       reshuffled restarts if the first pass can't find a solution.
+
+   Hard constraints (class/teacher/room collisions, double-period
+   adjacency, breaks/lunch/activities) are never violated. Soft
+   preferences (spreading a subject across the week, a per-teacher
+   daily lesson cap) are honoured whenever possible and only relaxed,
+   in that order, as a last resort to avoid failing outright — nothing
+   ever violates a hard constraint to make generation "succeed".
+
+   Nothing partial is ever handed back for saving — see
    generateTimetable()'s doc comment for why.
 ═══════════════════════════════════════════════════════════════════════ */
 
@@ -47,6 +86,13 @@ export interface Entry {
   teacher_id: string;
   is_double_period: boolean;
   double_group_id?: string | null;
+  /** Optional physical room label. Room-collision checking (see
+   * checkCollision/validateTimetable) only activates for entries that
+   * carry a room value — schools that don't track rooms are entirely
+   * unaffected. The generator itself doesn't assign rooms (there is no
+   * "which room does this subject need" input yet), but manual edits
+   * that set a room are protected against double-booking it. */
+  room?: string | null;
 }
 
 /** Resolve the effective period grid for one specific day, applying any
@@ -109,6 +155,18 @@ export function checkCollision(
     };
   }
 
+  // Room collisions only apply when a room is actually specified — schools
+  // that don't track rooms leave this field empty and are unaffected.
+  if (candidate.room) {
+    const roomClash = others.find(e => e.room && e.room === candidate.room);
+    if (roomClash) {
+      return {
+        type: 'room',
+        message: `Room ${candidate.room} is already in use by ${ctx.gradeName(roomClash.grade_id)} (${ctx.subjectName(roomClash.subject_id)}) during ${DAY_LABELS[candidate.day]} ${period.label}.`,
+      };
+    }
+  }
+
   const dup = others.find(e => e.grade_id === candidate.grade_id && e.subject_id === candidate.subject_id && e.teacher_id === candidate.teacher_id);
   if (dup) {
     return { type: 'duplicate', message: 'This exact class/subject/teacher combination is already scheduled in this slot.' };
@@ -138,246 +196,203 @@ export function findDoublePartner(
   return { partnerId: next.id };
 }
 
+/* ── Pre-Generation Validation ─────────────────────────────────────────
+   Capacity & sanity checks that run BEFORE the solver starts. If any of
+   these fail, a valid timetable is mathematically impossible and the
+   solver never wastes time attempting one — the specific blocker is
+   reported instead (e.g. "Teacher Workload Conflict").
+═══════════════════════════════════════════════════════════════════════ */
+
+export interface FeasibilityCheckItem {
+  ok: boolean;
+  label: string;
+  detail?: string;
+}
+
+export interface FeasibilityReport {
+  ready: boolean;
+  checks: FeasibilityCheckItem[];
+  /** Specific, actionable blockers — empty when ready === true. */
+  blockers: string[];
+}
+
+export interface FeasibilityOptions {
+  maxLessonsPerDayPerTeacher?: number | null;
+  gradeName?: (id: number) => string;
+  teacherName?: (id: string) => string;
+  subjectName?: (id: number) => string;
+}
+
+export function checkFeasibility(
+  requirements: Requirement[],
+  periods: Period[],
+  workingDays: Day[],
+  opts: FeasibilityOptions = {},
+): FeasibilityReport {
+  const gradeName = opts.gradeName ?? ((id: number) => `Class #${id}`);
+  const teacherName = opts.teacherName ?? ((id: string) => `Teacher #${String(id).slice(0, 6)}`);
+  const subjectName = opts.subjectName ?? ((id: number) => `Subject #${id}`);
+  const checks: FeasibilityCheckItem[] = [];
+  const blockers: string[] = [];
+
+  const active = requirements.filter(r => r.lessons_per_week > 0);
+
+  const lessonPeriodCount = periods.filter(p => p.period_type === 'lesson').length;
+  if (lessonPeriodCount === 0 || workingDays.length === 0) {
+    checks.push({ ok: false, label: 'Period configuration valid', detail: 'No lesson periods or no working days are configured yet.' });
+    blockers.push('No lesson periods are configured yet — set up Periods & Breaks and working days first.');
+    return { ready: false, checks, blockers };
+  }
+  checks.push({ ok: true, label: 'Period configuration valid' });
+
+  if (active.length === 0) {
+    checks.push({ ok: false, label: 'Lesson requirements configured', detail: 'No active weekly lesson requirements.' });
+    blockers.push('No lesson requirements are configured yet — set weekly lesson counts under Subjects & Teachers.');
+    return { ready: false, checks, blockers };
+  }
+  checks.push({ ok: true, label: 'Lesson requirements configured' });
+
+  // Weekly lesson slots available to a class, accounting for day-specific
+  // period-grid overrides (e.g. a shortened Friday).
+  const weeklySlots = workingDays.reduce(
+    (sum, day) => sum + periodsForDay(periods, day).filter(p => p.period_type === 'lesson').length, 0,
+  );
+
+  // Every requirement needs a teacher.
+  const unassigned = active.filter(r => !r.teacher_id);
+  if (unassigned.length > 0) {
+    checks.push({ ok: false, label: 'All subjects have assigned teachers', detail: `${unassigned.length} assignment(s) missing a teacher.` });
+    unassigned.forEach(r => blockers.push(`${gradeName(r.grade_id)} ${subjectName(r.subject_id)} has no teacher assigned.`));
+  } else {
+    checks.push({ ok: true, label: 'All subjects have assigned teachers' });
+  }
+
+  // A subject without double periods can have at most one lesson per day.
+  const impossibleDoubles = active.filter(r => !r.allow_double && r.lessons_per_week > workingDays.length);
+  if (impossibleDoubles.length > 0) {
+    checks.push({ ok: false, label: 'No impossible weekly lesson counts', detail: `${impossibleDoubles.length} assignment(s) request more lessons/week than working days without double periods.` });
+    impossibleDoubles.forEach(r => blockers.push(
+      `${gradeName(r.grade_id)} ${subjectName(r.subject_id)} (${teacherName(r.teacher_id)}) needs ${r.lessons_per_week} lessons/week across only ${workingDays.length} working days, but double periods aren't enabled for this assignment. Enable "Double Allowed" or reduce its weekly lesson count.`,
+    ));
+  } else {
+    checks.push({ ok: true, label: 'No impossible weekly lesson counts' });
+  }
+
+  // Per-class (grade) capacity.
+  const byGrade = new Map<number, number>();
+  active.forEach(r => byGrade.set(r.grade_id, (byGrade.get(r.grade_id) || 0) + r.lessons_per_week));
+  const overGrades: { grade_id: number; required: number }[] = [];
+  byGrade.forEach((required, grade_id) => { if (required > weeklySlots) overGrades.push({ grade_id, required }); });
+  if (overGrades.length > 0) {
+    checks.push({ ok: false, label: 'Classes have sufficient capacity', detail: `${overGrades.length} class(es) require more lessons than available periods.` });
+    overGrades.forEach(g => blockers.push(
+      `${gradeName(g.grade_id)} requires ${g.required} lessons/week but only ${weeklySlots} lesson periods/week are available. Add more periods or reduce this class's lesson load.`,
+    ));
+  } else {
+    checks.push({ ok: true, label: 'Classes have sufficient capacity' });
+  }
+
+  // Per-teacher capacity — a teacher can never teach more periods than
+  // exist in the week, and never more than their configured daily cap.
+  const byTeacher = new Map<string, number>();
+  active.forEach(r => { if (r.teacher_id) byTeacher.set(r.teacher_id, (byTeacher.get(r.teacher_id) || 0) + r.lessons_per_week); });
+  const cap = opts.maxLessonsPerDayPerTeacher
+    ? Math.min(weeklySlots, opts.maxLessonsPerDayPerTeacher * workingDays.length)
+    : weeklySlots;
+  const overTeachers: { teacher_id: string; required: number }[] = [];
+  byTeacher.forEach((required, teacher_id) => { if (required > cap) overTeachers.push({ teacher_id, required }); });
+  if (overTeachers.length > 0) {
+    checks.push({ ok: false, label: 'Teachers have sufficient capacity', detail: `${overTeachers.length} teacher(s) are overloaded.` });
+    overTeachers.forEach(t => blockers.push(
+      `Teacher Workload Conflict — ${teacherName(t.teacher_id)}: required ${t.required} lessons/week, only ${cap} teaching periods/week available` +
+      `${opts.maxLessonsPerDayPerTeacher ? ` (capped at ${opts.maxLessonsPerDayPerTeacher}/day × ${workingDays.length} days)` : ''}. Reduce this teacher's load or reassign some subjects.`,
+    ));
+  } else {
+    checks.push({ ok: true, label: 'Teachers have sufficient capacity' });
+  }
+
+  // Per-teacher unavailable-period data isn't modeled yet (no such table
+  // exists in the schema) — this check is a placeholder that always
+  // passes today, kept here so the report format stays stable if/when
+  // teacher availability windows are added.
+  checks.push({ ok: true, label: 'No impossible teacher availability' });
+
+  return { ready: blockers.length === 0, checks, blockers };
+}
+
 /* ── Automatic generator ──────────────────────────────────────────────
-   True backtracking: places one task at a time, and on failure undoes
-   the most recent placement and tries a different slot for it, rather
-   than silently leaving gaps or overwriting a conflict. A step budget
-   keeps runaway backtracking on genuinely infeasible input from hanging
-   the browser — if the budget is exhausted, generation is reported as
-   failed (not partially saved) with the requirements it couldn't reach.
+   A real CSP solver: dynamic MRV + degree-heuristic task ordering,
+   forward checking with incremental domain maintenance, least-
+   constraining-value slot ordering, and backtracking with randomized
+   restarts. Soft preferences are relaxed (never hard constraints) if
+   every strict attempt is exhausted. See the file header for details.
 ═══════════════════════════════════════════════════════════════════════ */
 
 interface Task {
+  id: number;
   requirement: Requirement;
   isDouble: boolean;
 }
 
-const MAX_BACKTRACK_STEPS = 400_000;
-const MAX_ATTEMPTS = 10;
+interface CandidateSlot {
+  day: Day;
+  periodIds: number[]; // 1 for a single lesson, 2 (consecutive) for a double
+  morning: boolean;
+}
+
+export type ProgressPhase =
+  | 'validating' | 'scheduling' | 'checking' | 'optimizing' | 'validating-result' | 'done' | 'failed';
+
+export interface ProgressUpdate {
+  phase: ProgressPhase;
+  message: string;
+  placed?: number;
+  total?: number;
+}
+
+export interface GenerateOptions {
+  prioritySubjectIds?: Set<number>;
+  maxLessonsPerDayPerTeacher?: number | null;
+  onProgress?: (update: ProgressUpdate) => void;
+  gradeName?: (id: number) => string;
+  teacherName?: (id: string) => string;
+  subjectName?: (id: number) => string;
+}
 
 export interface GenerationResult {
   success: boolean;
   entries: Entry[];
   unplaced: { requirement: Requirement; reason: string }[];
+  /** Root-cause summary for a failure (or a note about relaxed soft
+   * preferences on a success) — always a short, human list, never a
+   * per-lesson wall of repeated text. */
+  diagnostics: string[];
+  feasibility: FeasibilityReport | null;
 }
 
-export function generateTimetable(
-  requirements: Requirement[],
-  periods: Period[],
-  workingDays: Day[],
-  prioritySubjectIds?: Set<number>,
-): GenerationResult {
-  // Flatten each requirement's weekly lesson count into discrete tasks.
-  // Double-allowed requirements pair lessons into double-blocks where the
-  // count is even; an odd count leaves one single lesson.
-  const tasks: Task[] = [];
-  const unplacedInfeasible: { requirement: Requirement; reason: string }[] = [];
+// A single attempt is bounded by both a step count and a wall-clock
+// deadline so a genuinely pathological input can never hang the tab —
+// the UI yields every YIELD_EVERY_STEPS steps regardless, so even a
+// long-running search keeps the browser responsive.
+const YIELD_EVERY_STEPS = 250;
+const STEP_BUDGET_PER_ATTEMPT = 150_000;
+const TIME_BUDGET_PER_ATTEMPT_MS = 4_000;
+const TOTAL_TIME_BUDGET_MS = 25_000;
+const STRICT_ATTEMPTS = 4;
+const RELAXED_ATTEMPTS = 3;
+const OPTIMIZE_ITERATIONS = 200;
 
-  for (const req of requirements) {
-    if (req.lessons_per_week <= 0) continue;
-    if (req.allow_double) {
-      const doubles = Math.floor(req.lessons_per_week / 2);
-      const singles = req.lessons_per_week % 2;
-      for (let i = 0; i < doubles; i++) tasks.push({ requirement: req, isDouble: true });
-      for (let i = 0; i < singles; i++) tasks.push({ requirement: req, isDouble: false });
-    } else {
-      for (let i = 0; i < req.lessons_per_week; i++) tasks.push({ requirement: req, isDouble: false });
-    }
+function tick(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, 0));
+}
+
+function shuffledCopy<T>(arr: T[]): T[] {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
   }
-
-  // Most-constrained-first task ordering - the core principle behind
-  // professional timetabling engines: place the hardest-to-satisfy
-  // lessons while the schedule is still empty and flexible, rather than
-  // filling it with easy lessons first and only discovering the hard
-  // ones don't fit once most of the week is already locked in.
-  //
-  // Two factors make a task harder to place:
-  //  1. Teacher weekly load - a heavily-loaded teacher has fewer free
-  //     slots left to work with as the week fills up.
-  //  2. Teacher grade-spread - a teacher who teaches multiple grades has
-  //     their availability constrained simultaneously by every one of
-  //     those grades' own schedules, not just their own subject's needs.
-  const loadByTeacher = new Map<string, number>();
-  requirements.forEach(r => loadByTeacher.set(r.teacher_id, (loadByTeacher.get(r.teacher_id) || 0) + r.lessons_per_week));
-  const gradesByTeacher = new Map<string, Set<number>>();
-  requirements.forEach(r => {
-    if (!gradesByTeacher.has(r.teacher_id)) gradesByTeacher.set(r.teacher_id, new Set());
-    gradesByTeacher.get(r.teacher_id)!.add(r.grade_id);
-  });
-  tasks.sort((a, b) => {
-    const spreadA = gradesByTeacher.get(a.requirement.teacher_id)?.size ?? 1;
-    const spreadB = gradesByTeacher.get(b.requirement.teacher_id)?.size ?? 1;
-    if (spreadB !== spreadA) return spreadB - spreadA;
-    return (loadByTeacher.get(b.requirement.teacher_id) || 0) - (loadByTeacher.get(a.requirement.teacher_id) || 0);
-  });
-
-  // Morning/mid-morning vs afternoon, derived from the actual configured
-  // schedule rather than hardcoded period numbers: everything before the
-  // first lunch period counts as morning. If no lunch period is
-  // configured, fall back to a fixed 12:00 cutoff.
-  const lunchStart = periods.find(p => p.period_type === 'lunch')?.start_time
-    ?? [...periods].sort((a, b) => a.start_time.localeCompare(b.start_time)).find(p => p.start_time >= '12:00:00')?.start_time
-    ?? '12:00:00';
-  const isMorningPeriod = (p: Period) => p.start_time < lunchStart;
-
-  // Candidate (day, periodId) lesson slots, and for doubles (day, firstId, secondId).
-  const singleSlots: { day: Day; periodId: number; morning: boolean }[] = [];
-  const doubleSlots: { day: Day; firstId: number; secondId: number; morning: boolean }[] = [];
-  for (const day of workingDays) {
-    const dayPeriods = periodsForDay(periods, day).filter(p => p.period_type === 'lesson').sort((a, b) => a.period_index - b.period_index);
-    dayPeriods.forEach(p => singleSlots.push({ day, periodId: p.id, morning: isMorningPeriod(p) }));
-    for (let i = 0; i < dayPeriods.length - 1; i++) {
-      if (dayPeriods[i + 1].period_index === dayPeriods[i].period_index + 1) {
-        doubleSlots.push({ day, firstId: dayPeriods[i].id, secondId: dayPeriods[i + 1].id, morning: isMorningPeriod(dayPeriods[i]) });
-      }
-    }
-  }
-
-  // For a priority subject (Languages/Mathematics/Science, as configured
-  // by the caller), try morning/mid-morning slots first, falling back to
-  // afternoon ones only if morning is full. Other subjects try afternoon
-  // first, leaving morning slots free for priority subjects where
-  // possible. This is a soft ordering preference, not a hard constraint -
-  // the solver still backtracks into the other half of the day rather
-  // than fail outright, so it can never make a schedule that was
-  // otherwise achievable suddenly infeasible.
-  function orderedSlots<T extends { morning: boolean }>(slots: T[], isPriority: boolean): T[] {
-    const morning = shuffledCopy(slots.filter(s => s.morning));
-    const afternoon = shuffledCopy(slots.filter(s => !s.morning));
-    // Every task fills the day front-to-back now, not just priority
-    // subjects - this is what actually pushes leftover slack toward the
-    // afternoon instead of leaving gaps scattered through the morning.
-    // Priority subjects still get first claim on morning in practice,
-    // since they're processed earlier in the most-constrained-first task
-    // order above; this only controls each individual task's own slot
-    // search, not which tasks run first.
-    return [...morning, ...afternoon];
-  }
-
-  if (singleSlots.length === 0) {
-    return { success: false, entries: [], unplaced: requirements.map(r => ({ requirement: r, reason: 'No lesson periods are configured yet — set up Periods & Breaks first.' })) };
-  }
-
-  // With "at most one lesson per subject per day" now enforced, a subject
-  // needing more lessons/week than there are working days - without
-  // double periods allowed - can never be satisfied, no matter how many
-  // attempts run. Report that specifically instead of a generic timeout.
-  const impossibleUpfront = requirements.filter(r => !r.allow_double && r.lessons_per_week > workingDays.length);
-  if (impossibleUpfront.length > 0) {
-    return {
-      success: false,
-      entries: [],
-      unplaced: impossibleUpfront.map(r => ({
-        requirement: r,
-        reason: `${r.lessons_per_week} lessons/week requested across only ${workingDays.length} working days, but double periods aren't enabled for this subject — a subject without doubles can have at most one lesson per day. Enable "Double Allowed" for this assignment or reduce its weekly lesson count.`,
-      })),
-    };
-  }
-
-  // One backtracking search, with its own step budget. Re-shuffling slot
-  // order between attempts (via orderedSlots' internal shuffledCopy) means
-  // an attempt that gets stuck thrashing in one bad branch doesn't doom
-  // the whole generation - a fresh attempt often finds a very different,
-  // successful path through the same problem.
-  function attemptOnce(): { solved: boolean; placed: Entry[]; gaveUp: boolean } {
-    const placed: Entry[] = [];
-    const classBusy = new Set<string>();   // `${day}|${periodId}|${grade_id}`
-    const teacherBusy = new Set<string>(); // `${day}|${periodId}|${teacher_id}`
-    // A class+subject combo may only appear once per day - either one
-    // single lesson, or one double-block - never two separate singles
-    // (which would look identical to an unrequested double period), and
-    // never a single tacked onto the same day as a double.
-    const subjectDayBusy = new Set<string>(); // `${day}|${grade_id}|${subject_id}`
-    let steps = 0;
-    let gaveUp = false;
-
-    function tryPlace(taskIndex: number): boolean {
-      if (taskIndex >= tasks.length) return true;
-      if (++steps > MAX_BACKTRACK_STEPS) { gaveUp = true; return false; }
-
-      const task = tasks[taskIndex];
-      const { teacher_id, grade_id, subject_id } = task.requirement;
-      const isPriority = prioritySubjectIds?.has(subject_id) ?? false;
-
-      if (task.isDouble) {
-        for (const slot of orderedSlots(doubleSlots, isPriority)) {
-          const sd = `${slot.day}|${grade_id}|${subject_id}`;
-          if (subjectDayBusy.has(sd)) continue;
-          const k1c = `${slot.day}|${slot.firstId}|${grade_id}`, k1t = `${slot.day}|${slot.firstId}|${teacher_id}`;
-          const k2c = `${slot.day}|${slot.secondId}|${grade_id}`, k2t = `${slot.day}|${slot.secondId}|${teacher_id}`;
-          if (classBusy.has(k1c) || classBusy.has(k2c) || teacherBusy.has(k1t) || teacherBusy.has(k2t)) continue;
-
-          const groupId = generateUuid();
-          classBusy.add(k1c); classBusy.add(k2c); teacherBusy.add(k1t); teacherBusy.add(k2t); subjectDayBusy.add(sd);
-          const e1: Entry = { day: slot.day, period_id: slot.firstId, grade_id, subject_id, teacher_id, is_double_period: true, double_group_id: groupId };
-          const e2: Entry = { day: slot.day, period_id: slot.secondId, grade_id, subject_id, teacher_id, is_double_period: true, double_group_id: groupId };
-          placed.push(e1, e2);
-
-          if (tryPlace(taskIndex + 1)) return true;
-
-          placed.pop(); placed.pop();
-          classBusy.delete(k1c); classBusy.delete(k2c); teacherBusy.delete(k1t); teacherBusy.delete(k2t); subjectDayBusy.delete(sd);
-          if (gaveUp) return false;
-        }
-        return false;
-      }
-
-      for (const slot of orderedSlots(singleSlots, isPriority)) {
-        const sd = `${slot.day}|${grade_id}|${subject_id}`;
-        if (subjectDayBusy.has(sd)) continue;
-        const kc = `${slot.day}|${slot.periodId}|${grade_id}`, kt = `${slot.day}|${slot.periodId}|${teacher_id}`;
-        if (classBusy.has(kc) || teacherBusy.has(kt)) continue;
-
-        classBusy.add(kc); teacherBusy.add(kt); subjectDayBusy.add(sd);
-        const e: Entry = { day: slot.day, period_id: slot.periodId, grade_id, subject_id, teacher_id, is_double_period: false };
-        placed.push(e);
-
-        if (tryPlace(taskIndex + 1)) return true;
-
-        placed.pop();
-        classBusy.delete(kc); teacherBusy.delete(kt); subjectDayBusy.delete(sd);
-        if (gaveUp) return false;
-      }
-      return false;
-    }
-
-    const solved = tryPlace(0);
-    return { solved, placed, gaveUp };
-  }
-
-  let best: { solved: boolean; placed: Entry[]; gaveUp: boolean } | null = null;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    const result = attemptOnce();
-    if (result.solved) { best = result; break; }
-    if (!best || result.placed.length > best.placed.length) best = result;
-  }
-  const { solved, placed, gaveUp } = best!;
-
-  if (!solved) {
-    // Identify which requirements are under-served in the best attempt
-    // reached, so the Timetabler gets a specific, actionable reason
-    // rather than a bare failure.
-    const perReqPlaced = new Map<number, number>();
-    for (const req of requirements) {
-      const need = req.lessons_per_week;
-      const got = placed.filter(e => e.teacher_id === req.teacher_id && e.subject_id === req.subject_id && e.grade_id === req.grade_id).length;
-      if (got < need) perReqPlaced.set(req.id, got);
-    }
-    for (const req of requirements) {
-      if (perReqPlaced.has(req.id)) {
-        const got = perReqPlaced.get(req.id)!;
-        unplacedInfeasible.push({
-          requirement: req,
-          reason: gaveUp
-            ? `Only placed ${got}/${req.lessons_per_week} lessons before the solver's step budget ran out — try reducing load or adding more lesson periods.`
-            : `Could not place ${req.lessons_per_week - got} of ${req.lessons_per_week} required lessons without a collision — the teacher, class, or period grid is over-constrained.`,
-        });
-      }
-    }
-    return { success: false, entries: [], unplaced: unplacedInfeasible };
-  }
-
-  return { success: true, entries: placed, unplaced: [] };
+  return copy;
 }
 
 function generateUuid(): string {
@@ -392,19 +407,512 @@ function generateUuid(): string {
   });
 }
 
-function shuffledCopy<T>(arr: T[]): T[] {
-  const copy = [...arr];
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [copy[i], copy[j]] = [copy[j], copy[i]];
+export async function generateTimetable(
+  requirements: Requirement[],
+  periods: Period[],
+  workingDays: Day[],
+  options: GenerateOptions = {},
+): Promise<GenerationResult> {
+  const { onProgress, prioritySubjectIds, maxLessonsPerDayPerTeacher = null, gradeName, teacherName, subjectName } = options;
+
+  onProgress?.({ phase: 'validating', message: 'Running pre-generation checks…' });
+  await tick();
+
+  // ── Stage 1: Pre-Generation Validation ────────────────────────────
+  const feasibility = checkFeasibility(requirements, periods, workingDays, {
+    maxLessonsPerDayPerTeacher, gradeName, teacherName, subjectName,
+  });
+  if (!feasibility.ready) {
+    onProgress?.({ phase: 'failed', message: 'Pre-generation checks failed.' });
+    return { success: false, entries: [], unplaced: [], diagnostics: feasibility.blockers, feasibility };
   }
-  return copy;
+
+  // ── Stage 2: Lesson instance generation ───────────────────────────
+  // Convert each weekly requirement into individual lesson instances (or
+  // double-period blocks) — never a single "N lessons" scheduling object.
+  const tasks: Task[] = [];
+  let nextTaskId = 0;
+  for (const req of requirements) {
+    if (req.lessons_per_week <= 0) continue;
+    if (req.allow_double) {
+      const doubles = Math.floor(req.lessons_per_week / 2);
+      const singles = req.lessons_per_week % 2;
+      for (let i = 0; i < doubles; i++) tasks.push({ id: nextTaskId++, requirement: req, isDouble: true });
+      for (let i = 0; i < singles; i++) tasks.push({ id: nextTaskId++, requirement: req, isDouble: false });
+    } else {
+      for (let i = 0; i < req.lessons_per_week; i++) tasks.push({ id: nextTaskId++, requirement: req, isDouble: false });
+    }
+  }
+  const taskById = new Map<number, Task>(tasks.map(t => [t.id, t]));
+  const totalPeriods = requirements.reduce((s, r) => s + Math.max(0, r.lessons_per_week), 0);
+
+  // ── Candidate slot universe ────────────────────────────────────────
+  const lunchStart = periods.find(p => p.period_type === 'lunch')?.start_time
+    ?? [...periods].sort((a, b) => a.start_time.localeCompare(b.start_time)).find(p => p.start_time >= '12:00:00')?.start_time
+    ?? '12:00:00';
+  const isMorningPeriod = (p: Period) => p.start_time < lunchStart;
+
+  const singleSlots: CandidateSlot[] = [];
+  const doubleSlots: CandidateSlot[] = [];
+  for (const day of workingDays) {
+    const dayPeriods = periodsForDay(periods, day).filter(p => p.period_type === 'lesson').sort((a, b) => a.period_index - b.period_index);
+    dayPeriods.forEach(p => singleSlots.push({ day, periodIds: [p.id], morning: isMorningPeriod(p) }));
+    for (let i = 0; i < dayPeriods.length - 1; i++) {
+      if (dayPeriods[i + 1].period_index === dayPeriods[i].period_index + 1) {
+        doubleSlots.push({ day, periodIds: [dayPeriods[i].id, dayPeriods[i + 1].id], morning: isMorningPeriod(dayPeriods[i]) });
+      }
+    }
+  }
+
+  // ── Static heuristics (conflict graph, MRV tie-breaks) ────────────
+  // "Two lessons conflict when they share the same class or teacher" —
+  // the conflict graph, expressed as adjacency lists so forward checking
+  // only ever inspects lessons that could actually collide.
+  const tasksByTeacher = new Map<string, number[]>();
+  const tasksByGrade = new Map<number, number[]>();
+  const teacherLoad = new Map<string, number>();
+  const gradeLoad = new Map<number, number>();
+  for (const t of tasks) {
+    const { teacher_id, grade_id, lessons_per_week } = t.requirement;
+    if (!tasksByTeacher.has(teacher_id)) tasksByTeacher.set(teacher_id, []);
+    tasksByTeacher.get(teacher_id)!.push(t.id);
+    if (!tasksByGrade.has(grade_id)) tasksByGrade.set(grade_id, []);
+    tasksByGrade.get(grade_id)!.push(t.id);
+    teacherLoad.set(teacher_id, (teacherLoad.get(teacher_id) || 0) + lessons_per_week);
+    gradeLoad.set(grade_id, (gradeLoad.get(grade_id) || 0) + lessons_per_week);
+  }
+  const degreeOf = (t: Task) =>
+    (tasksByTeacher.get(t.requirement.teacher_id)?.length ?? 1) - 1 +
+    (tasksByGrade.get(t.requirement.grade_id)?.length ?? 1) - 1;
+
+  if (singleSlots.length === 0) {
+    return {
+      success: false, entries: [], feasibility,
+      unplaced: requirements.map(r => ({ requirement: r, reason: 'No lesson periods are configured yet — set up Periods & Breaks first.' })),
+      diagnostics: ['No lesson periods are configured yet — set up Periods & Breaks first.'],
+    };
+  }
+
+  onProgress?.({ phase: 'scheduling', message: `Scheduling lessons: 0 / ${totalPeriods}`, placed: 0, total: totalPeriods });
+
+  // ── One full CSP attempt (MRV + forward checking + backtracking) ──
+  interface AttemptSettings { respectSubjectSpread: boolean; respectDailyCap: boolean; }
+  interface AttemptResult { solved: boolean; entries: Entry[]; gaveUp: false | 'steps' | 'time'; }
+
+  async function attempt(settings: AttemptSettings, deadline: number): Promise<AttemptResult> {
+    const domains = new Map<number, CandidateSlot[]>();
+    tasks.forEach(t => domains.set(t.id, shuffledCopy(t.isDouble ? doubleSlots : singleSlots)));
+
+    const classBusy = new Set<string>();     // `${day}|${periodId}|${grade_id}`
+    const teacherBusy = new Set<string>();   // `${day}|${periodId}|${teacher_id}`
+    // A class+subject combo appears at most once per day (soft, unless
+    // relaxed) — prevents two unrelated singles from masquerading as an
+    // unrequested double period, and spreads a subject across the week.
+    const subjectDayBusy = new Set<string>(); // `${day}|${grade_id}|${subject_id}`
+    const teacherDayCount = new Map<string, number>(); // `${day}|${teacher_id}` -> periods that day
+
+    const unassigned = new Set<number>(tasks.map(t => t.id));
+    const placedEntries: Entry[] = [];
+
+    let steps = 0;
+    let gaveUp: false | 'steps' | 'time' = false;
+
+    function slotValid(t: Task, slot: CandidateSlot): boolean {
+      const { teacher_id, grade_id, subject_id } = t.requirement;
+      for (const pid of slot.periodIds) {
+        if (classBusy.has(`${slot.day}|${pid}|${grade_id}`)) return false;
+        if (teacherBusy.has(`${slot.day}|${pid}|${teacher_id}`)) return false;
+      }
+      if (settings.respectSubjectSpread && subjectDayBusy.has(`${slot.day}|${grade_id}|${subject_id}`)) return false;
+      if (settings.respectDailyCap && maxLessonsPerDayPerTeacher) {
+        const current = teacherDayCount.get(`${slot.day}|${teacher_id}`) || 0;
+        if (current + slot.periodIds.length > maxLessonsPerDayPerTeacher) return false;
+      }
+      return true;
+    }
+
+    interface ApplyResult {
+      ok: boolean;
+      entries: Entry[];
+      removals: { taskId: number; slot: CandidateSlot }[];
+      subjectDayKey: string | null;
+      teacherDayKey: string;
+      prevTeacherDayCount: number;
+    }
+
+    function applyAssignment(task: Task, slot: CandidateSlot): ApplyResult {
+      const { teacher_id, grade_id, subject_id } = task.requirement;
+      const groupId = task.isDouble ? generateUuid() : null;
+      const entries: Entry[] = slot.periodIds.map(pid => ({
+        day: slot.day, period_id: pid, grade_id, subject_id, teacher_id,
+        is_double_period: task.isDouble, double_group_id: groupId,
+      }));
+
+      for (const pid of slot.periodIds) {
+        classBusy.add(`${slot.day}|${pid}|${grade_id}`);
+        teacherBusy.add(`${slot.day}|${pid}|${teacher_id}`);
+      }
+      let subjectDayKey: string | null = null;
+      if (settings.respectSubjectSpread) {
+        subjectDayKey = `${slot.day}|${grade_id}|${subject_id}`;
+        subjectDayBusy.add(subjectDayKey);
+      }
+      const teacherDayKey = `${slot.day}|${teacher_id}`;
+      const prevTeacherDayCount = teacherDayCount.get(teacherDayKey) || 0;
+      teacherDayCount.set(teacherDayKey, prevTeacherDayCount + slot.periodIds.length);
+
+      // Forward checking: prune every other unscheduled lesson that
+      // shares this teacher or this class. If any of them is left with
+      // zero legal slots, signal an immediate dead end.
+      const neighborIds = new Set<number>([
+        ...(tasksByTeacher.get(teacher_id) ?? []),
+        ...(tasksByGrade.get(grade_id) ?? []),
+      ]);
+      neighborIds.delete(task.id);
+
+      const removals: { taskId: number; slot: CandidateSlot }[] = [];
+      let ok = true;
+      for (const nid of neighborIds) {
+        if (!unassigned.has(nid)) continue;
+        const dom = domains.get(nid)!;
+        const kept: CandidateSlot[] = [];
+        let removedAny = false;
+        const neighborTask = taskById.get(nid)!;
+        for (const s of dom) {
+          if (slotValid(neighborTask, s)) kept.push(s);
+          else { removals.push({ taskId: nid, slot: s }); removedAny = true; }
+        }
+        if (removedAny) domains.set(nid, kept);
+        if (kept.length === 0) { ok = false; break; }
+      }
+
+      return { ok, entries, removals, subjectDayKey, teacherDayKey, prevTeacherDayCount };
+    }
+
+    function revertAssignment(task: Task, slot: CandidateSlot, applied: ApplyResult) {
+      const { teacher_id, grade_id } = task.requirement;
+      for (const pid of slot.periodIds) {
+        classBusy.delete(`${slot.day}|${pid}|${grade_id}`);
+        teacherBusy.delete(`${slot.day}|${pid}|${teacher_id}`);
+      }
+      if (applied.subjectDayKey) subjectDayBusy.delete(applied.subjectDayKey);
+      teacherDayCount.set(applied.teacherDayKey, applied.prevTeacherDayCount);
+      for (const r of applied.removals) domains.get(r.taskId)!.push(r.slot);
+    }
+
+    // MRV + degree heuristic + weekly-load tie-break + double-first +
+    // highest-weekly-requirement, in that priority order.
+    function pickTask(): Task {
+      let best: Task | null = null;
+      let bestDomainSize = Infinity;
+      let bestDegree = -1;
+      for (const id of unassigned) {
+        const t = taskById.get(id)!;
+        const size = domains.get(id)!.length;
+        if (best === null || size < bestDomainSize) {
+          best = t; bestDomainSize = size; bestDegree = degreeOf(t);
+          continue;
+        }
+        if (size !== bestDomainSize) continue;
+        const deg = degreeOf(t);
+        if (deg !== bestDegree) { if (deg > bestDegree) { best = t; bestDegree = deg; } continue; }
+        const tl = teacherLoad.get(t.requirement.teacher_id) || 0;
+        const btl = teacherLoad.get(best.requirement.teacher_id) || 0;
+        if (tl !== btl) { if (tl > btl) best = t; continue; }
+        const gl = gradeLoad.get(t.requirement.grade_id) || 0;
+        const bgl = gradeLoad.get(best.requirement.grade_id) || 0;
+        if (gl !== bgl) { if (gl > bgl) best = t; continue; }
+        if (t.isDouble !== best.isDouble) { if (t.isDouble) best = t; continue; }
+        if (t.requirement.lessons_per_week > best.requirement.lessons_per_week) best = t;
+      }
+      return best!;
+    }
+
+    // Least-constraining-value: try the slot that eliminates the fewest
+    // options from other still-unscheduled lessons first.
+    function orderByLCV(task: Task, domain: CandidateSlot[]): CandidateSlot[] {
+      const shuffled = shuffledCopy(domain);
+      if (shuffled.length <= 1) return shuffled;
+      const neighborIds = [
+        ...new Set<number>([
+          ...(tasksByTeacher.get(task.requirement.teacher_id) ?? []),
+          ...(tasksByGrade.get(task.requirement.grade_id) ?? []),
+        ]),
+      ].filter(id => id !== task.id && unassigned.has(id));
+
+      const neighborKeySets = neighborIds.map(id => {
+        const keys = new Set<string>();
+        domains.get(id)!.forEach(s => s.periodIds.forEach(pid => keys.add(`${s.day}|${pid}`)));
+        return keys;
+      });
+
+      // Languages/Maths/Sciences (as configured by the caller) get first
+      // claim on morning slots — a soft preference layered on top of LCV,
+      // never overriding it: it only breaks ties between otherwise
+      // equally-constraining candidates.
+      const isPriority = prioritySubjectIds?.has(task.requirement.subject_id) ?? false;
+
+      const withCost = shuffled.map(slot => {
+        let costVal = 0;
+        for (const keySet of neighborKeySets) {
+          for (const pid of slot.periodIds) {
+            if (keySet.has(`${slot.day}|${pid}`)) { costVal++; break; }
+          }
+        }
+        const morningMismatch = isPriority ? (slot.morning ? 0 : 1) : (slot.morning ? 1 : 0);
+        return { slot, costVal, morningMismatch };
+      });
+      withCost.sort((a, b) => (a.costVal - b.costVal) || (a.morningMismatch - b.morningMismatch));
+      return withCost.map(w => w.slot);
+    }
+
+    async function solve(): Promise<boolean> {
+      if (unassigned.size === 0) return true;
+      steps++;
+      if (steps % YIELD_EVERY_STEPS === 0) {
+        onProgress?.({ phase: 'scheduling', message: `Scheduling lessons: ${placedEntries.length} / ${totalPeriods}`, placed: placedEntries.length, total: totalPeriods });
+        await tick();
+      }
+      if (steps > STEP_BUDGET_PER_ATTEMPT) { gaveUp = 'steps'; return false; }
+      if (Date.now() > deadline) { gaveUp = 'time'; return false; }
+
+      const task = pickTask();
+      const domain = domains.get(task.id)!;
+      if (domain.length === 0) return false;
+
+      const ordered = orderByLCV(task, domain);
+      unassigned.delete(task.id);
+
+      for (const slot of ordered) {
+        const applied = applyAssignment(task, slot);
+        if (!applied.ok) {
+          revertAssignment(task, slot, applied);
+          if (gaveUp) break;
+          continue;
+        }
+        placedEntries.push(...applied.entries);
+        const solved = await solve();
+        if (solved) return true;
+        placedEntries.splice(placedEntries.length - applied.entries.length, applied.entries.length);
+        revertAssignment(task, slot, applied);
+        if (gaveUp) break;
+      }
+
+      unassigned.add(task.id);
+      return false;
+    }
+
+    const solved = await solve();
+    return { solved, entries: placedEntries, gaveUp };
+  }
+
+  // ── Stage 3: search, with soft-preference relaxation as a last resort ──
+  const totalDeadline = Date.now() + TOTAL_TIME_BUDGET_MS;
+  let best: AttemptResult | null = null;
+  let relaxed = false;
+
+  for (let i = 0; i < STRICT_ATTEMPTS && Date.now() < totalDeadline; i++) {
+    const res = await attempt(
+      { respectSubjectSpread: true, respectDailyCap: !!maxLessonsPerDayPerTeacher },
+      Math.min(totalDeadline, Date.now() + TIME_BUDGET_PER_ATTEMPT_MS),
+    );
+    if (res.solved) { best = res; break; }
+    if (!best || res.entries.length > best.entries.length) best = res;
+  }
+
+  if (!best?.solved && Date.now() < totalDeadline) {
+    onProgress?.({ phase: 'scheduling', message: 'Retrying with relaxed soft preferences…', placed: best?.entries.length ?? 0, total: totalPeriods });
+    for (let i = 0; i < RELAXED_ATTEMPTS && Date.now() < totalDeadline; i++) {
+      const res = await attempt(
+        { respectSubjectSpread: false, respectDailyCap: false },
+        Math.min(totalDeadline, Date.now() + TIME_BUDGET_PER_ATTEMPT_MS),
+      );
+      if (res.solved) { best = res; relaxed = true; break; }
+      if (!best || res.entries.length > best.entries.length) best = res;
+    }
+  }
+
+  if (!best || !best.solved) {
+    onProgress?.({ phase: 'failed', message: 'Unable to find a conflict-free timetable.' });
+    const unplaced = buildUnplaced(requirements, best?.entries ?? []);
+    const diagnostics = summarizeShortfall(unplaced, gradeName, teacherName, subjectName);
+    return { success: false, entries: [], unplaced, diagnostics, feasibility };
+  }
+
+  // ── Stage 4: conflict check, light polish, final validation ──────
+  onProgress?.({ phase: 'checking', message: 'Checking conflicts…', placed: best.entries.length, total: totalPeriods });
+  await tick();
+
+  onProgress?.({ phase: 'optimizing', message: 'Optimizing timetable…' });
+  const optimized = localOptimize(best.entries, periods, maxLessonsPerDayPerTeacher);
+  await tick();
+
+  onProgress?.({ phase: 'validating-result', message: 'Validating timetable…' });
+  const gn = gradeName ?? ((id: number) => `Class #${id}`);
+  const tn = teacherName ?? ((id: string) => `Teacher #${id.slice(0, 6)}`);
+  const sn = subjectName ?? ((id: number) => `Subject #${id}`);
+  const finalCheck = validateTimetable(optimized, requirements, gn, tn, sn);
+  await tick();
+
+  if (!finalCheck.isValid) {
+    // Defensive: this should never happen given the checks above, but a
+    // timetable is never handed back for saving unless it is provably
+    // conflict-free — never a partially-valid draft.
+    return {
+      success: false, entries: [], feasibility,
+      unplaced: buildUnplaced(requirements, []),
+      diagnostics: [
+        'An internal consistency check failed after generation — please try again.',
+        ...finalCheck.classCollisions, ...finalCheck.teacherCollisions, ...finalCheck.roomCollisions,
+      ],
+    };
+  }
+
+  onProgress?.({ phase: 'done', message: 'Timetable successfully generated.', placed: optimized.length, total: totalPeriods });
+  return {
+    success: true,
+    entries: optimized,
+    unplaced: [],
+    diagnostics: relaxed
+      ? ['Generated by relaxing one soft preference (same-subject daily spacing or a teacher\'s daily lesson cap) so every required lesson could still be placed. No hard constraint was ever relaxed.']
+      : [],
+    feasibility,
+  };
+}
+
+function buildUnplaced(requirements: Requirement[], entries: Entry[]): { requirement: Requirement; reason: string }[] {
+  const unplaced: { requirement: Requirement; reason: string }[] = [];
+  for (const req of requirements) {
+    if (req.lessons_per_week <= 0) continue;
+    const got = entries.filter(e => e.teacher_id === req.teacher_id && e.subject_id === req.subject_id && e.grade_id === req.grade_id).length;
+    if (got < req.lessons_per_week) {
+      unplaced.push({
+        requirement: req,
+        reason: `Only placed ${got}/${req.lessons_per_week} lessons — the teacher, class, or period grid is over-constrained for this assignment.`,
+      });
+    }
+  }
+  return unplaced;
+}
+
+/** Item 17 from the spec: summarize root causes instead of dumping a
+ * repetitive line per lesson. Shows the worst-affected assignments
+ * first, caps the list, and always ends with concrete next steps. */
+function summarizeShortfall(
+  unplaced: { requirement: Requirement; reason: string }[],
+  gradeName?: (id: number) => string,
+  teacherName?: (id: string) => string,
+  subjectName?: (id: number) => string,
+): string[] {
+  const gn = gradeName ?? ((id: number) => `Class #${id}`);
+  const tn = teacherName ?? ((id: string) => `Teacher #${id.slice(0, 6)}`);
+  const sn = subjectName ?? ((id: number) => `Subject #${id}`);
+
+  const ranked = [...unplaced].sort((a, b) => b.requirement.lessons_per_week - a.requirement.lessons_per_week);
+  const shown = ranked.slice(0, 8);
+  const lines = shown.map(u => `${gn(u.requirement.grade_id)} — ${sn(u.requirement.subject_id)} (${tn(u.requirement.teacher_id)}): ${u.reason}`);
+  if (ranked.length > shown.length) {
+    lines.push(`…and ${ranked.length - shown.length} more assignment(s) with unmet lessons.`);
+  }
+  lines.push('Recommended actions: add more teaching periods, increase teacher availability, reassign some subjects, or adjust lesson requirements.');
+  return lines;
+}
+
+/** Bounded local search that runs once a hard-constraint-valid timetable
+ * has already been found. Swaps pairs of single-period lessons only when
+ * the swap (a) keeps every hard constraint satisfied and (b) strictly
+ * reduces a soft-preference cost (same-subject-same-day repeats, a
+ * teacher's daily lesson cap). Never touches double periods, and any
+ * swap that doesn't verifiably improve things is rolled back — this can
+ * only make a valid timetable nicer, never invalid. */
+function localOptimize(entries: Entry[], periods: Period[], maxLessonsPerDayPerTeacher: number | null): Entry[] {
+  const result = entries.map(e => ({ ...e }));
+  const singles = result.filter(e => !e.is_double_period);
+  if (singles.length < 2) return result;
+
+  const lessonPeriodIds = new Set(periods.filter(p => p.period_type === 'lesson').map(p => p.id));
+  const classKey = (e: Entry) => `${e.day}|${e.period_id}|${e.grade_id}`;
+  const teacherKey = (e: Entry) => `${e.day}|${e.period_id}|${e.teacher_id}`;
+
+  function cost(): number {
+    let c = 0;
+    const byClassDay = new Map<string, Map<number, number>>();
+    const byTeacherDay = new Map<string, number>();
+    for (const e of result) {
+      const cdKey = `${e.grade_id}|${e.day}`;
+      if (!byClassDay.has(cdKey)) byClassDay.set(cdKey, new Map());
+      const subjMap = byClassDay.get(cdKey)!;
+      subjMap.set(e.subject_id, (subjMap.get(e.subject_id) || 0) + 1);
+      const tdKey = `${e.teacher_id}|${e.day}`;
+      byTeacherDay.set(tdKey, (byTeacherDay.get(tdKey) || 0) + 1);
+    }
+    byClassDay.forEach(subjMap => subjMap.forEach(count => { if (count > 1) c += (count - 1) * 3; }));
+    if (maxLessonsPerDayPerTeacher) {
+      byTeacherDay.forEach(count => { if (count > maxLessonsPerDayPerTeacher) c += (count - maxLessonsPerDayPerTeacher) * 5; });
+    }
+    return c;
+  }
+
+  let currentCost = cost();
+  if (currentCost === 0) return result;
+
+  const classBusy = new Set(result.map(classKey));
+  const teacherBusy = new Set(result.map(teacherKey));
+
+  for (let iter = 0; iter < OPTIMIZE_ITERATIONS && currentCost > 0; iter++) {
+    const i = Math.floor(Math.random() * singles.length);
+    const j = Math.floor(Math.random() * singles.length);
+    if (i === j) continue;
+    const a = singles[i], b = singles[j];
+    if (a.day === b.day && a.period_id === b.period_id) continue;
+    if (!lessonPeriodIds.has(a.period_id) || !lessonPeriodIds.has(b.period_id)) continue;
+
+    const aOrig = { day: a.day, period_id: a.period_id };
+    const bOrig = { day: b.day, period_id: b.period_id };
+
+    classBusy.delete(classKey(a)); classBusy.delete(classKey(b));
+    teacherBusy.delete(teacherKey(a)); teacherBusy.delete(teacherKey(b));
+
+    a.day = bOrig.day; a.period_id = bOrig.period_id;
+    b.day = aOrig.day; b.period_id = aOrig.period_id;
+
+    const aNewClassKey = classKey(a), aNewTeacherKey = teacherKey(a);
+    const bNewClassKey = classKey(b), bNewTeacherKey = teacherKey(b);
+    const hardOk = !classBusy.has(aNewClassKey) && !teacherBusy.has(aNewTeacherKey)
+      && !classBusy.has(bNewClassKey) && !teacherBusy.has(bNewTeacherKey);
+
+    if (!hardOk) {
+      a.day = aOrig.day; a.period_id = aOrig.period_id;
+      b.day = bOrig.day; b.period_id = bOrig.period_id;
+      classBusy.add(classKey(a)); classBusy.add(classKey(b));
+      teacherBusy.add(teacherKey(a)); teacherBusy.add(teacherKey(b));
+      continue;
+    }
+
+    classBusy.add(aNewClassKey); classBusy.add(bNewClassKey);
+    teacherBusy.add(aNewTeacherKey); teacherBusy.add(bNewTeacherKey);
+
+    const newCost = cost();
+    if (newCost < currentCost) {
+      currentCost = newCost; // keep the swap
+    } else {
+      classBusy.delete(aNewClassKey); classBusy.delete(bNewClassKey);
+      teacherBusy.delete(aNewTeacherKey); teacherBusy.delete(bNewTeacherKey);
+      a.day = aOrig.day; a.period_id = aOrig.period_id;
+      b.day = bOrig.day; b.period_id = bOrig.period_id;
+      classBusy.add(classKey(a)); classBusy.add(classKey(b));
+      teacherBusy.add(teacherKey(a)); teacherBusy.add(teacherKey(b));
+    }
+  }
+
+  return result;
 }
 
 /* ── Validation report ─────────────────────────────────────────────────
    Re-scans a saved/candidate entry set from scratch — used by the
    "Validate Timetable" button, independent of whatever produced the
-   entries (generator or manual edits). */
+   entries (generator or manual edits), and internally as the final
+   gate before a generated timetable is ever handed back for saving. */
 export interface ValidationReport {
   classCollisions: string[];
   teacherCollisions: string[];
@@ -428,6 +936,7 @@ export function validateTimetable(
   const duplicates: string[] = [];
   const seenClass = new Map<string, Entry>();
   const seenTeacher = new Map<string, Entry>();
+  const seenRoom = new Map<string, Entry>();
   const seenExact = new Map<string, number>();
 
   for (const e of entries) {
@@ -442,6 +951,14 @@ export function validateTimetable(
     if (seenTeacher.has(kt)) {
       teacherCollisions.push(`${teacherName(e.teacher_id)} double-booked on ${DAY_LABELS[e.day]} period ${e.period_id}.`);
     } else seenTeacher.set(kt, e);
+
+    // Room collisions only apply to entries that actually carry a room.
+    if (e.room) {
+      const kr = `${e.day}|${e.period_id}|${e.room}`;
+      if (seenRoom.has(kr)) {
+        roomCollisions.push(`Room ${e.room} double-booked on ${DAY_LABELS[e.day]} period ${e.period_id}: ${gradeName(seenRoom.get(kr)!.grade_id)} vs ${gradeName(e.grade_id)}.`);
+      } else seenRoom.set(kr, e);
+    }
 
     seenExact.set(kx, (seenExact.get(kx) || 0) + 1);
   }

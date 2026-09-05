@@ -357,6 +357,25 @@ export interface GenerateOptions {
   gradeName?: (id: number) => string;
   teacherName?: (id: string) => string;
   subjectName?: (id: number) => string;
+  /** Grades this afternoon-rotation rule applies to (e.g. Grade 9). Left
+   * unset, the rule is a no-op — no behavior changes for schools/grades
+   * that don't opt in. */
+  rotationGradeIds?: Set<number>;
+  /** Subjects (practical/technical/humanities, etc.) the rotation rule
+   * applies to, within rotationGradeIds. */
+  rotationSubjectIds?: Set<number>;
+  /** Optional further restriction to specific teachers (e.g. by initials)
+   * within rotationGradeIds/rotationSubjectIds. Omit to apply the rule to
+   * every teacher who falls into that grade+subject scope — recommended,
+   * since restricting by name is fragile as staff change. */
+  rotationTeacherIds?: Set<string>;
+  /** Clock time (HH:MM:SS) marking the start of "afternoon" for the
+   * rotation rule. Defaults to 14:00:00. */
+  afternoonStartTime?: string;
+  /** Subjects that represent a free/self-study period. When set, these
+   * are steered away from the first two lesson periods of the day and
+   * toward mid-morning (preferred) or afternoon slots. */
+  freePeriodSubjectIds?: Set<number>;
 }
 
 export interface GenerationResult {
@@ -380,7 +399,10 @@ const TIME_BUDGET_PER_ATTEMPT_MS = 4_000;
 const TOTAL_TIME_BUDGET_MS = 25_000;
 const STRICT_ATTEMPTS = 4;
 const RELAXED_ATTEMPTS = 3;
-const OPTIMIZE_ITERATIONS = 200;
+const OPTIMIZE_ITERATIONS = 260;
+// How many of each day's lesson periods (from the start of the day)
+// count as "early morning" for the free-period placement rule.
+const EARLY_MORNING_PERIOD_COUNT = 2;
 
 function tick(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, 0));
@@ -413,7 +435,10 @@ export async function generateTimetable(
   workingDays: Day[],
   options: GenerateOptions = {},
 ): Promise<GenerationResult> {
-  const { onProgress, prioritySubjectIds, maxLessonsPerDayPerTeacher = null, gradeName, teacherName, subjectName } = options;
+  const {
+    onProgress, prioritySubjectIds, maxLessonsPerDayPerTeacher = null, gradeName, teacherName, subjectName,
+    rotationGradeIds, rotationSubjectIds, rotationTeacherIds, afternoonStartTime = '14:00:00', freePeriodSubjectIds,
+  } = options;
 
   onProgress?.({ phase: 'validating', message: 'Running pre-generation checks…' });
   await tick();
@@ -454,15 +479,33 @@ export async function generateTimetable(
 
   const singleSlots: CandidateSlot[] = [];
   const doubleSlots: CandidateSlot[] = [];
+  // Day-aware slot classification for the Grade-9 afternoon-rotation and
+  // free-period-placement rules — keyed by `${day}|${periodId}` rather
+  // than period id alone, since a day-specific override row can give a
+  // day its own distinct period ids with a different start_time.
+  const afternoonSlotKeys = new Set<string>();
+  const earlyMorningSlotKeys = new Set<string>();
   for (const day of workingDays) {
     const dayPeriods = periodsForDay(periods, day).filter(p => p.period_type === 'lesson').sort((a, b) => a.period_index - b.period_index);
-    dayPeriods.forEach(p => singleSlots.push({ day, periodIds: [p.id], morning: isMorningPeriod(p) }));
+    dayPeriods.forEach((p, idx) => {
+      singleSlots.push({ day, periodIds: [p.id], morning: isMorningPeriod(p) });
+      if (p.start_time >= afternoonStartTime) afternoonSlotKeys.add(`${day}|${p.id}`);
+      if (idx < EARLY_MORNING_PERIOD_COUNT) earlyMorningSlotKeys.add(`${day}|${p.id}`);
+    });
     for (let i = 0; i < dayPeriods.length - 1; i++) {
       if (dayPeriods[i + 1].period_index === dayPeriods[i].period_index + 1) {
         doubleSlots.push({ day, periodIds: [dayPeriods[i].id, dayPeriods[i + 1].id], morning: isMorningPeriod(dayPeriods[i]) });
       }
     }
   }
+
+  const rotationActive = !!(rotationGradeIds && rotationGradeIds.size && rotationSubjectIds && rotationSubjectIds.size);
+  const freePeriodActive = !!(freePeriodSubjectIds && freePeriodSubjectIds.size);
+  const isRotationRequirement = (r: Requirement) =>
+    rotationActive && rotationGradeIds!.has(r.grade_id) && rotationSubjectIds!.has(r.subject_id)
+    && (!rotationTeacherIds || rotationTeacherIds.size === 0 || rotationTeacherIds.has(r.teacher_id));
+  const slotIsAfternoon = (slot: CandidateSlot) => slot.periodIds.some(pid => afternoonSlotKeys.has(`${slot.day}|${pid}`));
+  const slotIsEarlyMorning = (slot: CandidateSlot) => slot.periodIds.some(pid => earlyMorningSlotKeys.has(`${slot.day}|${pid}`));
 
   // ── Static heuristics (conflict graph, MRV tie-breaks) ────────────
   // "Two lessons conflict when they share the same class or teacher" —
@@ -510,6 +553,10 @@ export async function generateTimetable(
     // unrequested double period, and spreads a subject across the week.
     const subjectDayBusy = new Set<string>(); // `${day}|${grade_id}|${subject_id}`
     const teacherDayCount = new Map<string, number>(); // `${day}|${teacher_id}` -> periods that day
+    // Grade-9 afternoon-rotation tracking (see isRotationRequirement) -
+    // purely an ordering preference, never a hard filter, so it only
+    // feeds orderByLCV's tie-break, not slotValid().
+    const teacherAfternoonDayCount = new Map<string, number>(); // `${teacher_id}|${day}` -> afternoon rotation lessons that day
 
     const unassigned = new Set<number>(tasks.map(t => t.id));
     const placedEntries: Entry[] = [];
@@ -538,6 +585,8 @@ export async function generateTimetable(
       subjectDayKey: string | null;
       teacherDayKey: string;
       prevTeacherDayCount: number;
+      rotationDayKey: string | null;
+      prevRotationDayCount: number;
     }
 
     function applyAssignment(task: Task, slot: CandidateSlot): ApplyResult {
@@ -560,6 +609,14 @@ export async function generateTimetable(
       const teacherDayKey = `${slot.day}|${teacher_id}`;
       const prevTeacherDayCount = teacherDayCount.get(teacherDayKey) || 0;
       teacherDayCount.set(teacherDayKey, prevTeacherDayCount + slot.periodIds.length);
+
+      let rotationDayKey: string | null = null;
+      let prevRotationDayCount = 0;
+      if (isRotationRequirement(task.requirement) && slotIsAfternoon(slot)) {
+        rotationDayKey = `${teacher_id}|${slot.day}`;
+        prevRotationDayCount = teacherAfternoonDayCount.get(rotationDayKey) || 0;
+        teacherAfternoonDayCount.set(rotationDayKey, prevRotationDayCount + 1);
+      }
 
       // Forward checking: prune every other unscheduled lesson that
       // shares this teacher or this class. If any of them is left with
@@ -586,7 +643,7 @@ export async function generateTimetable(
         if (kept.length === 0) { ok = false; break; }
       }
 
-      return { ok, entries, removals, subjectDayKey, teacherDayKey, prevTeacherDayCount };
+      return { ok, entries, removals, subjectDayKey, teacherDayKey, prevTeacherDayCount, rotationDayKey, prevRotationDayCount };
     }
 
     function revertAssignment(task: Task, slot: CandidateSlot, applied: ApplyResult) {
@@ -597,6 +654,7 @@ export async function generateTimetable(
       }
       if (applied.subjectDayKey) subjectDayBusy.delete(applied.subjectDayKey);
       teacherDayCount.set(applied.teacherDayKey, applied.prevTeacherDayCount);
+      if (applied.rotationDayKey) teacherAfternoonDayCount.set(applied.rotationDayKey, applied.prevRotationDayCount);
       for (const r of applied.removals) domains.get(r.taskId)!.push(r.slot);
     }
 
@@ -652,6 +710,17 @@ export async function generateTimetable(
       // equally-constraining candidates.
       const isPriority = prioritySubjectIds?.has(task.requirement.subject_id) ?? false;
 
+      // Grade-9 (or whichever grades are configured) afternoon-rotation:
+      // among otherwise-equal candidates, avoid giving this teacher an
+      // afternoon rotation slot on a day they already have one — nudges
+      // the search toward spreading these lessons across the week
+      // instead of clustering them on the same days every time.
+      const taskIsRotation = isRotationRequirement(task.requirement);
+
+      // Free/self-study periods: steered away from the first two lesson
+      // periods of the day, preferring mid-morning, then afternoon.
+      const taskIsFreePeriod = freePeriodActive && freePeriodSubjectIds!.has(task.requirement.subject_id);
+
       const withCost = shuffled.map(slot => {
         let costVal = 0;
         for (const keySet of neighborKeySets) {
@@ -660,9 +729,28 @@ export async function generateTimetable(
           }
         }
         const morningMismatch = isPriority ? (slot.morning ? 0 : 1) : (slot.morning ? 1 : 0);
-        return { slot, costVal, morningMismatch };
+
+        let rotationPenalty = 0;
+        if (taskIsRotation && slotIsAfternoon(slot)) {
+          const key = `${task.requirement.teacher_id}|${slot.day}`;
+          rotationPenalty = (teacherAfternoonDayCount.get(key) || 0) > 0 ? 1 : 0;
+        }
+
+        let freePeriodPenalty = 0;
+        if (taskIsFreePeriod) {
+          if (slotIsEarlyMorning(slot)) freePeriodPenalty = 2;
+          else if (slotIsAfternoon(slot)) freePeriodPenalty = 1;
+          // else mid-morning: 0, preferred
+        }
+
+        return { slot, costVal, morningMismatch, rotationPenalty, freePeriodPenalty };
       });
-      withCost.sort((a, b) => (a.costVal - b.costVal) || (a.morningMismatch - b.morningMismatch));
+      withCost.sort((a, b) =>
+        (a.costVal - b.costVal)
+        || (a.morningMismatch - b.morningMismatch)
+        || (a.rotationPenalty - b.rotationPenalty)
+        || (a.freePeriodPenalty - b.freePeriodPenalty)
+      );
       return withCost.map(w => w.slot);
     }
 
@@ -744,7 +832,14 @@ export async function generateTimetable(
   await tick();
 
   onProgress?.({ phase: 'optimizing', message: 'Optimizing timetable…' });
-  const optimized = localOptimize(best.entries, periods, maxLessonsPerDayPerTeacher);
+  const optimized = localOptimize(best.entries, periods, workingDays, maxLessonsPerDayPerTeacher, {
+    rotationGradeIds: rotationActive ? rotationGradeIds : undefined,
+    rotationSubjectIds: rotationActive ? rotationSubjectIds : undefined,
+    rotationTeacherIds,
+    afternoonSlotKeys,
+    earlyMorningSlotKeys,
+    freePeriodSubjectIds: freePeriodActive ? freePeriodSubjectIds : undefined,
+  });
   await tick();
 
   onProgress?.({ phase: 'validating-result', message: 'Validating timetable…' });
@@ -816,62 +911,6 @@ function summarizeShortfall(
   }
   lines.push('Recommended actions: add more teaching periods, increase teacher availability, reassign some subjects, or adjust lesson requirements.');
   return lines;
-}
-
-/** Bounded local search that runs once a hard-constraint-valid timetable
- * has already been found. Swaps pairs of single-period lessons only when
- * the swap (a) keeps every hard constraint satisfied and (b) strictly
- * reduces a soft-preference cost (same-subject-same-day repeats, a
- * teacher's daily lesson cap). Never touches double periods, and any
- * swap that doesn't verifiably improve things is rolled back — this can
- * only make a valid timetable nicer, never invalid. */
-function localOptimize(entries: Entry[], periods: Period[], maxLessonsPerDayPerTeacher: number | null): Entry[] {
-  const result = entries.map(e => ({ ...e }));
-  const singles = result.filter(e => !e.is_double_period);
-  if (singles.length < 2) return result;
-
-  const lessonPeriodIds = new Set(periods.filter(p => p.period_type === 'lesson').map(p => p.id));
-  const classKey = (e: Entry) => `${e.day}|${e.period_id}|${e.grade_id}`;
-  const teacherKey = (e: Entry) => `${e.day}|${e.period_id}|${e.teacher_id}`;
-
-  function cost(): number {
-    let c = 0;
-    const byClassDay = new Map<string, Map<number, number>>();
-    const byTeacherDay = new Map<string, number>();
-    for (const e of result) {
-      const cdKey = `${e.grade_id}|${e.day}`;
-      if (!byClassDay.has(cdKey)) byClassDay.set(cdKey, new Map());
-      const subjMap = byClassDay.get(cdKey)!;
-      subjMap.set(e.subject_id, (subjMap.get(e.subject_id) || 0) + 1);
-      const tdKey = `${e.teacher_id}|${e.day}`;
-      byTeacherDay.set(tdKey, (byTeacherDay.get(tdKey) || 0) + 1);
-    }
-    byClassDay.forEach(subjMap => subjMap.forEach(count => { if (count > 1) c += (count - 1) * 3; }));
-    if (maxLessonsPerDayPerTeacher) {
-      byTeacherDay.forEach(count => { if (count > maxLessonsPerDayPerTeacher) c += (count - maxLessonsPerDayPerTeacher) * 5; });
-    }
-    return c;
-  }
-
-  let currentCost = cost();
-  if (currentCost === 0) return result;
-
-  const classBusy = new Set(result.map(classKey));
-  const teacherBusy = new Set(result.map(teacherKey));
-
-  for (let iter = 0; iter < OPTIMIZE_ITERATIONS && currentCost > 0; iter++) {
-    const i = Math.floor(Math.random() * singles.length);
-    const j = Math.floor(Math.random() * singles.length);
-    if (i === j) continue;
-    const a = singles[i], b = singles[j];
-    if (a.day === b.day && a.period_id === b.period_id) continue;
-    if (!lessonPeriodIds.has(a.period_id) || !lessonPeriodIds.has(b.period_id)) continue;
-
-    const aOrig = { day: a.day, period_id: a.period_id };
-    const bOrig = { day: b.day, period_id: b.period_id };
-
-    classBusy.delete(classKey(a)); classBusy.delete(classKey(b));
-    teacherBusy.delete(teacherKey(a)); teacherBusy.delete(teacherKey(b));
 
     a.day = bOrig.day; a.period_id = bOrig.period_id;
     b.day = aOrig.day; b.period_id = aOrig.period_id;
@@ -984,3 +1023,4 @@ export function validateTimetable(
       && duplicates.length === 0 && missingLessons.length === 0 && unassignedRequirements.length === 0,
   };
 }
+

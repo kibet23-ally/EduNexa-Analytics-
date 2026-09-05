@@ -133,7 +133,7 @@ const Timetable = () => {
       )}
       {tab === 'Generate' && (
         <GenerateTab year={year} term={term} requirements={requirements} periods={periods} workingDays={workingDays}
-          gradeName={gradeName} subjectName={subjectName} teacherName={teacherName} existingCount={entries.length} schoolId={user?.school_id} subjects={subjects}
+          gradeName={gradeName} subjectName={subjectName} teacherName={teacherName} existingCount={entries.length} schoolId={user?.school_id} subjects={subjects} grades={grades}
           maxLessonsPerDayPerTeacher={settings?.max_lessons_per_day_per_teacher ?? null} />
       )}
       {tab === 'Master Timetable' && (
@@ -504,9 +504,9 @@ const RequirementRow: React.FC<{ r: TeacherAssignment; teacherName: string; subj
 /* ═══════════════════════════ Generate ═══════════════════════════ */
 const GenerateTab: React.FC<{
   year: number; term: number; requirements: Requirement[]; periods: Period[]; workingDays: Day[];
-  gradeName: (id: number) => string; subjectName: (id: number) => string; teacherName: (id: string) => string; existingCount: number; schoolId?: number; subjects: Subject[];
+  gradeName: (id: number) => string; subjectName: (id: number) => string; teacherName: (id: string) => string; existingCount: number; schoolId?: number; subjects: Subject[]; grades: Grade[];
   maxLessonsPerDayPerTeacher: number | null;
-}> = ({ year, term, requirements, periods, workingDays, gradeName, subjectName, teacherName, existingCount, schoolId, subjects, maxLessonsPerDayPerTeacher }) => {
+}> = ({ year, term, requirements, periods, workingDays, gradeName, subjectName, teacherName, existingCount, schoolId, subjects, grades, maxLessonsPerDayPerTeacher }) => {
   const entriesMutation = useDataMutation('timetable_entries');
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<ProgressUpdate | null>(null);
@@ -529,6 +529,33 @@ const GenerateTab: React.FC<{
     subjects.filter(s => PRIORITY_KEYWORDS.some(k => s.subject_name.toLowerCase().includes(k))).map(s => s.id)
   );
 
+  // Grade-9 afternoon teacher-rotation: practical/technical/humanities
+  // subjects for Grade 9 get spread across different afternoon days
+  // instead of clustering on the same teacher/day pattern every week.
+  // Matched by grade name and subject-name keywords (not hardcoded ids
+  // or teacher initials) so this keeps working as staff and subjects
+  // change — it applies to whichever teacher ends up holding one of
+  // these Grade 9 afternoon slots, not just today's specific staff.
+  const ROTATION_SUBJECT_KEYWORDS = [
+    // practical / technical
+    'computer', 'ict', 'agriculture', 'home science', 'woodwork', 'metalwork', 'wood work', 'metal work',
+    'pre-technical', 'pretechnical', 'technical', 'art', 'design', 'music', 'physical education', ' pe ',
+    // humanities
+    'history', 'geography', 'cre', 'ire', 'hre', 'social studies', 'life skills', 'citizenship',
+  ];
+  const rotationGradeIds = new Set(
+    grades.filter(g => /\bgrade\s*9\b/i.test(g.grade_name)).map(g => g.id)
+  );
+  const rotationSubjectIds = new Set(
+    subjects.filter(s => ROTATION_SUBJECT_KEYWORDS.some(k => ` ${s.subject_name.toLowerCase()} `.includes(k))).map(s => s.id)
+  );
+
+  // Free/self-study periods: kept out of the first two lesson periods of
+  // the day, preferring mid-morning, then afternoon.
+  const freePeriodSubjectIds = new Set(
+    subjects.filter(s => /free period|self.?study|private study|study period|study time|prep(aration)? period/i.test(s.subject_name)).map(s => s.id)
+  );
+
   const runPrecheck = () => {
     setPrecheck(checkFeasibility(requirements, periods, workingDays, { maxLessonsPerDayPerTeacher, gradeName, teacherName, subjectName }));
   };
@@ -544,6 +571,7 @@ const GenerateTab: React.FC<{
 
     const res = await generateTimetable(requirements, periods, workingDays, {
       prioritySubjectIds, maxLessonsPerDayPerTeacher, gradeName, teacherName, subjectName,
+      rotationGradeIds, rotationSubjectIds, freePeriodSubjectIds,
       onProgress: setProgress,
     });
     setResult(res);
@@ -553,6 +581,7 @@ const GenerateTab: React.FC<{
     if (!res.success) {
       toast.error('Unable to generate a conflict-free timetable — see details below.');
       return;
+
     }
 
     try {

@@ -911,6 +911,134 @@ function summarizeShortfall(
   }
   lines.push('Recommended actions: add more teaching periods, increase teacher availability, reassign some subjects, or adjust lesson requirements.');
   return lines;
+}
+
+/** Bounded local search that runs once a hard-constraint-valid timetable
+ * has already been found. Swaps pairs of single-period lessons only when
+ * the swap (a) keeps every hard constraint satisfied and (b) strictly
+ * reduces a soft-preference cost (same-subject-same-day repeats, a
+ * teacher's daily lesson cap, Grade-9 afternoon-teacher clustering,
+ * free-period placement). Never touches double periods, and any swap
+ * that doesn't verifiably improve things is rolled back — this can only
+ * make a valid timetable nicer, never invalid. */
+interface LocalOptimizeOptions {
+  rotationGradeIds?: Set<number>;
+  rotationSubjectIds?: Set<number>;
+  rotationTeacherIds?: Set<string>;
+  afternoonSlotKeys?: Set<string>;
+  earlyMorningSlotKeys?: Set<string>;
+  freePeriodSubjectIds?: Set<number>;
+}
+
+function localOptimize(
+  entries: Entry[],
+  periods: Period[],
+  workingDays: Day[],
+  maxLessonsPerDayPerTeacher: number | null,
+  opts: LocalOptimizeOptions = {},
+): Entry[] {
+  const result = entries.map(e => ({ ...e }));
+  const singles = result.filter(e => !e.is_double_period);
+  if (singles.length < 2) return result;
+
+  const lessonPeriodIds = new Set(periods.filter(p => p.period_type === 'lesson').map(p => p.id));
+  const classKey = (e: Entry) => `${e.day}|${e.period_id}|${e.grade_id}`;
+  const teacherKey = (e: Entry) => `${e.day}|${e.period_id}|${e.teacher_id}`;
+
+  const { rotationGradeIds, rotationSubjectIds, rotationTeacherIds, afternoonSlotKeys, earlyMorningSlotKeys, freePeriodSubjectIds } = opts;
+  const rotationActive = !!(rotationGradeIds?.size && rotationSubjectIds?.size && afternoonSlotKeys);
+  const isRotationEntry = (e: Entry) =>
+    rotationActive && rotationGradeIds!.has(e.grade_id) && rotationSubjectIds!.has(e.subject_id)
+    && (!rotationTeacherIds || rotationTeacherIds.size === 0 || rotationTeacherIds.has(e.teacher_id));
+  const freePeriodActive = !!(freePeriodSubjectIds?.size && earlyMorningSlotKeys && afternoonSlotKeys);
+
+  function cost(): number {
+    let c = 0;
+    const byClassDay = new Map<string, Map<number, number>>();
+    const byTeacherDay = new Map<string, number>();
+    for (const e of result) {
+      const cdKey = `${e.grade_id}|${e.day}`;
+      if (!byClassDay.has(cdKey)) byClassDay.set(cdKey, new Map());
+      const subjMap = byClassDay.get(cdKey)!;
+      subjMap.set(e.subject_id, (subjMap.get(e.subject_id) || 0) + 1);
+      const tdKey = `${e.teacher_id}|${e.day}`;
+      byTeacherDay.set(tdKey, (byTeacherDay.get(tdKey) || 0) + 1);
+    }
+    byClassDay.forEach(subjMap => subjMap.forEach(count => { if (count > 1) c += (count - 1) * 3; }));
+    if (maxLessonsPerDayPerTeacher) {
+      byTeacherDay.forEach(count => { if (count > maxLessonsPerDayPerTeacher) c += (count - maxLessonsPerDayPerTeacher) * 5; });
+    }
+
+    // Grade-9 (or configured) afternoon-rotation: penalize a teacher
+    // getting more than one afternoon rotation lesson on the same day
+    // (locked into a static afternoon slot / same-day repeat), and
+    // penalize their afternoon lessons landing on fewer distinct days
+    // than they could (clustering instead of rotating across the week).
+    if (rotationActive) {
+      const byTeacherDayCount = new Map<string, number>();
+      const byTeacherTotal = new Map<string, number>();
+      const byTeacherDays = new Map<string, Set<Day>>();
+      for (const e of result) {
+        if (!isRotationEntry(e)) continue;
+        if (!afternoonSlotKeys!.has(`${e.day}|${e.period_id}`)) continue;
+        const dayKey = `${e.teacher_id}|${e.day}`;
+        byTeacherDayCount.set(dayKey, (byTeacherDayCount.get(dayKey) || 0) + 1);
+        byTeacherTotal.set(e.teacher_id, (byTeacherTotal.get(e.teacher_id) || 0) + 1);
+        if (!byTeacherDays.has(e.teacher_id)) byTeacherDays.set(e.teacher_id, new Set());
+        byTeacherDays.get(e.teacher_id)!.add(e.day);
+      }
+      byTeacherDayCount.forEach(count => { if (count > 1) c += (count - 1) * 4; });
+      byTeacherTotal.forEach((total, teacherId) => {
+        const idealDays = Math.min(total, workingDays.length);
+        const actualDays = byTeacherDays.get(teacherId)?.size ?? 0;
+        if (actualDays < idealDays) c += (idealDays - actualDays) * 3;
+      });
+    }
+
+    // Free/self-study periods: penalize early-morning placement heavily,
+    // mildly prefer mid-morning over afternoon.
+    if (freePeriodActive) {
+      for (const e of result) {
+        if (!freePeriodSubjectIds!.has(e.subject_id)) continue;
+        const key = `${e.day}|${e.period_id}`;
+        if (earlyMorningSlotKeys!.has(key)) c += 6;
+        else if (afternoonSlotKeys!.has(key)) c += 1;
+      }
+    }
+
+    return c;
+  }
+
+  let currentCost = cost();
+  if (currentCost === 0) return result;
+
+  const classBusy = new Set(result.map(classKey));
+  const teacherBusy = new Set(result.map(teacherKey));
+
+  // Bias random pair selection toward entries the two special rules
+  // above actually care about, so the bounded iteration budget isn't
+  // mostly spent on swaps that can never move the needle.
+  const priorityIndices: number[] = [];
+  singles.forEach((e, idx) => {
+    if (isRotationEntry(e) || (freePeriodActive && freePeriodSubjectIds!.has(e.subject_id))) priorityIndices.push(idx);
+  });
+  const pickIndex = () => (priorityIndices.length > 0 && Math.random() < 0.65)
+    ? priorityIndices[Math.floor(Math.random() * priorityIndices.length)]
+    : Math.floor(Math.random() * singles.length);
+
+  for (let iter = 0; iter < OPTIMIZE_ITERATIONS && currentCost > 0; iter++) {
+    const i = pickIndex();
+    const j = Math.floor(Math.random() * singles.length);
+    if (i === j) continue;
+    const a = singles[i], b = singles[j];
+    if (a.day === b.day && a.period_id === b.period_id) continue;
+    if (!lessonPeriodIds.has(a.period_id) || !lessonPeriodIds.has(b.period_id)) continue;
+
+    const aOrig = { day: a.day, period_id: a.period_id };
+    const bOrig = { day: b.day, period_id: b.period_id };
+
+    classBusy.delete(classKey(a)); classBusy.delete(classKey(b));
+    teacherBusy.delete(teacherKey(a)); teacherBusy.delete(teacherKey(b));
 
     a.day = bOrig.day; a.period_id = bOrig.period_id;
     b.day = aOrig.day; b.period_id = aOrig.period_id;

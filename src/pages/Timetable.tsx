@@ -515,18 +515,21 @@ const GenerateTab: React.FC<{
   const [saved, setSaved] = useState(false);
   const [precheck, setPrecheck] = useState<FeasibilityReport | null>(null);
 
-  // Languages, Mathematics, and Science get first claim on morning/mid-
-  // morning lesson slots (see generateTimetable's ordering logic) - a soft
-  // preference, matched by keyword against each subject's actual name
-  // rather than hardcoded IDs, so it keeps working as subjects are added
-  // or renamed.
-  const PRIORITY_KEYWORDS = [
+  // No subject is permanently "morning" or "afternoon" — see
+  // generateTimetable's self-balancing day-part logic. Mathematics,
+  // English, and Integrated Science (and a few related subjects) get a
+  // soft *lean* toward morning slots that self-corrects once enough of
+  // their weekly lessons have landed there, so they still show up in
+  // the afternoon too. Matched by keyword against each subject's actual
+  // name rather than hardcoded IDs, so it keeps working as subjects are
+  // added or renamed.
+  const DEMANDING_KEYWORDS = [
     'english', 'kiswahili', 'kizungu', 'french', 'german', 'arabic', 'language', 'literature',
     'math',
-    'science', 'biology', 'chemistry', 'physics',
+    'science', 'integrated science', 'biology', 'chemistry', 'physics',
   ];
-  const prioritySubjectIds = new Set(
-    subjects.filter(s => PRIORITY_KEYWORDS.some(k => s.subject_name.toLowerCase().includes(k))).map(s => s.id)
+  const demandingSubjectIds = new Set(
+    subjects.filter(s => DEMANDING_KEYWORDS.some(k => s.subject_name.toLowerCase().includes(k))).map(s => s.id)
   );
 
   // Grade-9 afternoon teacher-rotation: practical/technical/humanities
@@ -570,7 +573,7 @@ const GenerateTab: React.FC<{
     setProgress({ phase: 'validating', message: 'Running pre-generation checks…' });
 
     const res = await generateTimetable(requirements, periods, workingDays, {
-      prioritySubjectIds, maxLessonsPerDayPerTeacher, gradeName, teacherName, subjectName,
+      demandingSubjectIds, maxLessonsPerDayPerTeacher, gradeName, teacherName, subjectName,
       rotationGradeIds, rotationSubjectIds, freePeriodSubjectIds,
       onProgress: setProgress,
     });
@@ -675,6 +678,38 @@ const GenerateTab: React.FC<{
       {result && result.success && saved && (
         <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 flex items-center gap-2 text-emerald-700 dark:text-emerald-300 text-sm font-bold">
           <CheckCircle2 size={16} /> Timetable generated and saved — {result.entries.length} entries, zero collisions.
+        </div>
+      )}
+      {result && result.success && result.scoreBreakdown && (
+        <div className={cardCls + ' p-5 space-y-3'}>
+          <div className="flex items-center justify-between">
+            <div className="font-bold text-sm text-slate-900 dark:text-white">Timetable Quality</div>
+            <div className="text-2xl font-black text-blue-600">{result.scoreBreakdown.total}<span className="text-xs text-slate-400 font-normal">/100</span></div>
+          </div>
+          <ul className="space-y-1.5 text-xs">
+            <li className="flex items-center gap-2 text-emerald-600 font-semibold">
+              <CheckCircle2 size={14} /> Conflict-free
+            </li>
+            {[
+              ['Morning/Afternoon balance', result.scoreBreakdown.morningAfternoonBalance],
+              ['Subject distribution', result.scoreBreakdown.subjectDistribution],
+              ['Teacher workload balance', result.scoreBreakdown.teacherWorkloadBalance],
+              ['Free-period distribution', result.scoreBreakdown.freePeriodPlacement],
+            ].map(([label, score]) => (
+              <li key={label as string} className="flex items-center gap-2">
+                {(score as number) >= 70
+                  ? <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
+                  : <AlertTriangle size={14} className="text-amber-500 shrink-0" />}
+                <span className="text-slate-600 dark:text-slate-300">{label}</span>
+                <span className="ml-auto font-bold text-slate-500">{score}/100</span>
+              </li>
+            ))}
+          </ul>
+          {result.scoreBreakdown.notes.length > 0 && (
+            <ul className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1 text-xs text-slate-400">
+              {result.scoreBreakdown.notes.map((n, i) => <li key={i}>• {n}</li>)}
+            </ul>
+          )}
         </div>
       )}
     </div>

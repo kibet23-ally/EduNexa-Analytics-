@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './AuthContext';
 import { useAuth } from './useAuth';
+import { normalizeRole, ROLES } from './lib/roles';
 import { Skeleton } from './components/ui/Skeleton';
 import Sidebar from './components/Sidebar';
 import GlobalHeader from './components/GlobalHeader';
@@ -32,6 +33,7 @@ const OrderForm          = lazy(() => import('./pages/OrderForm'));
 const Schools            = lazy(() => import('./pages/Schools'));
 const SuperAdminDashboard = lazy(() => import('./pages/SuperAdminDashboard'));
 const SuperAdminAnalytics = lazy(() => import('./pages/SuperAdminAnalytics'));
+const AuditLogs = lazy(() => import('./pages/AuditLogs'));
 const GlobalUsers        = lazy(() => import('./pages/GlobalUsers'));
 const Subscriptions      = lazy(() => import('./pages/Subscription'));
 const SchoolSubscription = lazy(() => import('./pages/SchoolSubscription'));
@@ -115,20 +117,19 @@ const RoleProtectedRoute: React.FC<{
     return <Navigate to="/login" replace />;
   }
 
-  // Check role
-  const normalize = (r: string) =>
-    r.toLowerCase().replace(/_/g, '').replace('school', '');
+  // Check role — normalizeRole() is the single canonical mapping (see
+  // src/lib/roles.ts) so every route here and the DB's role checks agree
+  // on what these values mean. This gate is visibility only; the real
+  // authorization boundary is Supabase RLS.
+  const normalizedUserRole = normalizeRole(user.role);
+  const normalizedAllowedRoles = allowedRoles.map(normalizeRole);
 
-  const normalizedUserRole    = normalize(user.role);
-  const normalizedAllowedRoles = allowedRoles.map(normalize);
-
-  if (!normalizedAllowedRoles.includes(normalizedUserRole)) {
+  if (!normalizedUserRole || !normalizedAllowedRoles.includes(normalizedUserRole)) {
     console.log('[Route] Role mismatch:', user.role, '→ redirecting');
     // Redirect to correct dashboard based on role
-    const r = user.role?.toLowerCase();
-    if (r === 'teacher')      return <Navigate to="/teacher"      replace />;
-    if (r === 'school_admin') return <Navigate to="/school-admin" replace />;
-    if (r === 'super_admin')  return <Navigate to="/super-admin"  replace />;
+    if (normalizedUserRole === ROLES.TEACHER)      return <Navigate to="/teacher"      replace />;
+    if (normalizedUserRole === ROLES.SCHOOL_ADMIN) return <Navigate to="/school-admin" replace />;
+    if (normalizedUserRole === ROLES.SUPER_ADMIN)  return <Navigate to="/super-admin"  replace />;
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -180,7 +181,7 @@ const AppRoutes = () => {
       <Route path="/register"        element={<Suspense fallback={<AuthLoadingScreen />}><Register /></Suspense>} />
       <Route path="/awaiting-approval" element={<Suspense fallback={<AuthLoadingScreen />}><AwaitingApproval /></Suspense>} />
       <Route path="/order"           element={<Suspense fallback={<AuthLoadingScreen />}><OrderForm /></Suspense>} />
-      <Route path="/status"          element={<RoleProtectedRoute allowedRoles={['SuperAdmin','super_admin']}><Suspense fallback={<AuthLoadingScreen />}><SystemStatus /></Suspense></RoleProtectedRoute>} />
+      <Route path="/status"          element={<RoleProtectedRoute allowedRoles={[ROLES.SUPER_ADMIN]}><Suspense fallback={<AuthLoadingScreen />}><SystemStatus /></Suspense></RoleProtectedRoute>} />
       <Route path="/reset-password"  element={<Suspense fallback={<AuthLoadingScreen />}><ResetPassword /></Suspense>} />
       <Route path="/forgot-password" element={<Suspense fallback={<AuthLoadingScreen />}><ForgotPassword /></Suspense>} />
 
@@ -198,12 +199,12 @@ const AppRoutes = () => {
       <Route path="/exams"             element={<ProtectedRoute><Layout>{wrap(<Exams />, 'Exams')}</Layout></ProtectedRoute>} />
       <Route path="/marks"             element={<ProtectedRoute><Layout>{wrap(<MarksEntry />, 'Marks Entry')}</Layout></ProtectedRoute>} />
       <Route path="/attendance" element={
-        <RoleProtectedRoute allowedRoles={['Teacher','teacher','Admin','admin','school_admin','Principal','principal','SuperAdmin','super_admin']}>
+        <RoleProtectedRoute allowedRoles={[ROLES.TEACHER, ROLES.SCHOOL_ADMIN, ROLES.SUPER_ADMIN]}>
           <Layout>{wrap(<Attendance />, 'Attendance')}</Layout>
         </RoleProtectedRoute>
       } />
       <Route path="/attendance/report" element={
-        <RoleProtectedRoute allowedRoles={['Teacher','teacher','Admin','admin','school_admin','Principal','principal','SuperAdmin','super_admin']}>
+        <RoleProtectedRoute allowedRoles={[ROLES.TEACHER, ROLES.SCHOOL_ADMIN, ROLES.SUPER_ADMIN]}>
           <Layout>{wrap(<AttendanceReport />, 'Attendance Report')}</Layout>
         </RoleProtectedRoute>
       } />
@@ -211,7 +212,7 @@ const AppRoutes = () => {
       <Route path="/reports"           element={<ProtectedRoute><Layout>{wrap(<Reports />, 'Reports')}</Layout></ProtectedRoute>} />
       <Route path="/settings"          element={<ProtectedRoute><Layout>{wrap(<SettingsPage />, 'Settings')}</Layout></ProtectedRoute>} />
       <Route path="/settings/levels" element={
-  <RoleProtectedRoute allowedRoles={['Admin','admin','school_admin','Principal']}>
+  <RoleProtectedRoute allowedRoles={[ROLES.SCHOOL_ADMIN]}>
     <Layout>{wrap(<SchoolLevels />, 'School Levels')}</Layout>
   </RoleProtectedRoute>
 } />
@@ -219,46 +220,47 @@ const AppRoutes = () => {
 
       {/* ── Student Promotion ── */}
       <Route path="/promotion" element={
-        <RoleProtectedRoute allowedRoles={['Admin','admin','school_admin','Principal','SuperAdmin','super_admin']}>
+        <RoleProtectedRoute allowedRoles={[ROLES.SCHOOL_ADMIN, ROLES.SUPER_ADMIN]}>
           <Layout>{wrap(<StudentPromotion />, 'Student Promotion')}</Layout>
         </RoleProtectedRoute>
       } />
 
       {/* ── School Admin Only ── */}
       <Route path="/assignments" element={
-        <RoleProtectedRoute allowedRoles={['Admin','admin','school_admin','Principal']}>
+        <RoleProtectedRoute allowedRoles={[ROLES.SCHOOL_ADMIN]}>
           <Layout>{wrap(<TeacherAssignments />, 'Teacher Assignments')}</Layout>
         </RoleProtectedRoute>
       } />
       <Route path="/teachers" element={
-        <RoleProtectedRoute allowedRoles={['Admin','admin','school_admin','Principal','SuperAdmin','super_admin']}>
+        <RoleProtectedRoute allowedRoles={[ROLES.SCHOOL_ADMIN, ROLES.SUPER_ADMIN]}>
           <Layout>{wrap(<Teachers />, 'Teachers')}</Layout>
         </RoleProtectedRoute>
       } />
       <Route path="/subscription" element={
-        <RoleProtectedRoute allowedRoles={['Admin','admin','school_admin','Principal','SuperAdmin','super_admin']}>
+        <RoleProtectedRoute allowedRoles={[ROLES.SCHOOL_ADMIN, ROLES.SUPER_ADMIN]}>
           <Layout>{wrap(<Subscriptions />, 'Subscription')}</Layout>
         </RoleProtectedRoute>
       } />
       <Route path="/finance" element={
-        <RoleProtectedRoute allowedRoles={['Admin','admin','school_admin','Principal','Bursar','bursar','SuperAdmin','super_admin']}>
+        <RoleProtectedRoute allowedRoles={[ROLES.SCHOOL_ADMIN, ROLES.BURSAR, ROLES.SUPER_ADMIN]}>
           <Layout>{wrap(<Finance />, 'Finance')}</Layout>
         </RoleProtectedRoute>
       } />
       <Route path="/timetable" element={
-        <RoleProtectedRoute allowedRoles={['Admin','admin','school_admin','Principal','principal','SuperAdmin','super_admin','Timetabler','timetabler','Teacher','teacher']}>
+        <RoleProtectedRoute allowedRoles={[ROLES.SCHOOL_ADMIN, ROLES.SUPER_ADMIN, ROLES.TIMETABLER, ROLES.TEACHER]}>
           <Layout>{wrap(<Timetable />, 'Timetable')}</Layout>
         </RoleProtectedRoute>
       } />
 
       {/* ── Super Admin Routes ── */}
-      <Route path="/super-admin"         element={<RoleProtectedRoute allowedRoles={['SuperAdmin','super_admin']}><Layout>{wrap(<SuperAdminDashboard />, 'Super Admin Dashboard')}</Layout></RoleProtectedRoute>} />
-      <Route path="/super/dashboard"     element={<RoleProtectedRoute allowedRoles={['SuperAdmin','super_admin']}><Layout>{wrap(<SuperAdminDashboard />, 'Super Admin Dashboard')}</Layout></RoleProtectedRoute>} />
-      <Route path="/super/schools"       element={<RoleProtectedRoute allowedRoles={['SuperAdmin','super_admin']}><Layout>{wrap(<Schools />, 'Schools')}</Layout></RoleProtectedRoute>} />
-      <Route path="/super/users"         element={<RoleProtectedRoute allowedRoles={['SuperAdmin','super_admin']}><Layout>{wrap(<GlobalUsers />, 'Global Users')}</Layout></RoleProtectedRoute>} />
-      <Route path="/super/subscriptions" element={<RoleProtectedRoute allowedRoles={['SuperAdmin','super_admin']}><Layout>{wrap(<Subscriptions />, 'Subscriptions')}</Layout></RoleProtectedRoute>} />
-      <Route path="/super/analytics"     element={<RoleProtectedRoute allowedRoles={['SuperAdmin','super_admin']}><Layout>{wrap(<SuperAdminAnalytics />, 'Platform Analytics')}</Layout></RoleProtectedRoute>} />
-      <Route path="/super/settings"      element={<RoleProtectedRoute allowedRoles={['SuperAdmin','super_admin']}><Layout>{wrap(<SettingsPage />, 'Settings')}</Layout></RoleProtectedRoute>} />
+      <Route path="/super-admin"         element={<RoleProtectedRoute allowedRoles={[ROLES.SUPER_ADMIN]}><Layout>{wrap(<SuperAdminDashboard />, 'Super Admin Dashboard')}</Layout></RoleProtectedRoute>} />
+      <Route path="/super/dashboard"     element={<RoleProtectedRoute allowedRoles={[ROLES.SUPER_ADMIN]}><Layout>{wrap(<SuperAdminDashboard />, 'Super Admin Dashboard')}</Layout></RoleProtectedRoute>} />
+      <Route path="/super/schools"       element={<RoleProtectedRoute allowedRoles={[ROLES.SUPER_ADMIN]}><Layout>{wrap(<Schools />, 'Schools')}</Layout></RoleProtectedRoute>} />
+      <Route path="/super/users"         element={<RoleProtectedRoute allowedRoles={[ROLES.SUPER_ADMIN]}><Layout>{wrap(<GlobalUsers />, 'Global Users')}</Layout></RoleProtectedRoute>} />
+      <Route path="/super/subscriptions" element={<RoleProtectedRoute allowedRoles={[ROLES.SUPER_ADMIN]}><Layout>{wrap(<Subscriptions />, 'Subscriptions')}</Layout></RoleProtectedRoute>} />
+      <Route path="/super/analytics"     element={<RoleProtectedRoute allowedRoles={[ROLES.SUPER_ADMIN]}><Layout>{wrap(<SuperAdminAnalytics />, 'Platform Analytics')}</Layout></RoleProtectedRoute>} />
+      <Route path="/super/audit-logs"    element={<RoleProtectedRoute allowedRoles={[ROLES.SUPER_ADMIN]}><Layout>{wrap(<AuditLogs />, 'Audit Logs')}</Layout></RoleProtectedRoute>} />
+      <Route path="/super/settings"      element={<RoleProtectedRoute allowedRoles={[ROLES.SUPER_ADMIN]}><Layout>{wrap(<SettingsPage />, 'Settings')}</Layout></RoleProtectedRoute>} />
     </Routes>
   );
 };

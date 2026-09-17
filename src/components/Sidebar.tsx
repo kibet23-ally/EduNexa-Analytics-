@@ -21,6 +21,7 @@ import {
   CalendarDays,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { isSuperAdmin as checkIsSuperAdmin, isSchoolAdmin as checkIsSchoolAdmin } from '../lib/roles';
 import { motion, AnimatePresence } from 'motion/react';
 import { useLocation } from 'react-router-dom';
 
@@ -73,10 +74,11 @@ const Sidebar = () => {
     if (window.innerWidth < 768) setIsCollapsed(true);
   };
 
-  // Normalize role for checks
+  // Canonical role checks — see src/lib/roles.ts. This only controls
+  // which nav items render; real access is enforced by Supabase RLS.
   const rawRole = (user?.role || '').toLowerCase();
-  const isSuperAdminRole = rawRole === 'superadmin' || rawRole === 'super_admin' || rawRole.includes('super');
-  const isSchoolAdmin = rawRole === 'admin' || rawRole === 'school_admin' || rawRole === 'principal' || rawRole === 'schooladmin';
+  const isSuperAdminRole = checkIsSuperAdmin(user?.role);
+  const isSchoolAdmin = checkIsSchoolAdmin(user?.role);
   const isTeacher = rawRole === 'teacher';
   const isBursar = rawRole === 'bursar';
   const isTimetabler = rawRole === 'timetabler';
@@ -89,7 +91,8 @@ const Sidebar = () => {
     { to: '/super/analytics', icon: PieChart, label: 'Analytics' },
     { to: '/finance', icon: Wallet, label: 'Finance' },
     { to: '/timetable', icon: CalendarDays, label: 'Timetable' },
-    { to: '/status', icon: ClipboardList, label: 'Audit Logs' },
+    { to: '/super/audit-logs', icon: ClipboardList, label: 'Audit Logs' },
+    { to: '/status', icon: ClipboardList, label: 'System Status' },
     { to: '/super/settings', icon: Settings, label: 'Settings' },
   ];
 

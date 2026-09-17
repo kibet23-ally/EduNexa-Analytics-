@@ -6,6 +6,7 @@ import { User } from '../types';
 import { Navigate } from 'react-router-dom';
 import { Skeleton } from '../components/ui/Skeleton';
 import { supabase } from '../lib/supabase';
+import { isSuperAdmin as checkIsSuperAdmin, roleLabel } from '../lib/roles';
 
 const GlobalUsers = () => {
   const { user } = useAuth();
@@ -18,11 +19,7 @@ const GlobalUsers = () => {
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
-  const isSuperAdmin = useMemo(() => {
-    if (!user) return false;
-    const role = user.role.toLowerCase();
-    return role === 'superadmin' || role === 'super_admin' || role.includes('super');
-  }, [user]);
+  const isSuperAdmin = useMemo(() => checkIsSuperAdmin(user?.role), [user]);
 
   const { data: users, isLoading } = useData<User>('global-users-list', 'teachers', {
     select: '*, schools:school_id(name)'
@@ -141,12 +138,12 @@ const GlobalUsers = () => {
                   </td>
                   <td className="px-8 py-5">
                     <span className={`px-3 py-1 rounded-full text-xs font-bold inline-flex items-center gap-1.5 ${
-                      u.role === 'SuperAdmin' ? 'bg-purple-50 text-purple-600' :
-                      u.role === 'Admin' ? 'bg-blue-50 text-blue-600' : 'bg-slate-50 text-slate-600'
+                      checkIsSuperAdmin(u.role) ? 'bg-purple-50 text-purple-600' :
+                      u.role?.toLowerCase().includes('admin') ? 'bg-blue-50 text-blue-600' : 'bg-slate-50 text-slate-600'
                     }`}>
-                      {u.role === 'SuperAdmin' ? <Shield size={12} /> :
-                       u.role === 'Admin' ? <GraduationCap size={12} /> : <Users2 size={12} />}
-                      {u.role === 'SuperAdmin' ? 'Super Admin' : (u.role === 'Admin' ? 'Admin' : 'Teacher')}
+                      {checkIsSuperAdmin(u.role) ? <Shield size={12} /> :
+                       u.role?.toLowerCase().includes('admin') ? <GraduationCap size={12} /> : <Users2 size={12} />}
+                      {roleLabel(u.role)}
                     </span>
                   </td>
                   <td className="px-8 py-5">

@@ -3,6 +3,7 @@ import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchWithProxy, writeWithProxy } from '../lib/fetchProxy';
 import { useAuth } from '../useAuth';
+import { isSuperAdmin as checkIsSuperAdmin } from '../lib/roles';
 
 type QueryOptions = {
   select?: string;
@@ -23,8 +24,12 @@ export function useData<T>(
   const { sessionReady, user } = useAuth();
   const queryClient = useQueryClient();
 
-  const isSuperAdmin =
-    user?.role === 'super_admin' || user?.role === 'superadmin';
+  // Note: this only decides whether the client-side query builder ADDS a
+  // school_id filter — it is a convenience/UX optimization, not the
+  // security boundary. Even if this were wrong, Supabase RLS
+  // (is_super_admin() / auth_school_id(), enforced in the database)
+  // still restricts which rows actually come back for non-super-admins.
+  const isSuperAdmin = checkIsSuperAdmin(user?.role);
 
   /**
    * ✅ FIX: Only scope by school IF NOT super admin

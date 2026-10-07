@@ -152,7 +152,7 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
       }
       else if (path === 'school/my-subscription') {
         const { data: school } = await supabase.from('schools').select('*').eq('id', schoolId).single();
-        const { count: studentCount } = await supabase.from('students').select('*', { count: 'exact', head: true }).eq('school_id', schoolId);
+        const { count: studentCount } = await supabase.from('active_students').select('*', { count: 'exact', head: true }).eq('school_id', schoolId); // current enrolment only — see active_students_view migration
         const { count: teacherCount } = await supabase.from('teachers').select('*', { count: 'exact', head: true }).eq('school_id', schoolId);
         
         // Fetch plan limits
@@ -174,7 +174,7 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
       }
       else if (path.startsWith('schools/') && path.endsWith('/stats')) {
         const id = path.split('/')[1];
-        const { count: students } = await supabase.from('students').select('*', { count: 'exact', head: true }).eq('school_id', id);
+        const { count: students } = await supabase.from('active_students').select('*', { count: 'exact', head: true }).eq('school_id', id); // current enrolment only
         const { count: teachers } = await supabase.from('teachers').select('*', { count: 'exact', head: true }).eq('school_id', id);
         const { count: subjects } = await supabase.from('subjects').select('*', { count: 'exact', head: true }).eq('school_id', id);
         const { count: marks } = await supabase.from('marks').select('*', { count: 'exact', head: true }).eq('school_id', id);
@@ -182,7 +182,7 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
       }
       else if (path === 'super/stats' && isSuperAdmin) {
         const { data: schools } = await supabase.from('schools').select('id, subscription_status');
-        const { count: students } = await supabase.from('students').select('*', { count: 'exact', head: true });
+        const { count: students } = await supabase.from('active_students').select('*', { count: 'exact', head: true }); // current, platform-wide enrolment only
         return {
           totalSchools: schools?.length || 0,
           activeSubscriptions: (schools as { subscription_status: string }[] | null)?.filter((s) => s.subscription_status === 'Active').length || 0,

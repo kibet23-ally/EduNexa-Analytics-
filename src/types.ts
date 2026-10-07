@@ -3,13 +3,7 @@ export interface User {
   name: string;
   email: string;
   phone?: string;
-  // `teachers.role` (this type's source table in GlobalUsers) still has
-  // historical mixed-case values ('SuperAdmin' / 'Admin' / 'Teacher') —
-  // kept as `string` rather than a union so this type doesn't claim a
-  // precision the underlying data doesn't have. Use isSuperAdmin() /
-  // isSchoolAdmin() / roleLabel() from src/lib/roles.ts to interpret it
-  // rather than comparing the raw string directly.
-  role: string;
+  role: 'SuperAdmin' | 'Admin' | 'Teacher' | 'Principal' | 'super_admin' | 'school_admin' | 'teacher';
   school_id?: string | number;
   school_name?: string;
   schools?: { name: string };
@@ -80,7 +74,10 @@ export interface Student {
   stream?: string | null;
   boarding_status?: 'Day' | 'Boarding' | null;
   previous_school?: string | null;
-  student_status?: 'Active' | 'Transferred' | 'Alumni' | 'Suspended' | null;
+  student_status?: 'Active' | 'Transferred' | 'Withdrawn' | 'Deceased' | 'Graduated' | null;
+  status_date?: string | null;
+  status_reason?: string | null;
+  destination_school?: string | null;
   admission_category?: string | null;
   previous_academic_performance?: string | null;
   talents?: string | null;

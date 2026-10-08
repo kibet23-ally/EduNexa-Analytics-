@@ -67,9 +67,12 @@ export default function LevelDashboardCards() {
         .select('id, level_code')
         .eq('school_id', schoolId);
 
-      // 3. Get students per grade (to know per level)
+      // 3. Get students per grade (to know per level) — active_students
+      // view excludes archived/transferred/withdrawn/deceased/graduated
+      // learners, so level population reflects only currently-enrolled
+      // students.
       const { data: students } = await supabase
-        .from('students')
+        .from('active_students')
         .select('id, grade_id')
         .eq('school_id', schoolId);
 

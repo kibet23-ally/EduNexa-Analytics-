@@ -581,11 +581,10 @@ const BasicInfoStep: React.FC<any> = ({ form, setForm, errors, dupWarnings, chec
         <input className={inputCls} value={form.admission_number} disabled={form.admissionAuto}
           onChange={e => setForm((f: LearnerForm) => ({ ...f, admission_number: e.target.value }))}
           onBlur={e => checkDuplicate('admission_number', e.target.value)} />
-        <div className="flex items-center gap-2">
-  <label className="flex items-center gap-1 text-xs text-slate-500 whitespace-nowrap">
-    <input type="checkbox" checked={form.admissionAuto} onChange={e => setForm((f: LearnerForm) => ({ ...f, admissionAuto: e.target.checked }))} /> Auto
-  </label>
-</div>
+        <label className="flex items-center gap-1 text-xs text-slate-500 whitespace-nowrap">
+          <input type="checkbox" checked={form.admissionAuto} onChange={e => setForm((f: LearnerForm) => ({ ...f, admissionAuto: e.target.checked }))} /> Auto
+        </label>
+      </div>
     </Field>
     <Field label="ULI Number" warning={dupWarnings.uli_number}>
       <p className="text-[10px] text-slate-400 -mt-1 mb-1">Unique Learner Identification</p>
@@ -816,5 +815,4 @@ async function centerCropSquare(file: File, size: number): Promise<File> {
 }
 
 export default LearnerOnboarding;
-      
    

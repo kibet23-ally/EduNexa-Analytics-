@@ -142,7 +142,7 @@ const ClassListModal: React.FC<ClassListModalProps> = ({ isOpen, onClose }) => {
           filters: { id: effectiveSchoolId },
           single: true,
         }),
-        fetchWithProxy('students', {
+        fetchWithProxy('active_students', { // class lists only include currently-enrolled students
           select: 'id, admission_number, name, gender, stream, date_of_admission, deleted_at',
           filters: { school_id: effectiveSchoolId, grade_id: Number(selectedGradeId) },
         }),

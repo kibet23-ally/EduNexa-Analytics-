@@ -148,7 +148,7 @@ const MarksEntry = () => {
   /* STUDENTS */
   const studentsQuery = useData<Student>(
     'students-marks',
-    'students',
+    'active_students', // only currently-enrolled students appear in the assessment entry list
     {
       select: 'id, name, admission_number, grade_id',
       filters: selectedGrade

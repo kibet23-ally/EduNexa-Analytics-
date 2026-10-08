@@ -93,7 +93,7 @@ export default function StudentPromotion() {
     setDecisions({});
     setConfirmed(false);
     const { data } = await supabase
-      .from('students')
+      .from('active_students') // only currently-enrolled students are eligible for promotion
       .select('id, name, admission_number, gender, grade_id')
       .eq('grade_id', gradeId)
       .eq('school_id', user?.school_id)

@@ -244,7 +244,7 @@ const Attendance = () => {
 
   const studentsQuery = useData<Student>(
     'students-attendance',
-    'students',
+    'active_students', // only currently-enrolled students appear in the attendance register
     {
       select: 'id, name, admission_number, grade_id',
       filters: selectedGrade ? { grade_id: Number(selectedGrade) } : undefined,
@@ -750,3 +750,4 @@ const Attendance = () => {
 };
 
 export default Attendance;
+              

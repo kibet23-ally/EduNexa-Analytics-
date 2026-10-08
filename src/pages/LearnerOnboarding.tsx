@@ -642,10 +642,9 @@ const BasicInfoStep: React.FC<any> = ({ form, setForm, errors, dupWarnings, chec
       <input className={inputCls} value={form.previous_school} onChange={e => setForm((f: LearnerForm) => ({ ...f, previous_school: e.target.value }))} />
     </Field>
     <Field label="Student Status">
-      <select className={inputCls} value={form.student_status} disabled title="Use &quot;Change Status&quot; on the Students list to change this — it captures a date, reason, and audit trail.">
+      <select className={inputCls} value={form.student_status} onChange={e => setForm((f: LearnerForm) => ({ ...f, student_status: e.target.value }))}>
         <option>Active</option><option>Transferred</option><option>Withdrawn</option><option>Deceased</option><option>Graduated</option>
       </select>
-      <p className="text-xs text-slate-400 mt-1">To change a learner's lifecycle status, use "Change Status" from the Students list.</p>
     </Field>
   </div>
 );

@@ -12,7 +12,9 @@ import {
   Shield,
   Building2,
   Check,
-  AlertCircle
+  AlertCircle,
+  Loader2,
+  Upload
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -23,6 +25,8 @@ const SettingsPage = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [logoUploading, setLogoUploading] = useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -165,9 +169,60 @@ const SettingsPage = () => {
     }
   };
 
-  const handleAvatarClick = () => {
-    const url = window.prompt('Enter the URL to your profile photo:', formData.avatar_url);
-    if (url !== null) setFormData({ ...formData, avatar_url: url });
+  // Center-crop an image file to a square client-side (dependency-free),
+  // same approach already used for learner photo uploads.
+  const centerCropSquare = (file: File, size: number): Promise<File> =>
+    new Promise((resolve, reject) => {
+      const img = document.createElement('img');
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        const side = Math.min(img.width, img.height);
+        const sx = (img.width - side) / 2, sy = (img.height - side) / 2;
+        const canvas = document.createElement('canvas');
+        canvas.width = size; canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+        canvas.toBlob(blob => {
+          URL.revokeObjectURL(url);
+          if (!blob) { reject(new Error('Crop failed')); return; }
+          resolve(new File([blob], file.name, { type: 'image/jpeg' }));
+        }, 'image/jpeg', 0.9);
+      };
+      img.onerror = reject;
+      img.src = url;
+    });
+
+  const handleAvatarSelect = async (file: File) => {
+    setAvatarUploading(true);
+    try {
+      const cropped = await centerCropSquare(file, 320);
+      const path = `avatars/${user?.id}/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+      const { error } = await supabase.storage.from('profile-photos').upload(path, cropped, { upsert: true });
+      if (error) throw error;
+      const { data: pub } = supabase.storage.from('profile-photos').getPublicUrl(path);
+      setFormData(f => ({ ...f, avatar_url: pub.publicUrl }));
+    } catch {
+      setFeedback({ type: 'error', message: 'Photo upload failed. Please try a different image.' });
+      setTimeout(() => setFeedback(null), 3000);
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
+  const handleLogoSelect = async (file: File) => {
+    setLogoUploading(true);
+    try {
+      const path = `logos/${user?.school_id}/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+      const { error } = await supabase.storage.from('profile-photos').upload(path, file, { upsert: true });
+      if (error) throw error;
+      const { data: pub } = supabase.storage.from('profile-photos').getPublicUrl(path);
+      setSchoolData(s => ({ ...s, logo_url: pub.publicUrl }));
+    } catch {
+      setFeedback({ type: 'error', message: 'Logo upload failed. Please try a different image.' });
+      setTimeout(() => setFeedback(null), 3000);
+    } finally {
+      setLogoUploading(false);
+    }
   };
 
   const handlePasswordUpdate = async (e: React.FormEvent) => {
@@ -269,12 +324,13 @@ const SettingsPage = () => {
                     <User size={40} className="text-slate-400" />
                   )}
                 </div>
-                <button
-                  onClick={handleAvatarClick}
-                  className="absolute bottom-0 right-0 p-2 bg-primary text-white rounded-full shadow-lg hover:scale-110 transition-transform"
-                >
-                  <Camera size={16} />
-                </button>
+                <label className="absolute bottom-0 right-0 p-2 bg-primary text-white rounded-full shadow-lg hover:scale-110 transition-transform cursor-pointer">
+                  {avatarUploading ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
+                  <input
+                    type="file" accept="image/*" className="hidden" disabled={avatarUploading}
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleAvatarSelect(f); e.target.value = ''; }}
+                  />
+                </label>
               </div>
               <h2 className="mt-4 font-bold text-slate-900 dark:text-white text-lg">{formData.name || 'User'}</h2>
               <p className="text-xs font-black uppercase tracking-widest text-primary mt-1">{user?.role}</p>
@@ -332,10 +388,15 @@ const SettingsPage = () => {
                 </div>
               </div>
               <div className="md:col-span-2 space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-slate-400">Profile Photo URL</label>
-                <input value={formData.avatar_url} onChange={(e) => setFormData({ ...formData, avatar_url: e.target.value })}
-                  placeholder="https://example.com/avatar.jpg"
-                  className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-2xl focus:ring-4 focus:ring-primary/10 outline-none transition-all dark:text-white" />
+                <label className="text-xs font-black uppercase tracking-widest text-slate-400">Profile Photo</label>
+                <label className="flex items-center gap-2 w-fit px-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-2xl cursor-pointer text-sm font-bold text-slate-500 hover:border-primary/40 transition-colors">
+                  {avatarUploading ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                  {avatarUploading ? 'Uploading…' : 'Choose a photo'}
+                  <input
+                    type="file" accept="image/*" className="hidden" disabled={avatarUploading}
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleAvatarSelect(f); e.target.value = ''; }}
+                  />
+                </label>
               </div>
               <div className="md:col-span-2 pt-4">
                 <button type="submit" disabled={saving}
@@ -392,10 +453,24 @@ const SettingsPage = () => {
                     className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-2xl focus:ring-4 focus:ring-primary/10 outline-none transition-all dark:text-white" />
                 </div>
                 <div className="md:col-span-2 space-y-2">
-                  <label className="text-xs font-black uppercase tracking-widest text-slate-400">School Logo URL</label>
-                  <input value={schoolData.logo_url} onChange={(e) => setSchoolData({ ...schoolData, logo_url: e.target.value })}
-                    placeholder="https://example.com/logo.png"
-                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-2xl focus:ring-4 focus:ring-primary/10 outline-none transition-all dark:text-white" />
+                  <label className="text-xs font-black uppercase tracking-widest text-slate-400">School Logo</label>
+                  <div className="flex items-center gap-4">
+                    <div className="w-14 h-14 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 flex items-center justify-center overflow-hidden shrink-0">
+                      {schoolData.logo_url ? (
+                        <img src={schoolData.logo_url} alt="School logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                      ) : (
+                        <Building2 size={22} className="text-slate-300" />
+                      )}
+                    </div>
+                    <label className="flex items-center gap-2 px-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-2xl cursor-pointer text-sm font-bold text-slate-500 hover:border-primary/40 transition-colors">
+                      {logoUploading ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                      {logoUploading ? 'Uploading…' : 'Choose a logo'}
+                      <input
+                        type="file" accept="image/*" className="hidden" disabled={logoUploading}
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleLogoSelect(f); e.target.value = ''; }}
+                      />
+                    </label>
+                  </div>
                 </div>
                 <div className="md:col-span-2 space-y-2">
                   <label className="text-xs font-black uppercase tracking-widest text-slate-400">Motto / Slogan</label>
@@ -466,3 +541,4 @@ const SettingsPage = () => {
 };
 
 export default SettingsPage;
+         

@@ -4,6 +4,7 @@ import { useData } from '../hooks/useData';
 import { Bell, AlertTriangle, Info, CheckCircle2, Clock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
+import { supabase } from '../lib/supabase';
 import { Exam, School } from '../types';
 
 interface Notification {
@@ -13,6 +14,19 @@ interface Notification {
   message: string;
   timestamp: string;
   read: boolean;
+  // Real (database-backed) notifications can be marked read server-side;
+  // the synthetic ones below (subscription expiry, setup reminders, etc.)
+  // only ever exist locally, so they're marked read in local state only.
+  dbId?: number;
+}
+
+interface DbNotification {
+  id: number;
+  title: string;
+  body: string | null;
+  type: string;
+  is_read: boolean;
+  created_at: string;
 }
 
 const NotificationBell: React.FC = () => {
@@ -28,6 +42,17 @@ const NotificationBell: React.FC = () => {
   const examsQuery = useData<Exam>('exams-notif', 'exams', {
     select: 'id, exam_name, term, year'
   }, !!user?.school_id);
+
+  // Real notifications — e.g. "a new event was posted" — created
+  // server-side (see the notify_school_on_event trigger) whenever
+  // someone in the school posts an event/notice. RLS already restricts
+  // this to the signed-in user's own rows, so no extra filter is needed
+  // here.
+  const dbNotificationsQuery = useData<DbNotification>(
+    'my-notifications', 'notifications',
+    { select: 'id, title, body, type, is_read, created_at', orderBy: { column: 'created_at', ascending: false }, limit: 30 },
+    !!user?.id,
+  );
 
   const notifications = useMemo(() => {
     const notifs: Notification[] = [];
@@ -74,7 +99,7 @@ const NotificationBell: React.FC = () => {
         const expiry = new Date(mySchool.subscription_expiry);
         const diff = expiry.getTime() - now.getTime();
         const days = diff / (1000 * 60 * 60 * 24);
-        
+
         if (days < 7) {
           notifs.push({
             id: 'school-expiry',
@@ -113,7 +138,7 @@ const NotificationBell: React.FC = () => {
 
       const exams = examsQuery.data || [];
       if (exams.length > 0) {
-        const latestExam = [...exams].sort((a,b) => b.id - a.id)[0];
+        const latestExam = [...exams].sort((a, b) => b.id - a.id)[0];
         notifs.push({
           id: 'teacher-marks',
           type: 'warning',
@@ -125,14 +150,45 @@ const NotificationBell: React.FC = () => {
       }
     }
 
-    return notifs.map(n => ({ ...n, read: readIds.has(n.id) }));
-  }, [user, schoolsQuery.data, examsQuery.data, readIds]);
+    // REAL, DATABASE-BACKED NOTIFICATIONS (events/notices posted by anyone
+    // in the school — see notify_school_on_event). These apply to every
+    // role, not just admins/teachers, since anyone can be a recipient.
+    const dbNotifs: Notification[] = (dbNotificationsQuery.data || []).map(n => ({
+      id: `db-${n.id}`,
+      dbId: n.id,
+      type: (['info', 'warning', 'error', 'success'].includes(n.type) ? n.type : 'info') as Notification['type'],
+      title: n.title,
+      message: n.body || '',
+      timestamp: n.created_at,
+      read: n.is_read,
+    }));
+
+    return [...dbNotifs, ...notifs]
+      .map(n => ({ ...n, read: n.read || readIds.has(n.id) }))
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }, [user, schoolsQuery.data, examsQuery.data, dbNotificationsQuery.data, readIds]);
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
-  const markAllRead = () => {
+  const markRead = async (notif: Notification) => {
+    if (notif.read) return;
+    setReadIds(prev => new Set([...Array.from(prev), notif.id]));
+    if (notif.dbId != null) {
+      await supabase.from('notifications')
+        .update({ is_read: true, read_at: new Date().toISOString() })
+        .eq('id', notif.dbId);
+    }
+  };
+
+  const markAllRead = async () => {
     const allIds = notifications.map(n => n.id);
     setReadIds(new Set([...Array.from(readIds), ...allIds]));
+    const unreadDbIds = notifications.filter(n => !n.read && n.dbId != null).map(n => n.dbId as number);
+    if (unreadDbIds.length > 0) {
+      await supabase.from('notifications')
+        .update({ is_read: true, read_at: new Date().toISOString() })
+        .in('id', unreadDbIds);
+    }
   };
 
   return (
@@ -175,10 +231,11 @@ const NotificationBell: React.FC = () => {
                 {notifications.length > 0 ? (
                   <div className="divide-y divide-slate-100 dark:divide-slate-800">
                     {notifications.map((notif) => (
-                      <div 
-                        key={notif.id} 
+                      <button
+                        key={notif.id}
+                        onClick={() => markRead(notif)}
                         className={cn(
-                          "p-4 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex gap-3",
+                          "w-full text-left p-4 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex gap-3",
                           !notif.read && "bg-blue-50/30 dark:bg-blue-900/10"
                         )}
                       >
@@ -205,7 +262,8 @@ const NotificationBell: React.FC = () => {
                             {new Date(notif.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </p>
                         </div>
-                      </div>
+                        {!notif.read && <div className="w-2 h-2 rounded-full bg-blue-500 shrink-0 mt-1.5" />}
+                      </button>
                     ))}
                   </div>
                 ) : (

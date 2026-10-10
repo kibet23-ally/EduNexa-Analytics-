@@ -202,6 +202,7 @@ function useEvents(schoolId: number | undefined) {
       title: form.title, description: form.description || null,
       event_date: form.event_date, event_time: form.event_time || null,
       category: form.category || null, created_by: userId,
+      school_id: schoolId, // required so RLS/notifications correctly scope this event to the school
     });
     if (!err) refetch();
     return err?.message ?? null;
@@ -342,6 +343,74 @@ const DeleteConfirm: React.FC<{
   </div>
 );
 
+// Tapping an event card opens this — available to every role (admin,
+// teacher, bursar, timetabler), not just admins. Edit/Delete are shown
+// here as explicit buttons (rather than a hover-only overlay on the
+// card, which never worked on a touch device in the first place) and
+// stay admin-gated.
+const EventDetailModal: React.FC<{
+  event: SchoolEvent; isAdmin: boolean;
+  onClose: () => void; onEdit: () => void; onDelete: () => void;
+}> = ({ event, isAdmin, onClose, onEdit, onDelete }) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+    <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-sm p-6 border border-slate-200 dark:border-white/10">
+      <div className="flex items-start justify-between gap-3 mb-4">
+        <div className="flex items-center gap-3">
+          <div className="w-11 h-11 rounded-xl flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
+            style={{ background: `linear-gradient(135deg, ${BRAND.electric}, ${BRAND.cyan})` }}>
+            {new Date(event.event_date + 'T00:00:00').getDate()}
+          </div>
+          <div>
+            <h3 className="font-semibold text-slate-800 dark:text-white leading-snug">{event.title}</h3>
+            <span className={`inline-block mt-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md ${CATEGORY_COLORS[event.category ?? 'Other'] ?? CATEGORY_COLORS.Other}`}>
+              {event.category ?? 'Other'}
+            </span>
+          </div>
+        </div>
+        <button onClick={onClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-white p-1 -mt-1 -mr-1">
+          <X size={18} />
+        </button>
+      </div>
+
+      <div className="space-y-2 text-sm text-slate-600 dark:text-slate-300 mb-5">
+        <p className="flex items-center gap-2">
+          <Calendar size={14} className="text-slate-400" />
+          {new Date(event.event_date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+        </p>
+        {event.event_time && (
+          <p className="flex items-center gap-2">
+            <Clock size={14} className="text-slate-400" /> {event.event_time}
+          </p>
+        )}
+        {event.description && (
+          <p className="pt-2 border-t border-slate-100 dark:border-white/10 text-slate-700 dark:text-slate-200 whitespace-pre-wrap">
+            {event.description}
+          </p>
+        )}
+      </div>
+
+      <div className="flex gap-3">
+        <button onClick={onClose}
+          className="flex-1 px-4 py-2 border border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-300 rounded-xl text-sm font-medium hover:bg-slate-50 dark:hover:bg-white/5 transition-colors">
+          Close
+        </button>
+        {isAdmin && (
+          <>
+            <button onClick={onEdit}
+              className="px-4 py-2 border border-blue-200 dark:border-blue-500/30 text-blue-600 rounded-xl text-sm font-medium hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors flex items-center gap-1.5">
+              <Pencil size={14} /> Edit
+            </button>
+            <button onClick={onDelete}
+              className="px-4 py-2 border border-rose-200 dark:border-rose-500/30 text-rose-600 rounded-xl text-sm font-medium hover:bg-rose-50 dark:hover:bg-rose-500/10 transition-colors flex items-center gap-1.5">
+              <Trash2 size={14} /> Delete
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  </div>
+);
+
 /* ─────────────────────────────────────────────────────────────
    HELPER
 ───────────────────────────────────────────────────────────── */
@@ -475,6 +544,7 @@ const SchoolDashboard: React.FC = () => {
 
   /* ── Event modal state ── */
   const [showAdd,      setShowAdd]      = useState(false);
+  const [viewTarget,   setViewTarget]   = useState<SchoolEvent | null>(null);
   const [editTarget,   setEditTarget]   = useState<SchoolEvent | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SchoolEvent | null>(null);
   const [saving,       setSaving]       = useState(false);
@@ -604,6 +674,15 @@ const SchoolDashboard: React.FC = () => {
       {deleteTarget && (
         <DeleteConfirm event={deleteTarget} onConfirm={handleDelete}
           onCancel={() => setDeleteTarget(null)} deleting={deleting} />
+      )}
+      {viewTarget && (
+        <EventDetailModal
+          event={viewTarget}
+          isAdmin={isAdmin}
+          onClose={() => setViewTarget(null)}
+          onEdit={() => { setEditTarget(viewTarget); setSaveError(null); setViewTarget(null); }}
+          onDelete={() => { setDeleteTarget(viewTarget); setViewTarget(null); }}
+        />
       )}
 
       {/* ════════════ HEADER ════════════ */}
@@ -869,8 +948,8 @@ const SchoolDashboard: React.FC = () => {
           ) : (
             <div className="space-y-3 flex-1">
               {upcoming.map(ev => (
-                <div key={ev.id}
-                  className="flex items-start gap-3 p-3 rounded-2xl bg-slate-50 dark:bg-white/5 hover:bg-blue-50/60 dark:hover:bg-white/10 transition-colors group">
+                <button key={ev.id} type="button" onClick={() => setViewTarget(ev)}
+                  className="w-full flex items-start gap-3 p-3 rounded-2xl bg-slate-50 dark:bg-white/5 hover:bg-blue-50/60 dark:hover:bg-white/10 active:bg-blue-100/60 transition-colors text-left">
                   <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
                     style={{ background: `linear-gradient(135deg, ${BRAND.electric}, ${BRAND.cyan})` }}>
                     {new Date(ev.event_date + 'T00:00:00').getDate()}
@@ -886,19 +965,7 @@ const SchoolDashboard: React.FC = () => {
                       </span>
                     </div>
                   </div>
-                  {isAdmin && (
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                      <button onClick={() => { setEditTarget(ev); setSaveError(null); }}
-                        className="p-1 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors">
-                        <Pencil size={13} />
-                      </button>
-                      <button onClick={() => setDeleteTarget(ev)}
-                        className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition-colors">
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  )}
-                </div>
+                </button>
               ))}
             </div>
           )}

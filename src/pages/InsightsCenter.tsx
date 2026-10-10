@@ -972,7 +972,7 @@ export default function InsightsCenter() {
   useEffect(() => {
     if (!sid) return;
     let q = supabase.from('students')
-      .select('id,name,admission_number,gender,grade_id,school_id')
+      .select('id,name,admission_number,gender,grade_id,school_id,student_status,deleted_at')
       .eq('school_id', sid);
     if (gradeId) q = q.eq('grade_id', gradeId);
     q.then(({ data }) => { setStudents(data || []); setSelectedStudent(null); });
@@ -1021,10 +1021,24 @@ export default function InsightsCenter() {
     }),
     [exams, gradeId, term]);
 
+  // Rankings/overview stats are "current" computations — a transferred,
+  // withdrawn, deceased, or graduated learner shouldn't appear in class
+  // rankings or pull the class mean around, even though their historical
+  // marks are still fully preserved and still reachable individually via
+  // the student picker/search below (which deliberately still lists every
+  // student regardless of status, unchanged). A NULL student_status is
+  // treated as Active, matching the lifecycle feature's own rule.
+  const activeStudents = useMemo(
+    () => students.filter(s => !s.deleted_at && (!s.student_status || s.student_status === 'Active')),
+    [students]
+  );
+
   const rankings = useMemo(() => {
     // ── Reusable ranking logic ─────────────────────────────────────────────
     // Rules:
-    //   1. ALL students included (even DNS — did not sit)
+    //   1. ALL *currently active* students included (even DNS — did not sit);
+    //      transferred/withdrawn/deceased/graduated students are excluded —
+    //      see activeStudents above.
     //   2. Mean = sum(entered) / expectedSubjectCount for the STUDENT'S OWN
     //      grade band (6 for grades 4–6, 9 for grades 7–9) — missing marks
     //      are treated as 0. This is per-student, not a page-wide constant,
@@ -1033,7 +1047,7 @@ export default function InsightsCenter() {
     //   4. Tied means share the same rank
     // ──────────────────────────────────────────────────────────────────────
     const fallbackTotal = subjects.length || 1;
-    const mapped = students.map(s => {
+    const mapped = activeStudents.map(s => {
       const studentGradeName = grades.find(g => String(g.id) === String(s.grade_id))?.grade_name || '';
       const expected = getExpectedSubjectCount(studentGradeName);
       const divisor = expected > 0 ? expected : fallbackTotal;
@@ -1059,15 +1073,16 @@ export default function InsightsCenter() {
       currentRank = i + 1;
       return { ...s, rank: currentRank };
     });
-  }, [marks, students, subjects, grades]);
+  }, [marks, activeStudents, subjects, grades]);
 
   const classStats = useMemo(() => {
-    if (!subjects.length || !students.length) return null;
+    if (!subjects.length || !activeStudents.length) return null;
     const allSubjectIds = subjects.map(s => s.id);
-    // Class mean = sum of ALL student means, each divided by the EXPECTED
-    // SUBJECT COUNT FOR THAT STUDENT'S OWN GRADE BAND (6 for grades 4–6, 9
-    // for grades 7–9) — not a single shared subjects.length for everyone.
-    const studentMeans = students
+    // Class mean = sum of ALL (currently active) student means, each
+    // divided by the EXPECTED SUBJECT COUNT FOR THAT STUDENT'S OWN GRADE
+    // BAND (6 for grades 4–6, 9 for grades 7–9) — not a single shared
+    // subjects.length for everyone.
+    const studentMeans = activeStudents
       .map(s => {
         const studentGradeName = grades.find(g => String(g.id) === String(s.grade_id))?.grade_name || '';
         const expected = getExpectedSubjectCount(studentGradeName);
@@ -1079,11 +1094,14 @@ export default function InsightsCenter() {
     // Pass rate: students whose mean >= 41
     const pass = studentMeans.filter(r => r.mean >= 41).length / studentMeans.length * 100;
     // Highest/lowest individual subject scores (entered only)
-    const enteredScores = marks.filter(m => m.score !== null && m.score !== undefined).map(m => m.score as number);
+    const activeIds = new Set(activeStudents.map(s => s.id));
+    const enteredScores = marks
+      .filter(m => m.score !== null && m.score !== undefined && activeIds.has(m.student_id))
+      .map(m => m.score as number);
     const highest = enteredScores.length ? Math.max(...enteredScores) : 0;
     const lowest  = enteredScores.length ? Math.min(...enteredScores) : 0;
-    return { avg, pass, highest, lowest, count: students.length, r: getRubric(avg) };
-  }, [marks, students, subjects, grades]);
+    return { avg, pass, highest, lowest, count: activeStudents.length, r: getRubric(avg) };
+  }, [marks, activeStudents, subjects, grades]);
 
   const filteredStudents = useMemo(() => {
     if (!search) return students;
@@ -1804,5 +1822,4 @@ export default function InsightsCenter() {
       </div>
     </div>
   );
-}
       

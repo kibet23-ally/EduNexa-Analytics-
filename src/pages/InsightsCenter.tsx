@@ -1822,4 +1822,6 @@ export default function InsightsCenter() {
       </div>
     </div>
   );
-      
+}
+                      
+  

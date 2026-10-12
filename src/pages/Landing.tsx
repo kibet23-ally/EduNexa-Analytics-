@@ -501,7 +501,7 @@ const Landing = () => {
             <Sparkles className="mx-auto mb-4" size={32} />
             <h2 className="text-4xl md:text-5xl font-bold tracking-tight">Ready to modernize your school?</h2>
             <p className="text-blue-100 mt-4 text-lg max-w-xl mx-auto">
-              Join 500+ schools already using EduNexa to deliver a better experience for students, teachers, and parents.
+              Join 20+ schools already using EduNexa to deliver a better experience for students, teachers, and parents.
             </p>
             <div className="mt-8 flex flex-wrap gap-3 justify-center">
               <Link

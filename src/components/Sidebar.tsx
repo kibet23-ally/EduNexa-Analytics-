@@ -21,7 +21,6 @@ import {
   CalendarDays,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { isSuperAdmin as checkIsSuperAdmin, isSchoolAdmin as checkIsSchoolAdmin } from '../lib/roles';
 import { motion, AnimatePresence } from 'motion/react';
 import { useLocation } from 'react-router-dom';
 
@@ -74,11 +73,10 @@ const Sidebar = () => {
     if (window.innerWidth < 768) setIsCollapsed(true);
   };
 
-  // Canonical role checks — see src/lib/roles.ts. This only controls
-  // which nav items render; real access is enforced by Supabase RLS.
+  // Normalize role for checks
   const rawRole = (user?.role || '').toLowerCase();
-  const isSuperAdminRole = checkIsSuperAdmin(user?.role);
-  const isSchoolAdmin = checkIsSchoolAdmin(user?.role);
+  const isSuperAdminRole = rawRole === 'superadmin' || rawRole === 'super_admin' || rawRole.includes('super');
+  const isSchoolAdmin = rawRole === 'admin' || rawRole === 'school_admin' || rawRole === 'principal' || rawRole === 'schooladmin';
   const isTeacher = rawRole === 'teacher';
   const isBursar = rawRole === 'bursar';
   const isTimetabler = rawRole === 'timetabler';
@@ -90,8 +88,9 @@ const Sidebar = () => {
     { to: '/super/subscriptions', icon: CreditCard, label: 'Platform Subscriptions' },
     { to: '/super/analytics', icon: PieChart, label: 'Analytics' },
     { to: '/finance', icon: Wallet, label: 'Finance' },
-    { to: '/timetable', icon: CalendarDays, label: 'Timetable' },
-    { to: '/super/audit-logs', icon: ClipboardList, label: 'Audit Logs' },
+    // Timetable Generator intentionally NOT shown here — Super Admin does
+    // not manage timetables (School Admin / Timetabler only).
+    { to: '/super/audit-logs', icon: ClipboardList, label: 'System Logs' },
     { to: '/status', icon: ClipboardList, label: 'System Status' },
     { to: '/super/settings', icon: Settings, label: 'Settings' },
   ];

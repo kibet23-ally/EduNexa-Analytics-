@@ -299,6 +299,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   /* ── Sign out ─────────────────────────────────────────────────────────── */
   const signOut = useCallback(async () => {
     console.log('[Auth] Signing out…');
+    // Captured before the session/user state clears below. Fire-and-forget
+    // — a logging hiccup must never block a real sign-out.
+    if (user?.email) {
+      supabase.rpc('log_auth_event', { p_email: user.email, p_event: 'logout', p_user_agent: navigator.userAgent })
+        .then(({ error }) => { if (error) console.error('Audit log (logout) failed:', error); });
+    }
     try {
       await supabase.auth.signOut();
     } catch (err) {
@@ -309,7 +315,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       purgeStaleAuthKeys();
       queryClient.clear();
     }
-  }, [queryClient]);
+  }, [queryClient, user]);
 
   /* ── Refresh profile ──────────────────────────────────────────────────── */
   const refreshProfile = useCallback(async () => {

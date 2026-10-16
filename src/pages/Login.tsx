@@ -92,6 +92,8 @@ const Login = () => {
       console.error('Login error:', err);  
       setError(err.message || 'Login failed. Please try again.');  
       toast.error(err.message || 'Login failed');  
+      supabase.rpc('log_auth_event', { p_email: email.toLowerCase().trim(), p_event: 'login_failed', p_user_agent: navigator.userAgent })
+        .then(({ error }) => { if (error) console.error('Audit log (login_failed) failed:', error); });
     } finally {  
       setLoading(false);  
     }  
@@ -102,15 +104,16 @@ const Login = () => {
     setLoading(true);  
     setError('');  
   
+    // Hoisted out of `try` (rather than scoped inside it) so the catch
+    // block below can still reference it for audit logging.
+    let cleanPhone = phone.replace(/\s+/g, '');  
+    if (cleanPhone.startsWith('0')) {  
+      cleanPhone = '+254' + cleanPhone.substring(1);  
+    } else if (!cleanPhone.startsWith('+')) {  
+      cleanPhone = '+254' + cleanPhone;  
+    }  
+
     try {  
-      // Validate phone format (Kenya +254)  
-      let cleanPhone = phone.replace(/\s+/g, '');  
-      if (cleanPhone.startsWith('0')) {  
-        cleanPhone = '+254' + cleanPhone.substring(1);  
-      } else if (!cleanPhone.startsWith('+')) {  
-        cleanPhone = '+254' + cleanPhone;  
-      }  
-  
       const { data, error: authError } = await supabase.auth.signInWithPassword({  
         phone: cleanPhone,  
         password,  
@@ -125,6 +128,8 @@ const Login = () => {
       console.error('Phone login error:', err);  
       setError(err.message || 'Login failed. Please try again.');  
       toast.error(err.message || 'Login failed');  
+      supabase.rpc('log_auth_event', { p_phone: cleanPhone, p_event: 'login_failed', p_user_agent: navigator.userAgent })
+        .then(({ error }) => { if (error) console.error('Audit log (login_failed) failed:', error); });
     } finally {  
       setLoading(false);  
     }  
@@ -159,14 +164,14 @@ const Login = () => {
     setLoading(true);  
     setError('');  
   
+    let cleanPhone = phone.replace(/\s+/g, '');  
+    if (cleanPhone.startsWith('0')) {  
+      cleanPhone = '+254' + cleanPhone.substring(1);  
+    } else if (!cleanPhone.startsWith('+')) {  
+      cleanPhone = '+254' + cleanPhone;  
+    }  
+
     try {  
-      let cleanPhone = phone.replace(/\s+/g, '');  
-      if (cleanPhone.startsWith('0')) {  
-        cleanPhone = '+254' + cleanPhone.substring(1);  
-      } else if (!cleanPhone.startsWith('+')) {  
-        cleanPhone = '+254' + cleanPhone;  
-      }  
-  
       const { data, error: verifyError } = await supabase.auth.verifyOtp({  
         phone: cleanPhone,  
         token: otp,  
@@ -182,12 +187,22 @@ const Login = () => {
       console.error('OTP verify error:', err);  
       setError(err.message || 'Invalid OTP');  
       toast.error('Invalid OTP');  
+      supabase.rpc('log_auth_event', { p_phone: cleanPhone, p_event: 'login_failed', p_user_agent: navigator.userAgent })
+        .then(({ error }) => { if (error) console.error('Audit log (login_failed) failed:', error); });
     } finally {  
       setLoading(false);  
     }  
   };  
   
   const completeLogin = async (session: any, authUser: any) => {  
+    // Fire-and-forget: a failure to log must never block a real login.
+    supabase.rpc('log_auth_event', {
+      p_email: authUser.email || null,
+      p_phone: authUser.phone || null,
+      p_event: 'login_success',
+      p_user_agent: navigator.userAgent,
+    }).then(({ error }) => { if (error) console.error('Audit log (login_success) failed:', error); });
+
     // 1. Try to get profile from users table  
     const { data: profile } = await supabase  
       .from('users')  
@@ -512,3 +527,4 @@ const Login = () => {
 };  
   
 export default Login;
+     

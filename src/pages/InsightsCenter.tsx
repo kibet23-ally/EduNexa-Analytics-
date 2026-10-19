@@ -447,14 +447,17 @@ async function generateExamAverageAnalysisPDF(params: {
   logo: { data: string; fmt: 'PNG' | 'JPEG' } | null;
   gradeName: string; year: string; term: string;
   examNames: string[]; examCount: number; studentCount: number; overallAvg: number | null;
-  rows: { student: Student; avg: number | null; examsWithMarks: number; rank: number | null }[];
+  subjectCols: Subject[];
+  rows: { student: Student; avg: number | null; examsWithMarks: number; rank: number | null; subjectAvgs: Record<string, number | null> }[];
 }) {
-  const { school, logo, gradeName, year, term, examNames, examCount, studentCount, overallAvg, rows } = params;
-  const doc = new jsPDF('p', 'mm', 'a4');
+  const { school, logo, gradeName, year, term, examNames, examCount, studentCount, overallAvg, subjectCols, rows } = params;
+  // Many subject columns need the extra width of a landscape page.
+  const landscape = subjectCols.length > 4;
+  const doc = new jsPDF(landscape ? 'l' : 'p', 'mm', 'a4');
   const W = doc.internal.pageSize.width;
   const M = 14;
 
-  drawPDFLetterhead(doc, school, logo, `EXAM AVERAGE ANALYSIS — ${gradeName}`, false);
+  drawPDFLetterhead(doc, school, logo, `EXAM AVERAGE ANALYSIS — ${gradeName}`, landscape);
 
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...PDF_COLORS.darkGray);
   doc.text(`${term ? `Term ${term}` : 'All Terms'} • ${year || 'All Years'} • ${examCount} examination(s) selected`, W / 2, 50, { align: 'center' });
@@ -477,6 +480,10 @@ async function generateExamAverageAnalysisPDF(params: {
       r.rank ?? '—',
       r.student.name,
       r.student.admission_number,
+      ...subjectCols.map(sc => {
+        const v = r.subjectAvgs[sc.id];
+        return v !== null && v !== undefined ? v.toFixed(1) : '—';
+      }),
       r.avg !== null ? r.avg.toFixed(1) + '%' : 'N/A',
       String(r.examsWithMarks),
       rubric ? rubric.code : '—',
@@ -485,23 +492,22 @@ async function generateExamAverageAnalysisPDF(params: {
 
   autoTable(doc, {
     startY: 76,
-    head: [['Rank', 'Student Name', 'Admission No.', 'Average', 'Exams w/ Marks', 'Level']],
+    head: [['Rank', 'Student Name', 'Admission No.', ...subjectCols.map(sc => sc.subject_name), 'Average', 'Exams w/ Marks', 'Level']],
     body,
     theme: 'grid',
-    styles: { fontSize: 8, cellPadding: 2.2, lineColor: [150, 174, 211], lineWidth: 0.2, textColor: [30, 30, 30] },
-    headStyles: { fillColor: [0, 0, 0], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+    styles: { fontSize: subjectCols.length > 8 ? 6.5 : 8, cellPadding: 2, lineColor: [150, 174, 211], lineWidth: 0.2, textColor: [30, 30, 30], halign: 'center' },
+    headStyles: { fillColor: [0, 0, 0], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: subjectCols.length > 8 ? 6.5 : 8 },
     alternateRowStyles: { fillColor: [245, 245, 245] },
     columnStyles: {
-      0: { cellWidth: 16, halign: 'center' },
-      1: { cellWidth: 60 },
-      2: { cellWidth: 32, halign: 'center' },
-      3: { cellWidth: 24, halign: 'center', fontStyle: 'bold' },
-      4: { cellWidth: 30, halign: 'center' },
-      5: { cellWidth: 20, halign: 'center' },
+      0: { cellWidth: 12 },
+      1: { halign: 'left', cellWidth: landscape ? 48 : 50 },
+      2: { cellWidth: landscape ? 26 : 28 },
+      [3 + subjectCols.length]: { fontStyle: 'bold' },
     },
+    margin: { left: 14, right: 14, bottom: 20 },
+    didDrawPage: () => { drawPDFFooter(doc, school); },
   });
 
-  drawPDFFooter(doc, school);
   addBorderToAllPages(doc);
   doc.save(`Exam_Average_Analysis_${gradeName.replace(/\s+/g, '_')}_${year}.pdf`);
 }
@@ -963,9 +969,9 @@ export default function InsightsCenter() {
   const [avgError, setAvgError] = useState<string | null>(null);
   const [avgWarning, setAvgWarning] = useState<string | null>(null);
   const [avgSort, setAvgSort] = useState<{ key: 'name' | 'admission' | 'avg' | 'rank'; dir: 'asc' | 'desc' }>({ key: 'rank', dir: 'asc' });
-  interface AvgRow { student: Student; avg: number | null; examsWithMarks: number; rank: number | null; }
+  interface AvgRow { student: Student; avg: number | null; examsWithMarks: number; rank: number | null; subjectAvgs: Record<string, number | null>; }
   const [avgResults, setAvgResults] = useState<null | {
-    examNames: string[]; examCount: number; studentCount: number; overallAvg: number | null; rows: AvgRow[];
+    examNames: string[]; examCount: number; studentCount: number; overallAvg: number | null; subjectCols: Subject[]; rows: AvgRow[];
   }>(null);
 
   const toggleExamSelection = (id: string) => {
@@ -1020,6 +1026,14 @@ export default function InsightsCenter() {
       // selected grade if one is chosen — never another school's students.
       const pool = gradeId ? activeStudents.filter(s => String(s.grade_id) === String(gradeId)) : activeStudents;
 
+      // Subject columns: only subjects that actually have marks for the
+      // pooled students in the selected exams, in the school's subject order.
+      const poolIds = new Set(pool.map(p => p.id));
+      const subjectIdsWithMarks = new Set(
+        cleanMarks.filter(m => poolIds.has(m.student_id) && m.score !== null && m.score !== undefined).map(m => m.subject_id)
+      );
+      const subjectCols = subjects.filter(sb => subjectIdsWithMarks.has(sb.id));
+
       const rawRows = pool.map(s => {
         // Each selected exam contributes ONE number per student: that
         // student's own mean across whichever subjects they have an
@@ -1039,7 +1053,18 @@ export default function InsightsCenter() {
         const avg = perExamAverages.length > 0
           ? perExamAverages.reduce((a, b) => a + b, 0) / perExamAverages.length
           : null;
-        return { student: s, avg, examsWithMarks: perExamAverages.length };
+
+        // Per-subject average across the selected exams: for each subject,
+        // the mean of this student's recorded scores in that subject (one
+        // score per selected exam; exams without a mark are skipped).
+        const subjectAvgs: Record<string, number | null> = {};
+        subjectCols.forEach(sc => {
+          const scores = cleanMarks
+            .filter(m => m.student_id === s.id && m.subject_id === sc.id && m.score !== null && m.score !== undefined)
+            .map(m => Number(m.score));
+          subjectAvgs[sc.id] = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
+        });
+        return { student: s, avg, examsWithMarks: perExamAverages.length, subjectAvgs };
       });
 
       // Rank by average descending; students with no recorded marks in any
@@ -1062,6 +1087,7 @@ export default function InsightsCenter() {
         examCount: examIdList.length,
         studentCount: pool.length,
         overallAvg,
+        subjectCols,
         rows: [...ranked, ...unranked],
       });
     } catch (e: any) {
@@ -1961,21 +1987,29 @@ export default function InsightsCenter() {
                             school: liveSchool, logo: liveLogo,
                             gradeName: grades.find(g => String(g.id) === String(gradeId))?.grade_name || 'All Grades',
                             year, term, examNames: avgResults.examNames, examCount: avgResults.examCount,
-                            studentCount: avgResults.studentCount, overallAvg: avgResults.overallAvg, rows: sortedAvgRows,
+                            studentCount: avgResults.studentCount, overallAvg: avgResults.overallAvg,
+                            subjectCols: avgResults.subjectCols, rows: sortedAvgRows,
                           });
                         }} className="px-3 py-2 rounded-xl text-white text-xs font-semibold" style={{ background: '#1e3a5f' }}>
                           📄 PDF
                         </button>
                         <button onClick={() => {
                           const gradeName = grades.find(g => String(g.id) === String(gradeId))?.grade_name || 'All Grades';
-                          const sheetRows = sortedAvgRows.map(r => ({
-                            Rank: r.rank ?? '—',
-                            'Student Name': r.student.name,
-                            'Admission No.': r.student.admission_number,
-                            'Average (%)': r.avg !== null ? Number(r.avg.toFixed(1)) : 'N/A',
-                            'Exams With Marks': r.examsWithMarks,
-                            Level: r.avg !== null ? getRubric(r.avg).code : '—',
-                          }));
+                          const sheetRows = sortedAvgRows.map(r => {
+                            const row: Record<string, any> = {
+                              Rank: r.rank ?? '—',
+                              'Student Name': r.student.name,
+                              'Admission No.': r.student.admission_number,
+                            };
+                            avgResults.subjectCols.forEach(sc => {
+                              const v = r.subjectAvgs[sc.id];
+                              row[sc.subject_name] = v !== null && v !== undefined ? Number(v.toFixed(1)) : '—';
+                            });
+                            row['Average (%)'] = r.avg !== null ? Number(r.avg.toFixed(1)) : 'N/A';
+                            row['Exams With Marks'] = r.examsWithMarks;
+                            row['Level'] = r.avg !== null ? getRubric(r.avg).code : '—';
+                            return row;
+                          });
                           const wb = XLSX.utils.book_new();
                           const ws = XLSX.utils.json_to_sheet(sheetRows);
                           XLSX.utils.book_append_sheet(wb, ws, 'Exam Average Analysis');
@@ -1992,24 +2026,38 @@ export default function InsightsCenter() {
                           <tr className="text-left text-xs uppercase text-slate-400 border-b border-slate-100 dark:border-slate-800">
                             {([
                               ['rank', 'Rank'], ['name', 'Student'], ['admission', 'Admission No.'], ['avg', 'Average'],
-                            ] as [typeof avgSort.key, string][]).map(([key, label]) => (
+                            ] as [typeof avgSort.key, string][]).filter(([key]) => key !== 'avg').map(([key, label]) => (
                               <th key={key} onClick={() => toggleAvgSort(key)} className="px-3 py-2 cursor-pointer select-none hover:text-slate-600">
                                 {label} {avgSort.key === key ? (avgSort.dir === 'asc' ? '▲' : '▼') : ''}
                               </th>
                             ))}
+                            {avgResults.subjectCols.map(sc => (
+                              <th key={sc.id} className="px-3 py-2 text-center whitespace-nowrap" title={sc.subject_name}>{sc.subject_name}</th>
+                            ))}
+                            <th onClick={() => toggleAvgSort('avg')} className="px-3 py-2 cursor-pointer select-none hover:text-slate-600 text-center">
+                              Average {avgSort.key === 'avg' ? (avgSort.dir === 'asc' ? '▲' : '▼') : ''}
+                            </th>
                             <th className="px-3 py-2">Exams w/ Marks</th>
                             <th className="px-3 py-2">Level</th>
                           </tr>
                         </thead>
                         <tbody>
                           {sortedAvgRows.length === 0 ? (
-                            <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">No results to display.</td></tr>
+                            <tr><td colSpan={6 + avgResults.subjectCols.length} className="px-3 py-8 text-center text-slate-400">No results to display.</td></tr>
                           ) : sortedAvgRows.map(r => (
                             <tr key={r.student.id} className="border-b border-slate-50 dark:border-slate-800/50">
                               <td className="px-3 py-2 font-semibold">{r.rank ?? '—'}</td>
                               <td className="px-3 py-2">{r.student.name}</td>
                               <td className="px-3 py-2 text-slate-500">{r.student.admission_number}</td>
-                              <td className="px-3 py-2 font-bold">{r.avg !== null ? r.avg.toFixed(1) + '%' : 'N/A'}</td>
+                              {avgResults.subjectCols.map(sc => {
+                                const v = r.subjectAvgs[sc.id];
+                                return (
+                                  <td key={sc.id} className="px-3 py-2 text-center text-slate-600 dark:text-slate-300">
+                                    {v !== null && v !== undefined ? v.toFixed(1) : '—'}
+                                  </td>
+                                );
+                              })}
+                              <td className="px-3 py-2 font-bold text-center">{r.avg !== null ? r.avg.toFixed(1) + '%' : 'N/A'}</td>
                               <td className="px-3 py-2 text-slate-500">{r.examsWithMarks}/{avgResults.examCount}</td>
                               <td className="px-3 py-2">{r.avg !== null ? getRubric(r.avg).code : '—'}</td>
                             </tr>
@@ -2028,4 +2076,3 @@ export default function InsightsCenter() {
     </div>
   );
 }
-                      

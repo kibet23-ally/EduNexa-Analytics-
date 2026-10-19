@@ -226,10 +226,9 @@ function drawPDFFooter(doc: jsPDF, school: School | undefined) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   PDF: RANKINGS — 3 pages
+   PDF: RANKINGS — 2 pages
    Page 1: Letterhead + Exam info + Subject Performance Analysis
    Page 2: Full Student Rankings (all subjects in one row, totals, avg, rubric)
-   Page 3: Exam Comparison (current vs previous)
 ══════════════════════════════════════════════════════════════════════════ */
 async function generateRankingsPDF(params: {
   school: School | undefined;
@@ -238,10 +237,8 @@ async function generateRankingsPDF(params: {
   rankings: (Student & { rank: number; avg: number; total: number; subjects: number })[];
   subjects: Subject[];
   marks: Mark[];
-  prevMarks?: Mark[];
-  prevExamName?: string;
 }) {
-  const { school, logo, gradeName, examName, year, term, rankings, subjects, marks, prevMarks, prevExamName } = params;
+  const { school, logo, gradeName, examName, year, term, rankings, subjects, marks } = params;
   const doc = new jsPDF('l', 'mm', 'a4');
   const W = doc.internal.pageSize.width;
   const M = 14;
@@ -435,93 +432,6 @@ async function generateRankingsPDF(params: {
   );
 
   drawPDFFooter(doc, school);
-
-  /* ── PAGE 3: Exam Comparison ── */
-  doc.addPage('l');
-  drawPDFLetterhead(doc, school, logo, `EXAM COMPARISON — ${gradeName} • ${year}`, true);
-
-  if (prevMarks && prevMarks.length > 0 && prevExamName) {
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(54, 54, 54);
-    doc.text(`Comparing: ${examName}  vs  ${prevExamName}`, W / 2, 52, { align: 'center' });
-
-    const compRows = subjects.map((subj, i) => {
-      const curr = marks.filter(m => m.subject_id === subj.id);
-      const prev = prevMarks.filter(m => m.subject_id === subj.id);
-      if (!curr.length && !prev.length) return null;
-      const currAvg = curr.length ? curr.reduce((a, b) => a + b.score, 0) / curr.length : 0;
-      const prevAvg = prev.length ? prev.reduce((a, b) => a + b.score, 0) / prev.length : 0;
-      const diff = currAvg - prevAvg;
-      const rCurr = getRubric(currAvg);
-      const rPrev = getRubric(prevAvg);
-      const trend = diff > 2 ? '▲ Improved' : diff < -2 ? '▼ Declined' : '→ Stable';
-      return [
-        i + 1,
-        subj.subject_name,
-        prevAvg.toFixed(1), rPrev.code,
-        currAvg.toFixed(1), rCurr.code,
-        (diff >= 0 ? '+' : '') + diff.toFixed(1),
-        trend,
-      ];
-    }).filter(Boolean);
-
-    const allCurrScores = marks.map(m => m.score);
-    const allPrevScores = prevMarks.map(m => m.score);
-    const currMean = allCurrScores.length ? allCurrScores.reduce((a, b) => a + b) / allCurrScores.length : 0;
-    const prevMean = allPrevScores.length ? allPrevScores.reduce((a, b) => a + b) / allPrevScores.length : 0;
-    const meanDiff = currMean - prevMean;
-
-    autoTable(doc, {
-      startY: 55,
-      head: [['#', 'Learning Area', `${prevExamName} Mean`, 'PL', `${examName} Mean`, 'PL', 'Change', 'Trend']],
-      body: compRows as any,
-      theme: 'grid',
-      styles: { fontSize: 8, cellPadding: 2.2, lineColor: [150, 174, 211], lineWidth: 0.2 },
-      headStyles: { fillColor: [0, 0, 0], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
-      alternateRowStyles: { fillColor: [245, 245, 245] },
-      columnStyles: {
-        0: { cellWidth: 12, halign: 'center' },
-        1: { cellWidth: 60 },
-        2: { cellWidth: 32, halign: 'center', fontStyle: 'bold' },
-        3: { cellWidth: 20, halign: 'center', fontStyle: 'bold' },
-        4: { cellWidth: 32, halign: 'center', fontStyle: 'bold' },
-        5: { cellWidth: 20, halign: 'center', fontStyle: 'bold' },
-        6: { cellWidth: 22, halign: 'center', fontStyle: 'bold' },
-        7: { cellWidth: 30, halign: 'center' },
-      },
-      didParseCell: (data) => {
-        if (data.section === 'body') {
-          if (data.column.index === 6) {
-            const val = parseFloat(String(data.cell.text[0]));
-            if (!isNaN(val)) { data.cell.styles.textColor = [0, 0, 0]; data.cell.styles.fontStyle = 'bold'; }
-          }
-          if (data.column.index === 7) {
-            const t = String(data.cell.text[0]);
-            if (t.includes('▲') || t.includes('▼')) data.cell.styles.fontStyle = 'bold';
-            else data.cell.styles.textColor = [120, 120, 120];
-          }
-        }
-      },
-    });
-
-    // Overall comparison summary
-    const fy3 = (doc as any).lastAutoTable.finalY + 6;
-    doc.setFillColor(241, 241, 241);
-    doc.rect(M, fy3, W - M * 2, 12, 'F');
-    doc.setDrawColor(54, 54, 54); doc.setLineWidth(0.3);
-    doc.rect(M, fy3, W - M * 2, 12, 'S');
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(54, 54, 54);
-    doc.text(
-      `Overall Class Mean: ${prevExamName}: ${prevMean.toFixed(1)}%  →  ${examName}: ${currMean.toFixed(1)}%  |  Change: ${meanDiff >= 0 ? '+' : ''}${meanDiff.toFixed(1)}%  |  ${meanDiff >= 0 ? '▲ Performance Improved' : '▼ Performance Declined'}`,
-      W / 2, fy3 + 8, { align: 'center' }
-    );
-  } else {
-    doc.setFont('helvetica', 'italic'); doc.setFontSize(10); doc.setTextColor(114, 114, 114);
-    doc.text('No previous exam data available for comparison.', W / 2, 90, { align: 'center' });
-    doc.setFontSize(8);
-    doc.text('To enable comparison, mark entries must exist for a prior exam in the same grade and school year.', W / 2, 100, { align: 'center' });
-  }
-
-  drawPDFFooter(doc, school);
   addBorderToAllPages(doc);
   doc.save(`Rankings_${gradeName.replace(/\s+/g, '_')}_${examName.replace(/\s+/g, '_')}_${year}.pdf`);
 }
@@ -529,6 +439,73 @@ async function generateRankingsPDF(params: {
 /* ══════════════════════════════════════════════════════════════════════════
    PDF: REPORT CARD (single student, portrait A4)
 ══════════════════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════════════════════
+   PDF: EXAM AVERAGE ANALYSIS — one page, black-and-white, bordered
+══════════════════════════════════════════════════════════════════════════ */
+async function generateExamAverageAnalysisPDF(params: {
+  school: School | undefined;
+  logo: { data: string; fmt: 'PNG' | 'JPEG' } | null;
+  gradeName: string; year: string; term: string;
+  examNames: string[]; examCount: number; studentCount: number; overallAvg: number | null;
+  rows: { student: Student; avg: number | null; examsWithMarks: number; rank: number | null }[];
+}) {
+  const { school, logo, gradeName, year, term, examNames, examCount, studentCount, overallAvg, rows } = params;
+  const doc = new jsPDF('p', 'mm', 'a4');
+  const W = doc.internal.pageSize.width;
+  const M = 14;
+
+  drawPDFLetterhead(doc, school, logo, `EXAM AVERAGE ANALYSIS — ${gradeName}`, false);
+
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...PDF_COLORS.darkGray);
+  doc.text(`${term ? `Term ${term}` : 'All Terms'} • ${year || 'All Years'} • ${examCount} examination(s) selected`, W / 2, 50, { align: 'center' });
+  doc.setFontSize(7);
+  doc.text(`Examinations: ${examNames.join(', ')}`, W / 2, 55, { align: 'center', maxWidth: W - M * 2 });
+
+  doc.setFillColor(241, 241, 241);
+  doc.rect(M, 60, W - M * 2, 12, 'F');
+  doc.setDrawColor(...PDF_COLORS.black); doc.setLineWidth(0.3);
+  doc.rect(M, 60, W - M * 2, 12, 'S');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...PDF_COLORS.black);
+  doc.text(
+    `Students Analyzed: ${studentCount}   |   Overall Average: ${overallAvg !== null ? overallAvg.toFixed(1) + '%' : 'N/A'}`,
+    W / 2, 68, { align: 'center' }
+  );
+
+  const body = rows.map(r => {
+    const rubric = r.avg !== null ? getRubric(r.avg) : null;
+    return [
+      r.rank ?? '—',
+      r.student.name,
+      r.student.admission_number,
+      r.avg !== null ? r.avg.toFixed(1) + '%' : 'N/A',
+      String(r.examsWithMarks),
+      rubric ? rubric.code : '—',
+    ];
+  });
+
+  autoTable(doc, {
+    startY: 76,
+    head: [['Rank', 'Student Name', 'Admission No.', 'Average', 'Exams w/ Marks', 'Level']],
+    body,
+    theme: 'grid',
+    styles: { fontSize: 8, cellPadding: 2.2, lineColor: [150, 174, 211], lineWidth: 0.2, textColor: [30, 30, 30] },
+    headStyles: { fillColor: [0, 0, 0], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+    alternateRowStyles: { fillColor: [245, 245, 245] },
+    columnStyles: {
+      0: { cellWidth: 16, halign: 'center' },
+      1: { cellWidth: 60 },
+      2: { cellWidth: 32, halign: 'center' },
+      3: { cellWidth: 24, halign: 'center', fontStyle: 'bold' },
+      4: { cellWidth: 30, halign: 'center' },
+      5: { cellWidth: 20, halign: 'center' },
+    },
+  });
+
+  drawPDFFooter(doc, school);
+  addBorderToAllPages(doc);
+  doc.save(`Exam_Average_Analysis_${gradeName.replace(/\s+/g, '_')}_${year}.pdf`);
+}
+
 async function generateReportCard(params: {
   school: School | undefined;
   logo: { data: string; fmt: 'PNG' | 'JPEG' } | null;
@@ -540,9 +517,8 @@ async function generateReportCard(params: {
   calcAvg?: number;
   totalSubjects?: number;
   att: { total: number; present: number; absent: number; late: number; rate: number };
-  prevSubjectMarks?: { subject_name: string; score: number }[];
 }) {
-  const { school, logo, student, grade, exam, year, term, subjectMarks, calcAvg, totalSubjects, att, prevSubjectMarks } = params;
+  const { school, logo, student, grade, exam, year, term, subjectMarks, calcAvg, totalSubjects, att } = params;
   const doc = new jsPDF('p', 'mm', 'a4');
   const W = doc.internal.pageSize.width;
   const M = 14;
@@ -658,21 +634,6 @@ async function generateReportCard(params: {
     if (subjectMarks.length > 0) {
       const spacing = chartW / (subjectMarks.length + 1);
 
-      // Previous exam line (if available)
-      if (prevSubjectMarks && prevSubjectMarks.length > 0) {
-        const prevPts = subjectMarks.map((m, i) => {
-          const prev = prevSubjectMarks.find(p => p.subject_name === m.subject_name);
-          return {
-            x: M + spacing * (i + 1),
-            y: chartY + 5 + chartH - (Math.min(prev?.score ?? 0, 100) / 100 * chartH),
-          };
-        });
-        doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.5);
-        for (let i = 0; i < prevPts.length - 1; i++)
-          doc.line(prevPts[i].x, prevPts[i].y, prevPts[i + 1].x, prevPts[i + 1].y);
-        prevPts.forEach(p => { doc.setFillColor(180, 180, 180); doc.circle(p.x, p.y, 1, 'F'); });
-      }
-
       // Current exam line
       const pts = subjectMarks.map((m, i) => ({
         x: M + spacing * (i + 1),
@@ -707,22 +668,8 @@ async function generateReportCard(params: {
       });
     }
 
-    // Chart legend
-    const legendY = chartY + chartH + 11;
-    if (prevSubjectMarks && prevSubjectMarks.length > 0) {
-      doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.5);
-      doc.line(M + 3, legendY, M + 10, legendY);
-      doc.setTextColor(120, 120, 120); doc.setFontSize(6);
-      doc.text('Previous Exam', M + 12, legendY + 1);
-      doc.setDrawColor(47, 47, 47); doc.setLineWidth(0.8);
-      doc.line(M + 40, legendY, M + 47, legendY);
-      doc.setFillColor(47, 47, 47); doc.circle(M + 43.5, legendY, 1, 'F');
-      doc.setTextColor(54, 54, 54);
-      doc.text('Current Exam', M + 49, legendY + 1);
-    }
-
     /* ── Attendance Bar ── */
-    const attY = legendY + 5;
+    const attY = chartY + chartH + 11 + 5;
     doc.setFillColor(241, 241, 241);
     doc.rect(M, attY, W - M * 2, 8, 'F');
     doc.setDrawColor(47, 47, 47); doc.setLineWidth(0.2);
@@ -834,12 +781,11 @@ export default function InsightsCenter() {
   const sid = user?.school_id;
 
   // ── Filters ──
-  const [tab,     setTab]     = useState<'overview' | 'rankings' | 'reportcards'>('overview');
+  const [tab,     setTab]     = useState<'overview' | 'rankings' | 'reportcards' | 'examaverage'>('overview');
   const [year,    setYear]    = useState(String(new Date().getFullYear()));
   const [term,    setTerm]    = useState('');
   const [gradeId, setGradeId] = useState('');
   const [examId,  setExamId]  = useState('');
-  const [prevExamId, setPrevExamId] = useState('');
   const [search,  setSearch]  = useState('');
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [bulkLoading,  setBulkLoading]  = useState(false);
@@ -852,7 +798,6 @@ export default function InsightsCenter() {
   const [exams,      setExams]      = useState<Exam[]>([]);
   const [students,   setStudents]   = useState<Student[]>([]);
   const [marks,      setMarks]      = useState<Mark[]>([]);
-  const [prevMarks,  setPrevMarks]  = useState<Mark[]>([]);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [loading,      setLoading]      = useState(false);
   const [schoolLoading, setSchoolLoading] = useState(true);
@@ -990,15 +935,6 @@ export default function InsightsCenter() {
   }, [sid, gradeId, examId]);
 
   useEffect(() => {
-    if (!sid || !prevExamId) { setPrevMarks([]); return; }
-    let q = supabase.from('marks')
-      .select('id,student_id,subject_id,exam_id,score,school_id,teacher_remark,grade_id,teacher_id')
-      .eq('school_id', sid).eq('exam_id', prevExamId);
-    if (gradeId) q = q.eq('grade_id', gradeId);
-    q.then(({ data }) => setPrevMarks(data || []));
-  }, [sid, prevExamId, gradeId]);
-
-  useEffect(() => {
     if (!sid) return;
     let q = supabase.from('attendance')
       .select('id,school_id,student_id,grade_id,date,status')
@@ -1020,6 +956,138 @@ export default function InsightsCenter() {
       return gradeMatch && termMatch;
     }),
     [exams, gradeId, term]);
+
+  /* ── Exam Average Analysis (selectable multi-exam averaging) ── */
+  const [selectedExamIds, setSelectedExamIds] = useState<Set<string>>(new Set());
+  const [avgLoading, setAvgLoading] = useState(false);
+  const [avgError, setAvgError] = useState<string | null>(null);
+  const [avgWarning, setAvgWarning] = useState<string | null>(null);
+  const [avgSort, setAvgSort] = useState<{ key: 'name' | 'admission' | 'avg' | 'rank'; dir: 'asc' | 'desc' }>({ key: 'rank', dir: 'asc' });
+  interface AvgRow { student: Student; avg: number | null; examsWithMarks: number; rank: number | null; }
+  const [avgResults, setAvgResults] = useState<null | {
+    examNames: string[]; examCount: number; studentCount: number; overallAvg: number | null; rows: AvgRow[];
+  }>(null);
+
+  const toggleExamSelection = (id: string) => {
+    setSelectedExamIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const selectAllExams = () => setSelectedExamIds(new Set(filteredExams.map(e => e.id)));
+  const clearExamAverageAnalysis = () => {
+    setSelectedExamIds(new Set());
+    setAvgResults(null);
+    setAvgError(null);
+    setAvgWarning(null);
+  };
+
+  const handleCalculateAverage = async () => {
+    if (selectedExamIds.size === 0) { setAvgError('Select at least one examination first.'); return; }
+    if (!sid) return;
+    setAvgLoading(true); setAvgError(null); setAvgWarning(null); setAvgResults(null);
+    try {
+      const examIdList = Array.from(selectedExamIds);
+      const selectedExamObjs = filteredExams.filter(e => examIdList.includes(e.id));
+
+      // Warn (don't block) when the selection spans incompatible contexts —
+      // different terms, or a mix of grade-specific and school-wide exams
+      // for different underlying grade levels, can make an average less
+      // meaningful even though each individual exam's data is still valid.
+      const distinctTerms = new Set(selectedExamObjs.map(e => String(e.term)));
+      const distinctYears = new Set(selectedExamObjs.map(e => String(e.year)));
+      if (distinctTerms.size > 1 || distinctYears.size > 1) {
+        setAvgWarning(`The selected examinations span ${distinctYears.size > 1 ? 'different academic years' : 'different terms'} — the combined average may not be directly comparable.`);
+      }
+
+      // Pull marks for exactly the selected exams, this school only.
+      const { data, error } = await supabase
+        .from('marks')
+        .select('id,student_id,subject_id,exam_id,score,school_id,grade_id')
+        .eq('school_id', sid)
+        .in('exam_id', examIdList);
+      if (error) throw error;
+
+      // De-duplicate: if the same student/exam/subject has more than one
+      // mark row (data entry correction left a stale duplicate, etc.), keep
+      // only one so a subject is never counted twice toward an exam's mean.
+      const dedup = new Map<string, { student_id: string; exam_id: string; subject_id: string; score: number | null }>();
+      (data || []).forEach(m => dedup.set(`${m.student_id}|${m.exam_id}|${m.subject_id}`, m));
+      const cleanMarks = Array.from(dedup.values());
+
+      // Student pool: active students in this school, scoped to the
+      // selected grade if one is chosen — never another school's students.
+      const pool = gradeId ? activeStudents.filter(s => String(s.grade_id) === String(gradeId)) : activeStudents;
+
+      const rawRows = pool.map(s => {
+        // Each selected exam contributes ONE number per student: that
+        // student's own mean across whichever subjects they have an
+        // actual recorded mark for in that exam (missing subjects are
+        // excluded, not treated as 0 — a genuine 0 still counts).
+        const perExamAverages: number[] = [];
+        examIdList.forEach(eid => {
+          const entries = cleanMarks.filter(m => m.student_id === s.id && m.exam_id === eid && m.score !== null && m.score !== undefined);
+          if (entries.length > 0) {
+            perExamAverages.push(entries.reduce((a, b) => a + (b.score as number), 0) / entries.length);
+          }
+        });
+        // The headline figure is the average OF those per-exam averages —
+        // e.g. 60%, 80%, 70% → 70% — never a pooled average of every
+        // individual subject mark across every exam (which would silently
+        // over-weight an exam that happens to have more subjects entered).
+        const avg = perExamAverages.length > 0
+          ? perExamAverages.reduce((a, b) => a + b, 0) / perExamAverages.length
+          : null;
+        return { student: s, avg, examsWithMarks: perExamAverages.length };
+      });
+
+      // Rank by average descending; students with no recorded marks in any
+      // selected exam ("N/A") are listed but not assigned a rank. Equal
+      // averages share the same rank.
+      const withMarks = [...rawRows].filter(r => r.avg !== null).sort((a, b) => (b.avg as number) - (a.avg as number));
+      let rank = 0, lastAvg: number | null = null;
+      const ranked: AvgRow[] = withMarks.map((r, i) => {
+        if (lastAvg === null || Math.abs((r.avg as number) - lastAvg) > 1e-9) { rank = i + 1; lastAvg = r.avg as number; }
+        return { ...r, rank };
+      });
+      const unranked: AvgRow[] = rawRows.filter(r => r.avg === null).map(r => ({ ...r, rank: null }));
+
+      const overallAvg = withMarks.length > 0
+        ? withMarks.reduce((a, r) => a + (r.avg as number), 0) / withMarks.length
+        : null;
+
+      setAvgResults({
+        examNames: selectedExamObjs.map(e => e.exam_name),
+        examCount: examIdList.length,
+        studentCount: pool.length,
+        overallAvg,
+        rows: [...ranked, ...unranked],
+      });
+    } catch (e: any) {
+      setAvgError(e?.message || 'Failed to calculate the exam average analysis.');
+    } finally {
+      setAvgLoading(false);
+    }
+  };
+
+  const sortedAvgRows = useMemo(() => {
+    if (!avgResults) return [];
+    const rows = [...avgResults.rows];
+    const dir = avgSort.dir === 'asc' ? 1 : -1;
+    rows.sort((a, b) => {
+      switch (avgSort.key) {
+        case 'name': return dir * a.student.name.localeCompare(b.student.name);
+        case 'admission': return dir * a.student.admission_number.localeCompare(b.student.admission_number);
+        case 'avg': return dir * ((a.avg ?? -1) - (b.avg ?? -1));
+        case 'rank': default: return dir * ((a.rank ?? 999999) - (b.rank ?? 999999));
+      }
+    });
+    return rows;
+  }, [avgResults, avgSort]);
+
+  const toggleAvgSort = (key: typeof avgSort.key) =>
+    setAvgSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' });
 
   // Rankings/overview stats are "current" computations — a transferred,
   // withdrawn, deceased, or graduated learner shouldn't appear in class
@@ -1093,7 +1161,9 @@ export default function InsightsCenter() {
     const avg  = studentMeans.reduce((a, b) => a + b.mean, 0) / studentMeans.length;
     // Pass rate: students whose mean >= 41
     const pass = studentMeans.filter(r => r.mean >= 41).length / studentMeans.length * 100;
-    // Highest/lowest individual subject scores (entered only)
+    // Highest/lowest individual subject scores (entered only, and only for
+    // currently active students — a former student's old score shouldn't
+    // skew the class's current highest/lowest).
     const activeIds = new Set(activeStudents.map(s => s.id));
     const enteredScores = marks
       .filter(m => m.score !== null && m.score !== undefined && activeIds.has(m.student_id))
@@ -1128,13 +1198,6 @@ export default function InsightsCenter() {
       };
     }) as { subject_name: string; subject_code: string; score: number | null; teacher_remark?: string; entered: boolean }[]
   , [marks, subjects]);
-
-  const getPrevStudentMarks = useCallback((studentId: string) =>
-    subjects.map(subj => {
-      const m = prevMarks.find(mk => mk.student_id === studentId && mk.subject_id === subj.id);
-      return m ? { subject_name: subj.subject_name, score: m.score } : null;
-    }).filter(Boolean) as { subject_name: string; score: number }[],
-    [prevMarks, subjects]);
 
   const getStudentAtt = useCallback((studentId: string) => {
     const sa = attendance.filter(a => a.student_id === studentId && new Date(a.date).getFullYear() === Number(year));
@@ -1171,13 +1234,12 @@ export default function InsightsCenter() {
         year, term,
         subjectMarks: getStudentMarks(student.id),
         att: getStudentAtt(student.id),
-        prevSubjectMarks: prevExamId ? getPrevStudentMarks(student.id) : undefined,
       });
     } catch (err) {
       console.error('Report card error:', err);
       alert('Failed to generate report card. Please try again.');
     }
-  }, [school, logo, sid, grades, exams, examId, year, term, rankings, getStudentMarks, getStudentAtt, getPrevStudentMarks, prevExamId]);
+  }, [school, logo, sid, grades, exams, examId, year, term, rankings, getStudentMarks, getStudentAtt]);
 
   const handleGenRankingsPDF = useCallback(async () => {
     if (!gradeId) { alert('Please select a grade first.'); return; }
@@ -1197,21 +1259,16 @@ export default function InsightsCenter() {
       const examName  = examId
         ? (exams.find(e => String(e.id) === String(examId))?.exam_name || 'All Exams')
         : 'All Exams';
-      const prevExamName = prevExamId
-        ? exams.find(e => String(e.id) === String(prevExamId))?.exam_name
-        : undefined;
       await generateRankingsPDF({
         school: liveSchool, logo: liveLogo,
         gradeName, examName, year, term,
         rankings, subjects, marks,
-        prevMarks:    prevExamId ? prevMarks : undefined,
-        prevExamName,
       });
     } catch (err) {
       console.error('Rankings PDF error:', err);
       alert('Failed to generate PDF. Please try again.');
     }
-  }, [school, logo, sid, grades, gradeId, exams, examId, year, term, rankings, subjects, marks, prevMarks, prevExamId]);
+  }, [school, logo, sid, grades, gradeId, exams, examId, year, term, rankings, subjects, marks]);
 
   const exportRankingsExcel = useCallback(() => {
     if (!gradeId) { alert('Please select a grade first.'); return; }
@@ -1314,10 +1371,9 @@ export default function InsightsCenter() {
               {[
                 { val: year,    set: setYear,    opts: yearOptions.map(y => ({ v: y, l: y })),                                                  ph: 'Year'      },
                 { val: term,    set: setTerm,    opts: [{ v: '', l: 'All Terms' }, ...['Term 1','Term 2','Term 3'].map(t => ({ v: t, l: t }))], ph: 'Term'      },
-                { val: gradeId, set: (v: string) => { setGradeId(v); setExamId(''); setPrevExamId(''); },
+                { val: gradeId, set: (v: string) => { setGradeId(v); setExamId(''); },
                                                  opts: [{ v: '', l: 'All Grades' }, ...grades.map(g => ({ v: g.id, l: g.grade_name }))],       ph: 'Grade'     },
                 { val: examId,  set: setExamId,  opts: [{ v: '', l: 'All Exams' }, ...filteredExams.map(e => ({ v: e.id, l: e.exam_name }))],   ph: 'Exam'      },
-                { val: prevExamId, set: setPrevExamId, opts: [{ v: '', l: 'Compare With…' }, ...filteredExams.filter(e => e.id !== examId).map(e => ({ v: e.id, l: e.exam_name }))], ph: 'Compare' },
               ].map(f => (
                 <select key={f.ph} value={f.val} onChange={e => f.set(e.target.value)}
                   className="text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-[#123465] cursor-pointer">
@@ -1333,6 +1389,7 @@ export default function InsightsCenter() {
               { key: 'overview',    label: '📊 Overview'    },
               { key: 'rankings',    label: '🏆 Rankings'    },
               { key: 'reportcards', label: '📄 Report Cards' },
+              { key: 'examaverage', label: '➗ Exam Average Analysis' },
             ] as const).map(t => (
               <button key={t.key} onClick={() => setTab(t.key)}
                 className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${tab === t.key ? 'text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
@@ -1817,6 +1874,154 @@ export default function InsightsCenter() {
               </div>
             )}
 
+            {/* ════ EXAM AVERAGE ANALYSIS ════ */}
+            {tab === 'examaverage' && (
+              <div className="space-y-5">
+                <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5">
+                  <div className="flex items-center justify-between flex-wrap gap-3 mb-1">
+                    <div>
+                      <h2 className="font-bold text-slate-900 dark:text-white">Exam Average Analysis</h2>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Select one or more examinations for {gradeId ? 'the chosen grade' : 'all grades'} to calculate each student's average across them.
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-400 mb-4">
+                    Use the Grade, Term and Academic Year selectors above the tabs to narrow the list, then choose which examinations to include below.
+                  </p>
+
+                  {!gradeId ? (
+                    <div className="text-center py-6 text-sm text-slate-400 border border-dashed border-slate-200 dark:border-slate-700 rounded-xl">
+                      Select a grade/class above to see its examinations.
+                    </div>
+                  ) : filteredExams.length === 0 ? (
+                    <div className="text-center py-6 text-sm text-slate-400 border border-dashed border-slate-200 dark:border-slate-700 rounded-xl">
+                      No examinations found for this grade, term and academic year.
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-bold uppercase text-slate-400">Examinations ({selectedExamIds.size}/{filteredExams.length} selected)</span>
+                        <div className="flex gap-2">
+                          <button onClick={selectAllExams} className="text-xs font-semibold text-blue-600 hover:underline">Select All</button>
+                          <button onClick={clearExamAverageAnalysis} className="text-xs font-semibold text-slate-400 hover:underline">Clear</button>
+                        </div>
+                      </div>
+                      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2 mb-4 max-h-56 overflow-y-auto p-1">
+                        {filteredExams.map(e => (
+                          <label key={e.id} className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-sm cursor-pointer transition-colors ${selectedExamIds.has(e.id) ? 'border-blue-400 bg-blue-50 dark:bg-blue-500/10' : 'border-slate-200 dark:border-slate-700'}`}>
+                            <input type="checkbox" checked={selectedExamIds.has(e.id)} onChange={() => toggleExamSelection(e.id)} />
+                            <span className="truncate text-slate-700 dark:text-slate-200">{e.exam_name}</span>
+                            <span className="ml-auto text-[10px] text-slate-400 shrink-0">T{e.term} · {e.year}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={handleCalculateAverage} disabled={avgLoading || selectedExamIds.size === 0}
+                          className="px-4 py-2 rounded-xl text-white text-xs font-semibold disabled:opacity-50 transition-colors"
+                          style={{ background: '#1e3a5f' }}>
+                          {avgLoading ? 'Calculating…' : 'Calculate Average'}
+                        </button>
+                        <button onClick={clearExamAverageAnalysis} className="px-4 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 text-slate-500">
+                          Clear
+                        </button>
+                      </div>
+                    </>
+                  )}
+
+                  {avgError && <div className="mt-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl p-3">{avgError}</div>}
+                  {avgWarning && <div className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3">{avgWarning}</div>}
+                </div>
+
+                {avgResults && (
+                  <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4">
+                    <div className="flex items-center justify-between flex-wrap gap-3">
+                      <div>
+                        <p className="text-xs text-slate-500">Examinations: <span className="font-semibold text-slate-700 dark:text-slate-200">{avgResults.examNames.join(', ')}</span></p>
+                        <p className="text-xs text-slate-400 mt-0.5">{avgResults.examCount} exam(s) selected · {avgResults.studentCount} students analyzed</p>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-2xl font-black text-slate-900 dark:text-white">{avgResults.overallAvg !== null ? avgResults.overallAvg.toFixed(1) + '%' : 'N/A'}</div>
+                        <div className="text-[10px] uppercase text-slate-400">Overall Average</div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={async () => {
+                          const numSid = Number(sid);
+                          let liveSchool = school;
+                          if (!liveSchool?.name) {
+                            const { data } = await supabase.from('schools')
+                              .select('id,name,logo_url,motto,address,phone,email')
+                              .eq('id', !isNaN(numSid) && numSid > 0 ? numSid : sid)
+                              .maybeSingle();
+                            if (data?.name) liveSchool = data;
+                          }
+                          const liveLogo = liveSchool?.logo_url?.trim()
+                            ? await fetchLogo(liveSchool.logo_url.trim()) : logo;
+                          await generateExamAverageAnalysisPDF({
+                            school: liveSchool, logo: liveLogo,
+                            gradeName: grades.find(g => String(g.id) === String(gradeId))?.grade_name || 'All Grades',
+                            year, term, examNames: avgResults.examNames, examCount: avgResults.examCount,
+                            studentCount: avgResults.studentCount, overallAvg: avgResults.overallAvg, rows: sortedAvgRows,
+                          });
+                        }} className="px-3 py-2 rounded-xl text-white text-xs font-semibold" style={{ background: '#1e3a5f' }}>
+                          📄 PDF
+                        </button>
+                        <button onClick={() => {
+                          const gradeName = grades.find(g => String(g.id) === String(gradeId))?.grade_name || 'All Grades';
+                          const sheetRows = sortedAvgRows.map(r => ({
+                            Rank: r.rank ?? '—',
+                            'Student Name': r.student.name,
+                            'Admission No.': r.student.admission_number,
+                            'Average (%)': r.avg !== null ? Number(r.avg.toFixed(1)) : 'N/A',
+                            'Exams With Marks': r.examsWithMarks,
+                            Level: r.avg !== null ? getRubric(r.avg).code : '—',
+                          }));
+                          const wb = XLSX.utils.book_new();
+                          const ws = XLSX.utils.json_to_sheet(sheetRows);
+                          XLSX.utils.book_append_sheet(wb, ws, 'Exam Average Analysis');
+                          XLSX.writeFile(wb, `Exam_Average_Analysis_${gradeName.replace(/\s+/g, '_')}_${year}.xlsx`);
+                        }} className="px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300">
+                          📊 Excel
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-xs uppercase text-slate-400 border-b border-slate-100 dark:border-slate-800">
+                            {([
+                              ['rank', 'Rank'], ['name', 'Student'], ['admission', 'Admission No.'], ['avg', 'Average'],
+                            ] as [typeof avgSort.key, string][]).map(([key, label]) => (
+                              <th key={key} onClick={() => toggleAvgSort(key)} className="px-3 py-2 cursor-pointer select-none hover:text-slate-600">
+                                {label} {avgSort.key === key ? (avgSort.dir === 'asc' ? '▲' : '▼') : ''}
+                              </th>
+                            ))}
+                            <th className="px-3 py-2">Exams w/ Marks</th>
+                            <th className="px-3 py-2">Level</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sortedAvgRows.length === 0 ? (
+                            <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">No results to display.</td></tr>
+                          ) : sortedAvgRows.map(r => (
+                            <tr key={r.student.id} className="border-b border-slate-50 dark:border-slate-800/50">
+                              <td className="px-3 py-2 font-semibold">{r.rank ?? '—'}</td>
+                              <td className="px-3 py-2">{r.student.name}</td>
+                              <td className="px-3 py-2 text-slate-500">{r.student.admission_number}</td>
+                              <td className="px-3 py-2 font-bold">{r.avg !== null ? r.avg.toFixed(1) + '%' : 'N/A'}</td>
+                              <td className="px-3 py-2 text-slate-500">{r.examsWithMarks}/{avgResults.examCount}</td>
+                              <td className="px-3 py-2">{r.avg !== null ? getRubric(r.avg).code : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
           </motion.div>
         </AnimatePresence>
       </div>
@@ -1824,4 +2029,3 @@ export default function InsightsCenter() {
   );
 }
                       
-  

@@ -1037,8 +1037,9 @@ export default function InsightsCenter() {
       const rawRows = pool.map(s => {
         // Each selected exam contributes ONE number per student: that
         // student's own mean across whichever subjects they have an
-        // actual recorded mark for in that exam (missing subjects are
-        // excluded, not treated as 0 — a genuine 0 still counts).
+        // actual recorded mark for in that exam (missing subjects within
+        // a sat exam are excluded, not treated as 0 — a genuine 0 still
+        // counts).
         const perExamAverages: number[] = [];
         examIdList.forEach(eid => {
           const entries = cleanMarks.filter(m => m.student_id === s.id && m.exam_id === eid && m.score !== null && m.score !== undefined);
@@ -1046,23 +1047,27 @@ export default function InsightsCenter() {
             perExamAverages.push(entries.reduce((a, b) => a + (b.score as number), 0) / entries.length);
           }
         });
-        // The headline figure is the average OF those per-exam averages —
-        // e.g. 60%, 80%, 70% → 70% — never a pooled average of every
-        // individual subject mark across every exam (which would silently
-        // over-weight an exam that happens to have more subjects entered).
+        // The headline figure is the SUM of those per-exam averages divided
+        // by the number of exams SELECTED — e.g. 60%, 80%, 70% over 3
+        // selected exams → 70%. A learner who sat only 1 of 3 selected
+        // exams (say 60%) therefore gets 60 / 3 = 20%, not 60%: an exam
+        // not sat counts as zero toward the average. Students who sat none
+        // of the selected exams stay N/A (unranked).
         const avg = perExamAverages.length > 0
-          ? perExamAverages.reduce((a, b) => a + b, 0) / perExamAverages.length
+          ? perExamAverages.reduce((a, b) => a + b, 0) / examIdList.length
           : null;
 
         // Per-subject average across the selected exams: for each subject,
-        // the mean of this student's recorded scores in that subject (one
-        // score per selected exam; exams without a mark are skipped).
+        // the sum of this student's recorded scores in that subject divided
+        // by the number of exams SELECTED (an exam with no mark in that
+        // subject counts as zero, consistent with the overall average).
+        // A subject with no marks at all in any selected exam shows '—'.
         const subjectAvgs: Record<string, number | null> = {};
         subjectCols.forEach(sc => {
           const scores = cleanMarks
             .filter(m => m.student_id === s.id && m.subject_id === sc.id && m.score !== null && m.score !== undefined)
             .map(m => Number(m.score));
-          subjectAvgs[sc.id] = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
+          subjectAvgs[sc.id] = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / examIdList.length : null;
         });
         return { student: s, avg, examsWithMarks: perExamAverages.length, subjectAvgs };
       });

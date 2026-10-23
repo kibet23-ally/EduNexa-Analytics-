@@ -1,19 +1,15 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { getKjjLevel } from "./kjj";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/* Level / points come from the shared KJJ rubric (./kjj) — single source of truth. */
 export const getCBCGrade = (score: number) => {
-  if (score >= 90) return { level: "EE1", points: 8 };
-  if (score >= 75) return { level: "EE2", points: 7 };
-  if (score >= 58) return { level: "ME1", points: 6 };
-  if (score >= 41) return { level: "ME2", points: 5 };
-  if (score >= 31) return { level: "AE1", points: 4 };
-  if (score >= 21) return { level: "AE2", points: 3 };
-  if (score >= 11) return { level: "BE1", points: 2 };
-  return { level: "BE2", points: 1 };
+  const l = getKjjLevel(score);
+  return { level: l.code, points: l.points };
 };
 
 export const getRemarks = (score: number) => {
@@ -35,16 +31,7 @@ export const getRemarks = (score: number) => {
   };
 };
 
-export const getOverallGrade = (score: number) => {
-  if (score >= 90) return "EE1";
-  if (score >= 75) return "EE2";
-  if (score >= 58) return "ME1";
-  if (score >= 41) return "ME2";
-  if (score >= 31) return "AE1";
-  if (score >= 21) return "AE2";
-  if (score >= 11) return "BE1";
-  return "BE2";
-};
+export const getOverallGrade = (score: number) => getKjjLevel(score).code;
 
 import { supabase } from "./supabase";
 

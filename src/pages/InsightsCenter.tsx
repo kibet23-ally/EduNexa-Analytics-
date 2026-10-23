@@ -6,34 +6,30 @@ import * as XLSX from 'xlsx';
 import { PDF_COLORS, PDF_TABLE_THEME, addBorderToAllPages } from '../lib/pdfKit';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../useAuth';
+import {
+  KJJ_RUBRIC, getKjjLevel, isValidMark, getExpectedSubjectCount, resolveSubjectSet,
+  buildKjjRanking, subjectMarkAcrossExams, countRanked, formatKjjTotal, formatKjjCoverage,
+  formatKjjRank, KJJ_MAX_POINTS_PER_SUBJECT,
+  type KjjTotals, type KjjRankStatus,
+} from '../lib/kjj';
 
-/* ─── CBC Kenya Grading Rubric (8 levels) ─────────────────────────────────── */
-const RUBRIC = [
-  { min: 90, max: 100, code: 'EE1', label: 'Exceeding Expectations 1', pts: 8, color: '#42b129', bg: '#dcfce7', text: '#14532d' },
-  { min: 75, max: 89,  code: 'EE2', label: 'Exceeding Expectations 2', pts: 7, color: '#42b129', bg: '#d1fae5', text: '#065f46' },
-  { min: 58, max: 74,  code: 'ME1', label: 'Meeting Expectations 1',   pts: 6, color: '#2563eb', bg: '#dbeafe', text: '#1e40af' },
-  { min: 41, max: 57,  code: 'ME2', label: 'Meeting Expectations 2',   pts: 5, color: '#0ea5e9', bg: '#e0f2fe', text: '#075985' },
-  { min: 31, max: 40,  code: 'AE1', label: 'Approaching Expectations 1', pts: 4, color: '#d97706', bg: '#fef3c7', text: '#92400e' },
-  { min: 21, max: 30,  code: 'AE2', label: 'Approaching Expectations 2', pts: 3, color: '#f59e0b', bg: '#fffbeb', text: '#78350f' },
-  { min: 11, max: 20,  code: 'BE1', label: 'Below Expectations 1',     pts: 2, color: '#dc2626', bg: '#fee2e2', text: '#991b1b' },
-  { min: 0,  max: 10,  code: 'BE2', label: 'Below Expectations 2',     pts: 1, color: '#991b1b', bg: '#fecaca', text: '#7f1d1d' },
-];
-
-const getRubric = (score: number) => { const s = Math.round(score); return RUBRIC.find(r => s >= r.min && s <= r.max) || RUBRIC[RUBRIC.length - 1]; };
-
-/* ─── Grade-band subject count rule (CBC Kenya) ───────────────────────────
- * Grades 4–6  (Upper Primary):      6 subjects
- * Grades 7–9  (Junior Secondary):   9 subjects
- * Each band has its own expected subject count. This is looked up per
- * STUDENT (from their own grade_id), not from the page-level grade filter —
- * the `subjects` list is fetched school-wide (not grade-scoped), so relying
- * on subjects.length alone silently divides every grade by the same number.
- * ─────────────────────────────────────────────────────────────────────── */
-const getExpectedSubjectCount = (gradeName: string): number => {
-  const gradeNum = parseInt(gradeName.match(/\d+/)?.[0] || '0', 10);
-  if (gradeNum >= 4 && gradeNum <= 6) return 6;
-  if (gradeNum >= 7 && gradeNum <= 9) return 9;
-  return 0; // Unknown grade band — fall back to actual subject count
+/* ─── KJJ grading rubric ───────────────────────────────────────────────────
+ * Levels, points, totals and ranking all live in ../lib/kjj (single source of
+ * truth). Only the UI colours are defined here.                               */
+const RUBRIC_STYLE: Record<string, { color: string; bg: string; text: string }> = {
+  EE1: { color: '#42b129', bg: '#dcfce7', text: '#14532d' },
+  EE2: { color: '#42b129', bg: '#d1fae5', text: '#065f46' },
+  ME1: { color: '#2563eb', bg: '#dbeafe', text: '#1e40af' },
+  ME2: { color: '#0ea5e9', bg: '#e0f2fe', text: '#075985' },
+  AE1: { color: '#d97706', bg: '#fef3c7', text: '#92400e' },
+  AE2: { color: '#f59e0b', bg: '#fffbeb', text: '#78350f' },
+  BE1: { color: '#dc2626', bg: '#fee2e2', text: '#991b1b' },
+  BE2: { color: '#991b1b', bg: '#fecaca', text: '#7f1d1d' },
+};
+const RUBRIC = KJJ_RUBRIC.map(r => ({ ...r, pts: r.points, ...RUBRIC_STYLE[r.code] }));
+const getRubric = (score: number) => {
+  const lvl = getKjjLevel(score);
+  return RUBRIC.find(r => r.code === lvl.code)!;
 };
 
 /* ─── Reusable mean score utility ─────────────────────────────────────────
@@ -113,6 +109,11 @@ interface Subject   { id: string; subject_name: string; subject_code: string; sc
 interface Exam      { id: string; exam_name: string; term: string; year: number; school_id: any; grade_id?: string; is_school_wide: boolean; }
 interface Student   { id: string; name: string; admission_number: string; gender: string; grade_id: string; school_id: any; }
 interface Mark      { id: string; student_id: string; subject_id: string; exam_id: string; score: number; school_id: any; teacher_remark?: string; grade_id: string; teacher_id?: string; }
+type RankedStudent = Student & {
+  kjj: KjjTotals; rank: number | null; rankStatus: KjjRankStatus;
+  subjectMarks: Record<string, number | null>;
+  avg: number; subjects: number; didNotSit: boolean; rankedInGrade: number;
+};
 interface AttendanceRecord { id: string; school_id: any; student_id: string; grade_id: string; date: string; status: string; }
 
 /* ─── Logo fetcher ────────────────────────────────────────────────────────── */
@@ -234,11 +235,12 @@ async function generateRankingsPDF(params: {
   school: School | undefined;
   logo: { data: string; fmt: 'PNG' | 'JPEG' } | null;
   gradeName: string; examName: string; year: string; term: string;
-  rankings: (Student & { rank: number; avg: number; total: number; subjects: number })[];
+  rankings: RankedStudent[];
   subjects: Subject[];
   marks: Mark[];
+  notes?: string[];
 }) {
-  const { school, logo, gradeName, examName, year, term, rankings, subjects, marks } = params;
+  const { school, logo, gradeName, examName, year, term, rankings, subjects, marks, notes = [] } = params;
   const doc = new jsPDF('l', 'mm', 'a4');
   const W = doc.internal.pageSize.width;
   const M = 14;
@@ -269,7 +271,7 @@ async function generateRankingsPDF(params: {
     `Grade: ${gradeName}`,
     `Year: ${year}`,
     `Term: ${term || 'All Terms'}`,
-    `Students: ${rankings.length}`,
+    `Students: ${rankings.length} (${countRanked(rankings)} ranked)`,
     `Mean: ${classAvg.toFixed(1)}%`,
     `Class PL: ${classR.code} (${classR.pts} pts)`,
     `Pass Rate: ${passRate.toFixed(1)}%`,
@@ -343,33 +345,32 @@ async function generateRankingsPDF(params: {
   doc.addPage('l');
   drawPDFLetterhead(doc, school, logo, `STUDENT RANKINGS — ${gradeName} • ${examName} • ${year}`, true);
 
-  // Build dynamic columns: Rank, Name, Adm, Gender, [Subject cols...], Total, Avg, PL, Pts
+  // Build dynamic columns: Rank, Name, Adm, Gender, [Subject cols...], KJJ Total, Avg, PL
   const subjectCols = subjects.filter(s => marks.some(m => m.subject_id === s.id));
   const availableW  = W - M * 2;
-  const fixedW      = 10 + 42 + 18 + 14 + 14 + 14 + 16 + 14; // rank+name+adm+gender+total+avg+pl+pts
-  const subColW     = Math.max(12, Math.min(18, (availableW - fixedW) / (subjectCols.length || 1)));
+  const fixedW      = 10 + 42 + 18 + 10 + 24 + 14 + 12; // rank+name+adm+gender+kjj+avg+pl
+  const subColW     = Math.max(11, Math.min(18, (availableW - fixedW) / (subjectCols.length || 1)));
 
   const rankHead = ['#', 'Student Name', 'Adm No', 'Sex',
     ...subjectCols.map(s => s.subject_code || s.subject_name.substring(0, 6)),
-    'Total', 'Avg%', 'PL', 'Pts'];
+    'KJJ Total', 'Avg%', 'PL'];
 
   const rankBody = rankings.map(s => {
-    const dns = (s as any).didNotSit;
+    const dns = s.didNotSit;
     const subScores = subjectCols.map(subj => {
-      const m = marks.find(mk => mk.student_id === s.id && mk.subject_id === subj.id);
-      return m ? m.score : '—';
+      const v = s.subjectMarks[String(subj.id)];
+      return isValidMark(v) ? Math.round(v * 10) / 10 : '—';
     });
-    const r = dns ? { code: 'DNS', pts: 0 } : getRubric(s.avg);
+    const cov = formatKjjCoverage(s.kjj);
     return [
-      dns ? 'DNS' : `#${s.rank}`,
+      formatKjjRank(s.rank, s.rankStatus),
       s.name,
       s.admission_number,
       s.gender.charAt(0).toUpperCase(),
       ...(dns ? subjectCols.map(() => '—') : subScores),
-      dns ? 0 : s.total,
-      dns ? '0.0' : s.avg.toFixed(1),
-      r.code,
-      r.pts,
+      dns ? '—' : formatKjjTotal(s.kjj) + (cov ? `\n${cov}` : ''),
+      dns ? '—' : s.avg.toFixed(1),
+      dns ? 'DNS' : getRubric(s.avg).code,
     ];
   });
 
@@ -392,31 +393,15 @@ async function generateRankingsPDF(params: {
       2:  { cellWidth: 18 },
       3:  { cellWidth: 10, halign: 'center' },
       ...subColStyles,
-      [4 + subjectCols.length]:     { cellWidth: 14, halign: 'center', fontStyle: 'bold' },
-      [4 + subjectCols.length + 1]: { cellWidth: 14, halign: 'center', fontStyle: 'bold' },
-      [4 + subjectCols.length + 2]: { cellWidth: 16, halign: 'center', fontStyle: 'bold' },
-      [4 + subjectCols.length + 3]: { cellWidth: 10, halign: 'center' },
+      [4 + subjectCols.length]:     { cellWidth: 24, halign: 'center', fontStyle: 'bold', overflow: 'linebreak' },
+      [4 + subjectCols.length + 1]: { cellWidth: 14, halign: 'center' },
+      [4 + subjectCols.length + 2]: { cellWidth: 12, halign: 'center' },
     },
+    margin: { left: M, right: M, bottom: 18 },
     didParseCell: (data) => {
-      if (data.section === 'body') {
-        const plCol = 4 + subjectCols.length + 2;
-        if (data.column.index === 0) {
-          const rank = parseInt(String(data.cell.text[0]).replace('#', ''));
-          if (rank <= 3) data.cell.styles.fontStyle = 'bold';
-        }
-        if (data.column.index === plCol) {
-          const code = String(data.cell.text[0]);
-          const r = RUBRIC.find(r => r.code === code);
-          if (r) data.cell.styles.textColor = [0, 0, 0];
-        }
-        // Colour individual subject scores
-        if (data.column.index >= 4 && data.column.index < 4 + subjectCols.length) {
-          const val = parseFloat(String(data.cell.text[0]));
-          if (!isNaN(val)) {
-            const r = getRubric(val);
-            data.cell.styles.textColor = [0, 0, 0];
-          }
-        }
+      if (data.section === 'body' && data.column.index === 0) {
+        const rank = parseInt(String(data.cell.text[0]));
+        if (!isNaN(rank) && rank <= 3) data.cell.styles.fontStyle = 'bold';
       }
     },
   });
@@ -427,9 +412,20 @@ async function generateRankingsPDF(params: {
   doc.rect(M, fy2 + 0.5, W - M * 2, 7, 'F');
   doc.setTextColor(215, 215, 215); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
   doc.text(
-    `CLASS SUMMARY  •  Students: ${rankings.length}  •  Class Mean: ${classAvg.toFixed(1)}%  •  PL: ${classR.code}  •  Pass Rate: ${passRate.toFixed(1)}%`,
+    `CLASS SUMMARY  •  Students: ${rankings.length}  •  Ranked: ${countRanked(rankings)}  •  Class Mean: ${classAvg.toFixed(1)}%  •  PL: ${classR.code}  •  Pass Rate: ${passRate.toFixed(1)}%`,
     W / 2, fy2 + 5.5, { align: 'center' }
   );
+  // Ranking policy note (identical wording on every KJJ ranking output)
+  doc.setTextColor(60, 60, 60); doc.setFont('helvetica', 'italic'); doc.setFontSize(6.5);
+  const policy = [
+    `Ranking = TOTAL KJJ points (EE1=8 … BE2=1, maximum ${KJJ_MAX_POINTS_PER_SUBJECT} per subject), highest first; not divided by the number of subjects. Equal totals share a rank (1, 2, 2, 4).`,
+    'Learners with missing subject marks are shown with their partial total and are not ranked; DNS = did not sit.',
+    ...notes,
+  ];
+  const pageH = doc.internal.pageSize.height;
+  let noteY = fy2 + 12;
+  if (noteY + 16 > pageH - 16) { doc.addPage('l'); noteY = 20; }
+  doc.text(policy, M, noteY, { maxWidth: W - M * 2 });
 
   drawPDFFooter(doc, school);
   addBorderToAllPages(doc);
@@ -448,9 +444,10 @@ async function generateExamAverageAnalysisPDF(params: {
   gradeName: string; year: string; term: string;
   examNames: string[]; examCount: number; studentCount: number; overallAvg: number | null;
   subjectCols: Subject[];
-  rows: { student: Student; avg: number | null; examsWithMarks: number; rank: number | null; subjectAvgs: Record<string, number | null> }[];
+  rows: { student: Student; avg: number | null; examsWithMarks: number; rank: number | null; rankStatus: KjjRankStatus; kjj: KjjTotals; subjectAvgs: Record<string, number | null> }[];
+  notes?: string[];
 }) {
-  const { school, logo, gradeName, year, term, examNames, examCount, studentCount, overallAvg, subjectCols, rows } = params;
+  const { school, logo, gradeName, year, term, examNames, examCount, studentCount, overallAvg, subjectCols, rows, notes = [] } = params;
   // Many subject columns need the extra width of a landscape page.
   const landscape = subjectCols.length > 4;
   const doc = new jsPDF(landscape ? 'l' : 'p', 'mm', 'a4');
@@ -477,13 +474,14 @@ async function generateExamAverageAnalysisPDF(params: {
   const body = rows.map(r => {
     const rubric = r.avg !== null ? getRubric(r.avg) : null;
     return [
-      r.rank ?? '—',
+      formatKjjRank(r.rank, r.rankStatus),
       r.student.name,
       r.student.admission_number,
       ...subjectCols.map(sc => {
         const v = r.subjectAvgs[sc.id];
         return v !== null && v !== undefined ? v.toFixed(1) : '—';
       }),
+      formatKjjTotal(r.kjj) + (formatKjjCoverage(r.kjj) ? `\n${formatKjjCoverage(r.kjj)}` : ''),
       r.avg !== null ? r.avg.toFixed(1) + '%' : 'N/A',
       String(r.examsWithMarks),
       rubric ? rubric.code : '—',
@@ -492,7 +490,7 @@ async function generateExamAverageAnalysisPDF(params: {
 
   autoTable(doc, {
     startY: 76,
-    head: [['Rank', 'Student Name', 'Admission No.', ...subjectCols.map(sc => sc.subject_name), 'Average', 'Exams w/ Marks', 'Level']],
+    head: [['Rank', 'Student Name', 'Admission No.', ...subjectCols.map(sc => sc.subject_name), 'KJJ Total', 'Average', 'Exams w/ Marks', 'Level']],
     body,
     theme: 'grid',
     styles: { fontSize: subjectCols.length > 8 ? 6.5 : 8, cellPadding: 2, lineColor: [150, 174, 211], lineWidth: 0.2, textColor: [30, 30, 30], halign: 'center' },
@@ -502,11 +500,21 @@ async function generateExamAverageAnalysisPDF(params: {
       0: { cellWidth: 12 },
       1: { halign: 'left', cellWidth: landscape ? 48 : 50 },
       2: { cellWidth: landscape ? 26 : 28 },
-      [3 + subjectCols.length]: { fontStyle: 'bold' },
+      [3 + subjectCols.length]: { fontStyle: 'bold', cellWidth: 24 },
     },
     margin: { left: 14, right: 14, bottom: 20 },
     didDrawPage: () => { drawPDFFooter(doc, school); },
   });
+
+  const pageH = doc.internal.pageSize.height;
+  let noteY = (doc as any).lastAutoTable.finalY + 6;
+  if (noteY + 14 > pageH - 18) { doc.addPage(landscape ? 'l' : 'p'); noteY = 20; }
+  doc.setTextColor(60, 60, 60); doc.setFont('helvetica', 'italic'); doc.setFontSize(6.5);
+  doc.text([
+    `Ranking = TOTAL KJJ points (EE1=8 … BE2=1, maximum ${KJJ_MAX_POINTS_PER_SUBJECT} per subject), highest first; not divided by the number of subjects. Equal totals share a rank (1, 2, 2, 4).`,
+    'Learners with missing subject marks show their partial total and are not ranked; DNS = did not sit. Average (%) is shown for reference only.',
+    ...notes,
+  ], M, noteY, { maxWidth: W - M * 2 });
 
   addBorderToAllPages(doc);
   doc.save(`Exam_Average_Analysis_${gradeName.replace(/\s+/g, '_')}_${year}.pdf`);
@@ -515,7 +523,8 @@ async function generateExamAverageAnalysisPDF(params: {
 async function generateReportCard(params: {
   school: School | undefined;
   logo: { data: string; fmt: 'PNG' | 'JPEG' } | null;
-  student: Student & { rank?: number; totalStudents?: number };
+  student: Student & { rank?: number | null; totalStudents?: number };
+  kjj?: KjjTotals;
   grade: Grade | undefined;
   exam: Exam | undefined;
   year: string; term: string;
@@ -524,7 +533,7 @@ async function generateReportCard(params: {
   totalSubjects?: number;
   att: { total: number; present: number; absent: number; late: number; rate: number };
 }) {
-  const { school, logo, student, grade, exam, year, term, subjectMarks, calcAvg, totalSubjects, att } = params;
+  const { school, logo, student, kjj, grade, exam, year, term, subjectMarks, calcAvg, totalSubjects, att } = params;
   const doc = new jsPDF('p', 'mm', 'a4');
   const W = doc.internal.pageSize.width;
   const M = 14;
@@ -553,7 +562,8 @@ async function generateReportCard(params: {
   lbl('TERM:',      c2, panelY + 18); val(term || exam?.term || 'All Terms', c2 + 12, panelY + 18);
   lbl('YEAR:',      c3, panelY + 18); val(year, c3 + 11, panelY + 18);
   lbl('EXAM:',      c1, panelY + 24); val(exam?.exam_name || 'All Exams', c1 + 12, panelY + 24);
-  lbl('RANK:',      c2, panelY + 24); val(student.rank ? `${student.rank} / ${student.totalStudents}` : '—', c2 + 12, panelY + 24);
+  lbl('RANK:',      c2, panelY + 24); val(student.rank ? `${student.rank} / ${student.totalStudents}` : (kjj && !kjj.dns ? '— (incomplete)' : '—'), c2 + 12, panelY + 24);
+  lbl('KJJ TOTAL:', c3, panelY + 24); val(kjj ? formatKjjTotal(kjj) : '—', c3 + 21, panelY + 24);
 
   /* ── Marks Table ── */
   const tableY = panelY + 29;
@@ -613,12 +623,16 @@ async function generateReportCard(params: {
     doc.rect(M, fy + 0.5, W - M * 2, 7.5, 'F');
     doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
     doc.text(`OVERALL AVERAGE: ${avg.toFixed(1)} / 100`, M + 4, fy + 5.5);
-    doc.text(`GRADE: ${avgR.code}`, M + 80, fy + 5.5);
-    doc.text(`RUBRIC POINTS: ${avgR.pts}`, M + 110, fy + 5.5);
-    doc.text(`RANK: ${student.rank || '—'} / ${student.totalStudents || '—'}`, M + 148, fy + 5.5);
+    doc.text(`GRADE: ${avgR.code}`, M + 64, fy + 5.5);
+    doc.text(`KJJ TOTAL: ${kjj ? formatKjjTotal(kjj) : '—'}`, M + 90, fy + 5.5);
+    doc.text(`RANK: ${student.rank ?? '—'} / ${student.totalStudents ?? '—'}`, M + 148, fy + 5.5);
+    if (kjj && !kjj.dns && !kjj.complete) {
+      doc.setFont('helvetica', 'italic'); doc.setFontSize(6.5); doc.setTextColor(60, 60, 60);
+      doc.text(`${formatKjjCoverage(kjj)} — total shown is out of ${kjj.maxAssessed}; learners with missing marks are not ranked.`, M, fy + 11.5);
+    }
 
     /* ── Performance Trend Chart ── */
-    const chartY = fy + 12;
+    const chartY = fy + (kjj && !kjj.dns && !kjj.complete ? 15 : 12);
     doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(54, 54, 54);
     doc.text('LEARNER PERFORMANCE TREND — Subject Overview', W / 2, chartY + 3, { align: 'center' });
 
@@ -968,10 +982,10 @@ export default function InsightsCenter() {
   const [avgLoading, setAvgLoading] = useState(false);
   const [avgError, setAvgError] = useState<string | null>(null);
   const [avgWarning, setAvgWarning] = useState<string | null>(null);
-  const [avgSort, setAvgSort] = useState<{ key: 'name' | 'admission' | 'avg' | 'rank'; dir: 'asc' | 'desc' }>({ key: 'rank', dir: 'asc' });
-  interface AvgRow { student: Student; avg: number | null; examsWithMarks: number; rank: number | null; subjectAvgs: Record<string, number | null>; }
+  const [avgSort, setAvgSort] = useState<{ key: 'name' | 'admission' | 'avg' | 'rank' | 'kjj'; dir: 'asc' | 'desc' }>({ key: 'rank', dir: 'asc' });
+  interface AvgRow { student: Student; avg: number | null; examsWithMarks: number; rank: number | null; rankStatus: KjjRankStatus; kjj: KjjTotals; subjectAvgs: Record<string, number | null>; }
   const [avgResults, setAvgResults] = useState<null | {
-    examNames: string[]; examCount: number; studentCount: number; overallAvg: number | null; subjectCols: Subject[]; rows: AvgRow[];
+    examNames: string[]; examCount: number; studentCount: number; overallAvg: number | null; subjectCols: Subject[]; notes: string[]; rows: AvgRow[];
   }>(null);
 
   const toggleExamSelection = (id: string) => {
@@ -1042,47 +1056,59 @@ export default function InsightsCenter() {
         // counts).
         const perExamAverages: number[] = [];
         examIdList.forEach(eid => {
-          const entries = cleanMarks.filter(m => m.student_id === s.id && m.exam_id === eid && m.score !== null && m.score !== undefined);
+          const entries = cleanMarks.filter(m => m.student_id === s.id && m.exam_id === eid && isValidMark(m.score));
           if (entries.length > 0) {
             perExamAverages.push(entries.reduce((a, b) => a + (b.score as number), 0) / entries.length);
           }
         });
-        // The headline figure is the SUM of those per-exam averages divided
-        // by the number of exams SELECTED — e.g. 60%, 80%, 70% over 3
-        // selected exams → 70%. A learner who sat only 1 of 3 selected
-        // exams (say 60%) therefore gets 60 / 3 = 20%, not 60%: an exam
-        // not sat counts as zero toward the average. Students who sat none
-        // of the selected exams stay N/A (unranked).
+        // Informational overall average: SUM of the per-exam averages ÷ the
+        // number of exams SELECTED (an exam not sat counts as zero). It is
+        // shown for reference only — RANKING uses total KJJ points below.
         const avg = perExamAverages.length > 0
           ? perExamAverages.reduce((a, b) => a + b, 0) / examIdList.length
           : null;
 
-        // Per-subject average across the selected exams: for each subject,
-        // the sum of this student's recorded scores in that subject divided
-        // by the number of exams SELECTED (an exam with no mark in that
-        // subject counts as zero, consistent with the overall average).
-        // A subject with no marks at all in any selected exam shows '—'.
+        // Per-subject mark across the selected exams (shared rule in
+        // ../lib/kjj): sum of recorded scores ÷ number of exams selected.
+        // A subject with no mark in any selected exam is "missing" (null).
         const subjectAvgs: Record<string, number | null> = {};
         subjectCols.forEach(sc => {
           const scores = cleanMarks
-            .filter(m => m.student_id === s.id && m.subject_id === sc.id && m.score !== null && m.score !== undefined)
+            .filter(m => m.student_id === s.id && m.subject_id === sc.id && isValidMark(m.score))
             .map(m => Number(m.score));
-          subjectAvgs[sc.id] = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / examIdList.length : null;
+          subjectAvgs[sc.id] = subjectMarkAcrossExams(scores, examIdList.length);
         });
         return { student: s, avg, examsWithMarks: perExamAverages.length, subjectAvgs };
       });
 
-      // Rank by average descending; students with no recorded marks in any
-      // selected exam ("N/A") are listed but not assigned a rank. Equal
-      // averages share the same rank.
-      const withMarks = [...rawRows].filter(r => r.avg !== null).sort((a, b) => (b.avg as number) - (a.avg as number));
-      let rank = 0, lastAvg: number | null = null;
-      const ranked: AvgRow[] = withMarks.map((r, i) => {
-        if (lastAvg === null || Math.abs((r.avg as number) - lastAvg) > 1e-9) { rank = i + 1; lastAvg = r.avg as number; }
-        return { ...r, rank };
+      // KJJ ranking — per grade (each grade has its own subject set), by TOTAL
+      // KJJ points using the shared logic. Only learners assessed in every
+      // included subject are ranked; others are listed unranked; no marks = DNS.
+      const notes: string[] = [];
+      const finalRows: AvgRow[] = [];
+      const byGrade = new Map<string, typeof rawRows>();
+      rawRows.forEach(r => {
+        const k = String(r.student.grade_id);
+        if (!byGrade.has(k)) byGrade.set(k, []);
+        byGrade.get(k)!.push(r);
       });
-      const unranked: AvgRow[] = rawRows.filter(r => r.avg === null).map(r => ({ ...r, rank: null }));
+      byGrade.forEach((group, gid) => {
+        const gradeName = grades.find(g => String(g.id) === gid)?.grade_name || '';
+        const groupIds = new Set(group.map(r => r.student.id));
+        const set = resolveSubjectSet(
+          cleanMarks.filter(m => groupIds.has(m.student_id) && isValidMark(m.score)).map(m => m.subject_id),
+          gradeName,
+        );
+        if (set.note) notes.push(`${gradeName || 'Grade'}: ${set.note}`);
+        buildKjjRanking<(typeof rawRows)[number]>(group.map(r => ({ item: r, marks: r.subjectAvgs })), set.subjectIds).forEach(r => {
+          finalRows.push({
+            student: r.item.student, avg: r.item.avg, examsWithMarks: r.item.examsWithMarks, subjectAvgs: r.item.subjectAvgs,
+            rank: r.rank, rankStatus: r.rankStatus, kjj: r.kjj,
+          });
+        });
+      });
 
+      const withMarks = finalRows.filter(r => r.avg !== null);
       const overallAvg = withMarks.length > 0
         ? withMarks.reduce((a, r) => a + (r.avg as number), 0) / withMarks.length
         : null;
@@ -1093,7 +1119,8 @@ export default function InsightsCenter() {
         studentCount: pool.length,
         overallAvg,
         subjectCols,
-        rows: [...ranked, ...unranked],
+        notes,
+        rows: finalRows,
       });
     } catch (e: any) {
       setAvgError(e?.message || 'Failed to calculate the exam average analysis.');
@@ -1111,6 +1138,7 @@ export default function InsightsCenter() {
         case 'name': return dir * a.student.name.localeCompare(b.student.name);
         case 'admission': return dir * a.student.admission_number.localeCompare(b.student.admission_number);
         case 'avg': return dir * ((a.avg ?? -1) - (b.avg ?? -1));
+        case 'kjj': return dir * ((a.kjj.dns ? -1 : a.kjj.total) - (b.kjj.dns ? -1 : b.kjj.total));
         case 'rank': default: return dir * ((a.rank ?? 999999) - (b.rank ?? 999999));
       }
     });
@@ -1132,47 +1160,62 @@ export default function InsightsCenter() {
     [students]
   );
 
-  const rankings = useMemo(() => {
-    // ── Reusable ranking logic ─────────────────────────────────────────────
-    // Rules:
-    //   1. ALL *currently active* students included (even DNS — did not sit);
-    //      transferred/withdrawn/deceased/graduated students are excluded —
-    //      see activeStudents above.
-    //   2. Mean = sum(entered) / expectedSubjectCount for the STUDENT'S OWN
-    //      grade band (6 for grades 4–6, 9 for grades 7–9) — missing marks
-    //      are treated as 0. This is per-student, not a page-wide constant,
-    //      since `subjects` is fetched school-wide and is NOT grade-scoped.
-    //   3. DNS students ranked at bottom
-    //   4. Tied means share the same rank
-    // ──────────────────────────────────────────────────────────────────────
-    const fallbackTotal = subjects.length || 1;
-    const mapped = activeStudents.map(s => {
-      const studentGradeName = grades.find(g => String(g.id) === String(s.grade_id))?.grade_name || '';
-      const expected = getExpectedSubjectCount(studentGradeName);
-      const divisor = expected > 0 ? expected : fallbackTotal;
-      const studentMarks = marks.filter(m => m.student_id === s.id);
-      const enteredSum   = studentMarks.reduce((a, m) => a + (m.score ?? 0), 0);
-      const entered      = studentMarks.filter(m => m.score !== null && m.score !== undefined).length;
-      const avg = Math.round((enteredSum / divisor) * 10) / 10;
-      return { ...s, avg, total: enteredSum, subjects: entered, didNotSit: entered === 0 };
+  // ── KJJ rankings ─────────────────────────────────────────────────────────
+  // Ranked by TOTAL KJJ POINTS (never a mean, never raw marks) using the
+  // shared logic in ../lib/kjj. Learners are ranked within their own grade
+  // (each grade has its own subject set). Only learners assessed in ALL
+  // included subjects are ranked; learners with missing marks are listed with
+  // their partial total and coverage but left unranked; learners with no
+  // marks are DNS. Ties use competition ranking (1, 2, 2, 4).
+  const rankingBundle = useMemo(() => {
+    const byGrade = new Map<string, Student[]>();
+    activeStudents.forEach(s => {
+      const k = String(s.grade_id);
+      if (!byGrade.has(k)) byGrade.set(k, []);
+      byGrade.get(k)!.push(s);
     });
-    // Sort: ranked students first (desc avg), DNS last
-    const sorted = [...mapped].sort((a, b) => {
-      if (a.didNotSit && !b.didNotSit) return 1;
-      if (!a.didNotSit && b.didNotSit) return -1;
-      return b.avg - a.avg;
+    const rows: RankedStudent[] = [];
+    const notes: string[] = [];
+    byGrade.forEach((studs, gid) => {
+      const gradeName = grades.find(g => String(g.id) === gid)?.grade_name || '';
+      const ids = new Set(studs.map(s => s.id));
+      const gm = marks.filter(m => ids.has(m.student_id) && isValidMark(m.score));
+      const set = resolveSubjectSet(gm.map(m => m.subject_id), gradeName);
+      if (set.note) notes.push(`${gradeName || 'Grade'}: ${set.note}`);
+      // Several exams in the pool (no exam selected): a subject's mark is the
+      // sum of its scores ÷ the number of exams (a missing exam counts as 0).
+      const examCount = new Set(gm.map(m => m.exam_id)).size || 1;
+      const scoresByKey = new Map<string, number[]>();
+      gm.forEach(m => {
+        const k = `${m.student_id}|${m.subject_id}`;
+        if (!scoresByKey.has(k)) scoresByKey.set(k, []);
+        scoresByKey.get(k)!.push(m.score);
+      });
+      const entries = studs.map(s => {
+        const subjectMarks: Record<string, number | null> = {};
+        set.subjectIds.forEach(sid => {
+          subjectMarks[sid] = subjectMarkAcrossExams(scoresByKey.get(`${s.id}|${sid}`) ?? [], examCount);
+        });
+        return { item: s, marks: subjectMarks };
+      });
+      buildKjjRanking(entries, set.subjectIds).forEach(r => {
+        const valid = set.subjectIds.map(id => r.marks[id]).filter(isValidMark);
+        const avg = valid.length ? Math.round((valid.reduce((a, b) => a + b, 0) / valid.length) * 10) / 10 : 0;
+        rows.push({
+          ...r.item, kjj: r.kjj, rank: r.rank, rankStatus: r.rankStatus,
+          subjectMarks: r.marks as Record<string, number | null>,
+          avg, subjects: r.kjj.assessed, didNotSit: r.kjj.dns, rankedInGrade: 0,
+        });
+      });
     });
-    // Assign ranks with tie handling
-    let currentRank = 1;
-    return sorted.map((s, i) => {
-      if (s.didNotSit) return { ...s, rank: sorted.length };
-      if (i > 0 && !sorted[i-1].didNotSit && sorted[i-1].avg === s.avg) {
-        return { ...s, rank: currentRank };
-      }
-      currentRank = i + 1;
-      return { ...s, rank: currentRank };
-    });
-  }, [marks, activeStudents, subjects, grades]);
+    // "of N" = number of ranked learners in that learner's own grade
+    const rankedPerGrade = new Map<string, number>();
+    rows.forEach(r => { if (r.rank !== null) rankedPerGrade.set(String(r.grade_id), (rankedPerGrade.get(String(r.grade_id)) ?? 0) + 1); });
+    rows.forEach(r => { r.rankedInGrade = rankedPerGrade.get(String(r.grade_id)) ?? 0; });
+    return { rows, notes };
+  }, [marks, activeStudents, grades]);
+  const rankings = rankingBundle.rows;
+  const rankingNotes = rankingBundle.notes;
 
   const classStats = useMemo(() => {
     if (!subjects.length || !activeStudents.length) return null;
@@ -1256,10 +1299,10 @@ export default function InsightsCenter() {
       }
       const liveLogo = liveSchool?.logo_url?.trim()
         ? await fetchLogo(liveSchool.logo_url.trim()) : logo;
-      const rankedCount = rankings.filter(r => !(r as any).didNotSit).length;
       await generateReportCard({
         school: liveSchool, logo: liveLogo,
-        student: { ...student, rank: rank?.rank, totalStudents: rankedCount },
+        student: { ...student, rank: rank?.rank ?? null, totalStudents: rank?.rankedInGrade },
+        kjj: rank?.kjj,
         grade: grades.find(g => String(g.id) === String(student.grade_id)),
         exam:  exams.find(e => String(e.id) === String(examId)),
         year, term,
@@ -1293,39 +1336,41 @@ export default function InsightsCenter() {
       await generateRankingsPDF({
         school: liveSchool, logo: liveLogo,
         gradeName, examName, year, term,
-        rankings, subjects, marks,
+        rankings, subjects, marks, notes: rankingNotes,
       });
     } catch (err) {
       console.error('Rankings PDF error:', err);
       alert('Failed to generate PDF. Please try again.');
     }
-  }, [school, logo, sid, grades, gradeId, exams, examId, year, term, rankings, subjects, marks]);
+  }, [school, logo, sid, grades, gradeId, exams, examId, year, term, rankings, rankingNotes, subjects, marks]);
 
   const exportRankingsExcel = useCallback(() => {
     if (!gradeId) { alert('Please select a grade first.'); return; }
     const subjectCols = subjects.filter(s => marks.some(m => m.subject_id === s.id));
     const wb = XLSX.utils.book_new();
 
-    // Sheet 1: Rankings with all subject marks
+    // Sheet 1: Rankings by TOTAL KJJ points (same figures as the screen & PDF)
     const rows = rankings.map(s => {
-      const dns = (s as any).didNotSit;
+      const dns = s.didNotSit;
       const row: Record<string, any> = {
-        Rank: dns ? 'DNS' : s.rank,
+        Rank: formatKjjRank(s.rank, s.rankStatus),
         'Student Name': s.name,
         'Adm No': s.admission_number,
         Gender: s.gender,
         Class: grades.find(g => String(g.id) === String(s.grade_id))?.grade_name || '',
-        Status: dns ? 'Did Not Sit' : 'Sat',
+        Status: dns ? 'Did Not Sit' : s.rankStatus === 'ranked' ? 'Ranked' : 'Incomplete (not ranked)',
       };
       subjectCols.forEach(subj => {
-        const m = marks.find(mk => mk.student_id === s.id && mk.subject_id === subj.id);
-        row[subj.subject_name] = (m && m.score !== null) ? m.score : '—';
+        const v = s.subjectMarks[String(subj.id)];
+        row[subj.subject_name] = isValidMark(v) ? Math.round(v * 10) / 10 : '—';
       });
-      row['Total'] = dns ? 0 : s.total;
+      row['Total KJJ Points'] = dns ? 0 : s.kjj.total;
+      row['Maximum Possible'] = dns ? s.kjj.max : s.kjj.complete ? s.kjj.max : s.kjj.maxAssessed;
+      row['KJJ Total'] = formatKjjTotal(s.kjj);
+      row['Subjects Assessed'] = `${s.kjj.assessed} of ${s.kjj.included}`;
       row['Average (%)'] = dns ? 0 : s.avg;
       row['Grade (PL)'] = dns ? 'DNS' : getRubric(s.avg).code;
       row['Performance Level'] = dns ? 'Did Not Sit' : getRubric(s.avg).label;
-      row['Rubric Points'] = dns ? 0 : getRubric(s.avg).pts;
       return row;
     });
     const ws1 = XLSX.utils.json_to_sheet(rows);
@@ -1361,10 +1406,19 @@ export default function InsightsCenter() {
     const ws3 = XLSX.utils.json_to_sheet(rubricRows);
     XLSX.utils.book_append_sheet(wb, ws3, 'Grading Rubric');
 
+    // Sheet 4: Ranking policy (so a printed export is self-explanatory)
+    const policyRows = [
+      { Note: `Ranking uses TOTAL KJJ points (EE1=8 … BE2=1; max ${KJJ_MAX_POINTS_PER_SUBJECT} per subject), highest first. Not divided by the number of subjects.` },
+      { Note: 'Equal totals share a rank (competition ranking 1, 2, 2, 4); raw marks are not a tie-breaker.' },
+      { Note: 'Learners with missing subject marks show their partial total, subjects assessed and the maximum for those subjects, and are not ranked. DNS = did not sit.' },
+      ...rankingNotes.map(n => ({ Note: n })),
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(policyRows), 'Ranking Policy');
+
     const gradeName = grades.find(g => g.id === gradeId)?.grade_name || 'Class';
     const examName  = exams.find(e => e.id === examId)?.exam_name    || 'AllExams';
     XLSX.writeFile(wb, `Rankings_${gradeName}_${examName}_${year}.xlsx`);
-  }, [rankings, subjects, marks, grades, gradeId, exams, examId, year]);
+  }, [rankings, rankingNotes, subjects, marks, grades, gradeId, exams, examId, year]);
 
   const handleBulkPDF = useCallback(async () => {
     if (!filteredStudents.length) return;
@@ -1544,7 +1598,7 @@ export default function InsightsCenter() {
                         <h3 className="font-bold text-slate-900 dark:text-white mb-4">Grade Distribution</h3>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                           {RUBRIC.map(r => {
-                            const cnt  = marks.filter(m => m.score >= r.min && m.score <= r.max).length;
+                            const cnt  = marks.filter(m => isValidMark(m.score) && getKjjLevel(m.score).code === r.code).length;
                             const pct  = marks.length ? (cnt / marks.length * 100) : 0;
                             return (
                               <div key={r.code} className="rounded-xl p-3 border" style={{ background: r.bg, borderColor: r.color + '40' }}>
@@ -1576,7 +1630,7 @@ export default function InsightsCenter() {
                     <div>
                       <h2 className="font-bold text-slate-900 dark:text-white">Student Rankings</h2>
                       <p className="text-xs text-slate-500 mt-0.5">
-                        {filteredRankings.length} students ranked · {grades.find(g => g.id === gradeId)?.grade_name || 'All Grades'} · {exams.find(e => e.id === examId)?.exam_name || 'All Exams'}
+                        {countRanked(filteredRankings)} of {filteredRankings.length} students ranked by total KJJ points · {grades.find(g => g.id === gradeId)?.grade_name || 'All Grades'} · {exams.find(e => e.id === examId)?.exam_name || 'All Exams'}
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2 items-center">
@@ -1597,8 +1651,13 @@ export default function InsightsCenter() {
                     </div>
                   </div>
 
-                  {!gradeId ? (
-                    <div className="text-center py-16 text-slate-400 text-sm">Select a grade to view rankings</div>
+                  {gradeId && rankingNotes.length > 0 && (
+                     <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-xs px-3 py-2 space-y-0.5">
+                       {rankingNotes.map(n => <div key={n}>⚠ {n}</div>)}
+                     </div>
+                   )}
+                   {!gradeId ? (
+                     <div className="text-center py-16 text-slate-400 text-sm">Select a grade to view rankings</div>
                   ) : loading ? (
                     <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => <Skel key={i} className="h-12" />)}</div>
                   ) : filteredRankings.length === 0 ? (
@@ -1617,10 +1676,9 @@ export default function InsightsCenter() {
                                 {s.subject_code || s.subject_name.substring(0, 5)}
                               </th>
                             ))}
-                            <th className="px-3 py-2.5 text-center text-[10px] font-bold uppercase text-yellow-400">Total</th>
-                            <th className="px-3 py-2.5 text-center text-[10px] font-bold uppercase text-yellow-400">Avg%</th>
-                            <th className="px-3 py-2.5 text-center text-[10px] font-bold uppercase text-yellow-400">PL</th>
-                            <th className="px-3 py-2.5 text-center text-[10px] font-bold uppercase text-yellow-400">Pts</th>
+                            <th className="px-3 py-2.5 text-center text-[10px] font-bold uppercase text-yellow-400 whitespace-nowrap">KJJ Total</th>
+                             <th className="px-3 py-2.5 text-center text-[10px] font-bold uppercase text-yellow-400">Avg%</th>
+                             <th className="px-3 py-2.5 text-center text-[10px] font-bold uppercase text-yellow-400">PL</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1630,36 +1688,43 @@ export default function InsightsCenter() {
                             return (
                               <tr key={s.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
                                 <td className="px-3 py-2.5 font-black text-sm" style={{
-                                  color: (s as any).didNotSit ? '#94a3b8' : s.rank === 1 ? '#b45309' : s.rank === 2 ? '#64748b' : s.rank === 3 ? '#92400e' : '#94a3b8'
-                                }}>
-                                  {(s as any).didNotSit ? 'DNS' : s.rank === 1 ? '🥇' : s.rank === 2 ? '🥈' : s.rank === 3 ? '🥉' : `#${s.rank}`}
-                                </td>
+                                  color: s.rank === null ? '#94a3b8' : s.rank === 1 ? '#b45309' : s.rank === 2 ? '#64748b' : s.rank === 3 ? '#92400e' : '#94a3b8'
+                                 }}>
+                                   {s.rankStatus === 'dns' ? 'DNS' : s.rank === null ? '—' : s.rank === 1 ? '🥇' : s.rank === 2 ? '🥈' : s.rank === 3 ? '🥉' : `#${s.rank}`}
+                                 </td>
                                 <td className="px-3 py-2.5 font-semibold text-slate-800 dark:text-slate-100">
                                   {s.name}
-                                  {(s as any).didNotSit && (
-                                    <span className="ml-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-400 dark:bg-slate-700">
-                                      Did Not Sit
-                                    </span>
-                                  )}
+                                  {s.didNotSit && (
+                                     <span className="ml-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-400 dark:bg-slate-700">
+                                       Did Not Sit
+                                     </span>
+                                   )}
+                                   {s.rankStatus === 'incomplete' && (
+                                     <span className="ml-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 dark:bg-amber-900/30" title="Missing marks — not ranked against learners with full coverage">
+                                       Incomplete · not ranked
+                                     </span>
+                                   )}
                                 </td>
                                 <td className="px-3 py-2.5 text-xs text-slate-500">{s.admission_number}</td>
                                 <td className="px-3 py-2.5 text-xs text-slate-500">{s.gender}</td>
                                 {activeSubs.map(subj => {
-                                  const m = marks.find(mk => mk.student_id === s.id && mk.subject_id === subj.id);
-                                  const sr = m ? getRubric(m.score) : null;
-                                  return (
-                                    <td key={subj.id} className="px-2 py-2.5 text-center text-xs font-bold"
-                                      style={{ color: sr?.color ?? '#94a3b8' }}>
-                                      {m ? m.score : '—'}
-                                    </td>
-                                  );
-                                })}
-                                <td className="px-3 py-2.5 text-center font-bold text-slate-700 dark:text-slate-200">{s.total}</td>
-                                <td className="px-3 py-2.5 text-center font-bold" style={{ color: r.color }}>{s.avg}%</td>
-                                <td className="px-3 py-2.5 text-center">
-                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: r.bg, color: r.text }}>{r.code}</span>
-                                </td>
-                                <td className="px-3 py-2.5 text-center font-bold" style={{ color: r.color }}>{r.pts}</td>
+                                   const v = s.subjectMarks[String(subj.id)];
+                                   const sr = isValidMark(v) ? getRubric(v) : null;
+                                   return (
+                                     <td key={subj.id} className="px-2 py-2.5 text-center text-xs font-bold"
+                                       style={{ color: sr?.color ?? '#94a3b8' }}>
+                                       {isValidMark(v) ? Math.round(v * 10) / 10 : '—'}
+                                     </td>
+                                   );
+                                 })}
+                                 <td className="px-3 py-2.5 text-center font-bold text-slate-700 dark:text-slate-200 whitespace-nowrap">
+                                   {formatKjjTotal(s.kjj)}
+                                   {formatKjjCoverage(s.kjj) && <div className="text-[9px] font-normal text-amber-700">{formatKjjCoverage(s.kjj)}</div>}
+                                 </td>
+                                 <td className="px-3 py-2.5 text-center font-bold" style={{ color: r.color }}>{s.didNotSit ? '—' : `${s.avg}%`}</td>
+                                 <td className="px-3 py-2.5 text-center">
+                                   <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: r.bg, color: r.text }}>{s.didNotSit ? 'DNS' : r.code}</span>
+                                 </td>
                               </tr>
                             );
                           })}
@@ -1678,9 +1743,8 @@ export default function InsightsCenter() {
                               <td className="px-3 py-2.5 text-center text-[10px] font-bold text-white">—</td>
                               <td className="px-3 py-2.5 text-center text-[10px] font-bold text-yellow-400">{classStats.avg.toFixed(1)}%</td>
                               <td className="px-3 py-2.5 text-center">
-                                <span className="text-[10px] font-bold text-yellow-400">{classStats.r.code}</span>
-                              </td>
-                              <td className="px-3 py-2.5 text-center text-[10px] font-bold text-white">{classStats.r.pts}</td>
+                                 <span className="text-[10px] font-bold text-yellow-400">{classStats.r.code}</span>
+                               </td>
                             </tr>
                           </tfoot>
                         )}
@@ -1759,7 +1823,11 @@ export default function InsightsCenter() {
                                   <div className="h-full rounded-full transition-all" style={{ width: `${avg}%`, background: r?.color }} />
                                 </div>
                                 <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{avg.toFixed(1)}%</span>
-                                {rank && <span className="text-[10px] text-slate-400">#{rank.rank}</span>}
+                                {rank && (
+                                   <span className="text-[10px] text-slate-400 whitespace-nowrap" title="Total KJJ points">
+                                     {rank.rank !== null ? `#${rank.rank} · ` : ''}{formatKjjTotal(rank.kjj)}
+                                   </span>
+                                 )}
                               </div>
                             )}
                           </div>
@@ -1785,7 +1853,12 @@ export default function InsightsCenter() {
                           <h3 className="text-lg font-bold text-slate-900 dark:text-white">{selectedStudent.name}</h3>
                           <p className="text-xs text-slate-500 mt-0.5">
                             {selectedStudent.admission_number} · {selectedStudent.gender} · {grades.find(g => g.id === selectedStudent.grade_id)?.grade_name}
-                            {rankings.find(r => r.id === selectedStudent.id) && ` · Rank #${rankings.find(r => r.id === selectedStudent.id)?.rank} of ${rankings.length}`}
+                            {(() => {
+                               const rk = rankings.find(r => r.id === selectedStudent.id);
+                               if (!rk) return '';
+                               if (rk.rank !== null) return ` · Rank #${rk.rank} of ${rk.rankedInGrade} · KJJ ${formatKjjTotal(rk.kjj)}`;
+                               return rk.didNotSit ? ' · DNS' : ` · Not ranked (${formatKjjCoverage(rk.kjj)}) · KJJ ${formatKjjTotal(rk.kjj)}`;
+                             })()}
                           </p>
                         </div>
                         <button onClick={() => handleGenReportCard(selectedStudent)}
@@ -1821,16 +1894,16 @@ export default function InsightsCenter() {
                                 </thead>
                                 <tbody>
                                   {sMarks.map(m => {
-                                    const r = getRubric(m.score);
-                                    return (
-                                      <tr key={m.subject_name} className="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                                        <td className="px-3 py-2.5 font-medium text-slate-800 dark:text-slate-100">{m.subject_name}</td>
-                                        <td className="px-3 py-2.5 font-black text-lg" style={{ color: r.color }}>{m.score}</td>
-                                        <td className="px-3 py-2.5">
-                                          <span className="text-xs font-bold px-2 py-0.5 rounded" style={{ background: r.bg, color: r.text }}>{r.code}</span>
-                                        </td>
-                                        <td className="px-3 py-2.5 text-center font-bold" style={{ color: r.color }}>{r.pts}</td>
-                                        <td className="px-3 py-2.5 text-xs text-slate-600 dark:text-slate-300">{r.label}</td>
+                                     const r = isValidMark(m.score) ? getRubric(m.score) : null;
+                                     return (
+                                       <tr key={m.subject_name} className="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                                         <td className="px-3 py-2.5 font-medium text-slate-800 dark:text-slate-100">{m.subject_name}</td>
+                                         <td className="px-3 py-2.5 font-black text-lg" style={{ color: r?.color ?? '#94a3b8' }}>{r ? m.score : '—'}</td>
+                                         <td className="px-3 py-2.5">
+                                           {r ? <span className="text-xs font-bold px-2 py-0.5 rounded" style={{ background: r.bg, color: r.text }}>{r.code}</span> : '—'}
+                                         </td>
+                                         <td className="px-3 py-2.5 text-center font-bold" style={{ color: r?.color ?? '#94a3b8' }}>{r ? r.pts : '—'}</td>
+                                         <td className="px-3 py-2.5 text-xs text-slate-600 dark:text-slate-300">{r ? r.label : 'Not entered'}</td>
                                         <td className="px-3 py-2.5 text-xs text-slate-400 italic">{m.teacher_remark || '—'}</td>
                                       </tr>
                                     );
@@ -1841,9 +1914,16 @@ export default function InsightsCenter() {
                                     <td className="px-3 py-2.5 text-xs font-bold text-yellow-400">OVERALL</td>
                                     <td className="px-3 py-2.5 font-black text-white text-lg">{avg.toFixed(1)}%</td>
                                     <td className="px-3 py-2.5"><RubricBadge score={avg} /></td>
-                                    <td className="px-3 py-2.5 font-bold text-white text-center">{getRubric(avg).pts}</td>
-                                    <td className="px-3 py-2.5 text-xs text-slate-300">{sMarks.length} subjects</td>
-                                    <td className="px-3 py-2.5 text-xs text-slate-400">Rank #{rankings.find(r => r.id === selectedStudent.id)?.rank || '—'} / {rankings.length}</td>
+                                    <td className="px-3 py-2.5 font-bold text-white text-center whitespace-nowrap">
+                                       {(() => { const rk = rankings.find(r => r.id === selectedStudent.id); return rk ? formatKjjTotal(rk.kjj) : '—'; })()}
+                                     </td>
+                                     <td className="px-3 py-2.5 text-xs text-slate-300">{enteredMarks.length} of {sMarks.length} subjects</td>
+                                     <td className="px-3 py-2.5 text-xs text-slate-400">
+                                       {(() => {
+                                         const rk = rankings.find(r => r.id === selectedStudent.id);
+                                         return rk && rk.rank !== null ? `Rank #${rk.rank} / ${rk.rankedInGrade}` : rk?.didNotSit ? 'DNS' : 'Not ranked';
+                                       })()}
+                                     </td>
                                   </tr>
                                 </tfoot>
                               </table>
@@ -1993,7 +2073,7 @@ export default function InsightsCenter() {
                             gradeName: grades.find(g => String(g.id) === String(gradeId))?.grade_name || 'All Grades',
                             year, term, examNames: avgResults.examNames, examCount: avgResults.examCount,
                             studentCount: avgResults.studentCount, overallAvg: avgResults.overallAvg,
-                            subjectCols: avgResults.subjectCols, rows: sortedAvgRows,
+                            subjectCols: avgResults.subjectCols, rows: sortedAvgRows, notes: avgResults.notes,
                           });
                         }} className="px-3 py-2 rounded-xl text-white text-xs font-semibold" style={{ background: '#1e3a5f' }}>
                           📄 PDF
@@ -2002,14 +2082,19 @@ export default function InsightsCenter() {
                           const gradeName = grades.find(g => String(g.id) === String(gradeId))?.grade_name || 'All Grades';
                           const sheetRows = sortedAvgRows.map(r => {
                             const row: Record<string, any> = {
-                              Rank: r.rank ?? '—',
+                              Rank: formatKjjRank(r.rank, r.rankStatus),
                               'Student Name': r.student.name,
                               'Admission No.': r.student.admission_number,
+                              Status: r.rankStatus === 'dns' ? 'Did Not Sit' : r.rankStatus === 'ranked' ? 'Ranked' : 'Incomplete (not ranked)',
                             };
                             avgResults.subjectCols.forEach(sc => {
                               const v = r.subjectAvgs[sc.id];
                               row[sc.subject_name] = v !== null && v !== undefined ? Number(v.toFixed(1)) : '—';
                             });
+                            row['Total KJJ Points'] = r.kjj.dns ? 0 : r.kjj.total;
+                            row['Maximum Possible'] = r.kjj.complete || r.kjj.dns ? r.kjj.max : r.kjj.maxAssessed;
+                            row['KJJ Total'] = formatKjjTotal(r.kjj);
+                            row['Subjects Assessed'] = `${r.kjj.assessed} of ${r.kjj.included}`;
                             row['Average (%)'] = r.avg !== null ? Number(r.avg.toFixed(1)) : 'N/A';
                             row['Exams With Marks'] = r.examsWithMarks;
                             row['Level'] = r.avg !== null ? getRubric(r.avg).code : '—';
@@ -2025,6 +2110,12 @@ export default function InsightsCenter() {
                       </div>
                     </div>
 
+                    {avgResults.notes.length > 0 && (
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-xs px-3 py-2 space-y-0.5">
+                        {avgResults.notes.map(n => <div key={n}>⚠ {n}</div>)}
+                      </div>
+                    )}
+                    <p className="text-[11px] text-slate-400">Ranked by total KJJ points (EE1 = 8 … BE2 = 1), highest first — not divided by the number of subjects. Equal totals share a rank. Learners with missing marks are not ranked.</p>
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
@@ -2039,6 +2130,9 @@ export default function InsightsCenter() {
                             {avgResults.subjectCols.map(sc => (
                               <th key={sc.id} className="px-3 py-2 text-center whitespace-nowrap" title={sc.subject_name}>{sc.subject_name}</th>
                             ))}
+                            <th onClick={() => toggleAvgSort('kjj')} className="px-3 py-2 cursor-pointer select-none hover:text-slate-600 text-center whitespace-nowrap">
+                              KJJ Total {avgSort.key === 'kjj' ? (avgSort.dir === 'asc' ? '▲' : '▼') : ''}
+                            </th>
                             <th onClick={() => toggleAvgSort('avg')} className="px-3 py-2 cursor-pointer select-none hover:text-slate-600 text-center">
                               Average {avgSort.key === 'avg' ? (avgSort.dir === 'asc' ? '▲' : '▼') : ''}
                             </th>
@@ -2048,11 +2142,16 @@ export default function InsightsCenter() {
                         </thead>
                         <tbody>
                           {sortedAvgRows.length === 0 ? (
-                            <tr><td colSpan={6 + avgResults.subjectCols.length} className="px-3 py-8 text-center text-slate-400">No results to display.</td></tr>
+                            <tr><td colSpan={7 + avgResults.subjectCols.length} className="px-3 py-8 text-center text-slate-400">No results to display.</td></tr>
                           ) : sortedAvgRows.map(r => (
                             <tr key={r.student.id} className="border-b border-slate-50 dark:border-slate-800/50">
-                              <td className="px-3 py-2 font-semibold">{r.rank ?? '—'}</td>
-                              <td className="px-3 py-2">{r.student.name}</td>
+                              <td className="px-3 py-2 font-semibold">{formatKjjRank(r.rank, r.rankStatus)}</td>
+                              <td className="px-3 py-2">
+                                {r.student.name}
+                                {r.rankStatus === 'incomplete' && (
+                                  <span className="ml-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700" title="Missing marks — not ranked against learners with full coverage">Incomplete · not ranked</span>
+                                )}
+                              </td>
                               <td className="px-3 py-2 text-slate-500">{r.student.admission_number}</td>
                               {avgResults.subjectCols.map(sc => {
                                 const v = r.subjectAvgs[sc.id];
@@ -2062,7 +2161,11 @@ export default function InsightsCenter() {
                                   </td>
                                 );
                               })}
-                              <td className="px-3 py-2 font-bold text-center">{r.avg !== null ? r.avg.toFixed(1) + '%' : 'N/A'}</td>
+                              <td className="px-3 py-2 font-bold text-center whitespace-nowrap">
+                                {formatKjjTotal(r.kjj)}
+                                {formatKjjCoverage(r.kjj) && <div className="text-[9px] font-normal text-amber-700">{formatKjjCoverage(r.kjj)}</div>}
+                              </td>
+                              <td className="px-3 py-2 text-center">{r.avg !== null ? r.avg.toFixed(1) + '%' : 'N/A'}</td>
                               <td className="px-3 py-2 text-slate-500">{r.examsWithMarks}/{avgResults.examCount}</td>
                               <td className="px-3 py-2">{r.avg !== null ? getRubric(r.avg).code : '—'}</td>
                             </tr>

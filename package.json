@@ -9,7 +9,8 @@
     "start": "node server.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test:kjj": "tsx src/lib/kjj.test.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

@@ -14,20 +14,20 @@ import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { addBorderToAllPages } from "../lib/pdfKit";
+import { getKjjLevel, getKjjPoints, formatKjjTotal, formatKjjCoverage, formatKjjRank } from "../lib/kjj";
+import {
+  buildClassKjjRankings, positionText, RANKING_POLICY_LINES, type RankingRow,
+} from "../lib/kjjRankings";
 
 /* ═══════════════════════════════════════════════════════════
    CBC HELPERS
 ═══════════════════════════════════════════════════════════ */
 type Band = "EE" | "ME" | "AE" | "BE";
 
-const cbcGrade = (s: number) =>
-  s >= 90 ? "EE1" : s >= 75 ? "EE2" : s >= 58 ? "ME1" :
-  s >= 41 ? "ME2" : s >= 31 ? "AE1" : s >= 21 ? "AE2" :
-  s >= 11 ? "BE1" : "BE2";
-
-const cbcPoints = (s: number) =>
-  s >= 90 ? 8 : s >= 75 ? 7 : s >= 58 ? 6 : s >= 41 ? 5 :
-  s >= 31 ? 4 : s >= 21 ? 3 : s >= 11 ? 2 : 1;
+/* Level / points come from the shared KJJ rubric (../lib/kjj) so every screen,
+   PDF and Excel export agrees. */
+const cbcGrade  = (s: number) => getKjjLevel(s).code;
+const cbcPoints = (s: number) => getKjjPoints(s);
 
 const bandFromScore = (s: number): Band =>
   s >= 75 ? "EE" : s >= 58 ? "ME" : s >= 31 ? "AE" : "BE";
@@ -55,16 +55,6 @@ interface ReportRow {
   grade: string;
   points: number;
   remark: string;
-}
-interface RankingRow {
-  student_id: number;
-  student_name: string;
-  admission_number: string;
-  total_marks: number;
-  average: number;
-  grade: string;
-  points: number;
-  rank: number;
 }
 interface SubjectRankRow {
   subject_name: string;
@@ -140,9 +130,9 @@ function drawReportPage(
     totalMarks: number;
     pct: number;
     grade: string;
-    points: number;
-    rank: number | string;
-    total: number;
+    kjjTotal: string;
+    kjjNote?: string;
+    position: string;
     teacherRemark: string;
     principalRemark: string;
     date: string;
@@ -150,8 +140,8 @@ function drawReportPage(
 ): void {
   const {
     school, student, exam, rows,
-    totalMarks, pct, grade, points,
-    rank, total, teacherRemark, principalRemark, date,
+    totalMarks, pct, grade, kjjTotal, kjjNote,
+    position, teacherRemark, principalRemark, date,
   } = opts;
   const W = PDF.pageW;
   const M = PDF.margin;
@@ -215,7 +205,7 @@ function drawReportPage(
     ["Grade / Class", (student?.grades as any)?.grade_name ?? "—"],
     ["Exam",          exam?.exam_name ?? "—"],
     ["Term & Year",   `Term ${exam?.term ?? ""}, ${exam?.year ?? ""}`],
-    ["Class Position",`${rank} of ${total}`],
+    ["Class Position", position],
     ["Issue Date",    date],
   ];
 
@@ -280,7 +270,7 @@ function drawReportPage(
     ["TOTAL MARKS",    String(totalMarks)],
     ["PERCENTAGE",     `${pct}%`],
     ["OVERALL GRADE",  grade],
-    ["OVERALL POINTS", String(points)],
+    ["TOTAL KJJ POINTS", kjjTotal],
   ];
   const boxW = (W - M * 2) / 4 - 1;
 
@@ -315,6 +305,11 @@ function drawReportPage(
   doc.setFont("helvetica", "normal");
   const scale = "EE1 ≥90  ·  EE2 75–89  ·  ME1 58–74  ·  ME2 41–57  ·  AE1 31–40  ·  AE2 21–30  ·  BE1 11–20  ·  BE2 0–10";
   doc.text(scale, M + 30, scaleY);
+  if (kjjNote) {
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(6.5);
+    doc.text(kjjNote, M, scaleY + 4);
+  }
 
   /* ── 6. Remarks ── */
   const remY = scaleY + 6;
@@ -376,8 +371,9 @@ function exportRankingsPDF(opts: {
   school: any; exam: any;
   rankings: RankingRow[]; subjectRankings: SubjectRankRow[];
   mostImproved: MostImprovedRow | null;
+  notes?: string[];
 }) {
-  const { school, exam, rankings, subjectRankings, mostImproved } = opts;
+  const { school, exam, rankings, subjectRankings, mostImproved, notes = [] } = opts;
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
   const W = PDF.pageW;
   const M = PDF.margin;
@@ -461,18 +457,24 @@ function exportRankingsPDF(opts: {
 
   autoTable(doc, {
     startY: curY,
-    head: [["Rank", "Student Name", "Admission No.", "Total", "Average", "Grade", "Points"]],
-    body: rankings.map(r => [`#${r.rank}`, r.student_name, r.admission_number, r.total_marks, `${r.average}%`, r.grade, r.points]),
+    head: [["Rank", "Student Name", "Admission No.", "Class", "KJJ Total", "Average", "Level"]],
+    body: rankings.map(r => [
+      r.rank !== null ? `#${r.rank}` : formatKjjRank(r.rank, r.rankStatus),
+      r.student_name, r.admission_number, r.class_name,
+      r.kjj.dns ? "—" : formatKjjTotal(r.kjj) + (formatKjjCoverage(r.kjj) ? `\n${formatKjjCoverage(r.kjj)}` : ""),
+      r.kjj.dns ? "—" : `${r.average}%`,
+      r.kjj.dns ? "DNS" : r.grade,
+    ]),
     headStyles: { fillColor: PDF.tHeadBg, textColor: PDF.tHeadText, fontStyle: "bold", fontSize: 8, cellPadding: 3 },
     bodyStyles: { fontSize: 7.5, textColor: PDF.bodyText, cellPadding: 2.5 },
     columnStyles: {
       0: { cellWidth: 14, halign: "center", fontStyle: "bold" },
-      1: { cellWidth: 52 },
-      2: { cellWidth: 28 },
-      3: { cellWidth: 16, halign: "center" },
-      4: { cellWidth: 18, halign: "center" },
+      1: { cellWidth: 46 },
+      2: { cellWidth: 26 },
+      3: { cellWidth: 20 },
+      4: { cellWidth: 32, halign: "center", fontStyle: "bold" },
       5: { cellWidth: 16, halign: "center" },
-      6: { cellWidth: 16, halign: "center" },
+      6: { cellWidth: 14, halign: "center" },
     },
     alternateRowStyles: { fillColor: PDF.rowAlt },
     tableLineColor: PDF.borderLine,
@@ -487,7 +489,14 @@ function exportRankingsPDF(opts: {
     },
   });
 
-  curY = (doc as any).lastAutoTable.finalY + 10;
+  curY = (doc as any).lastAutoTable.finalY + 6;
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(6.5);
+  setColor(doc, PDF.mutedText, "text");
+  const policyLines = doc.splitTextToSize([...RANKING_POLICY_LINES, ...notes].join("  "), W - M * 2) as string[];
+  if (curY + policyLines.length * 3 + 10 > 280) { doc.addPage(); curY = 20; }
+  doc.text(policyLines, M, curY);
+  curY += policyLines.length * 3 + 6;
 
   /* Subject Rankings table */
   doc.setFont("helvetica", "bold");
@@ -536,8 +545,9 @@ function exportRankingsExcel(opts: {
   school: any; exam: any;
   rankings: RankingRow[]; subjectRankings: SubjectRankRow[];
   mostImproved: MostImprovedRow | null;
+  notes?: string[];
 }) {
-  const { school, exam, rankings, subjectRankings, mostImproved } = opts;
+  const { school, exam, rankings, subjectRankings, mostImproved, notes = [] } = opts;
   const wb = XLSX.utils.book_new();
 
   const wsRankings = XLSX.utils.aoa_to_sheet([
@@ -545,11 +555,22 @@ function exportRankingsExcel(opts: {
     [`Exam: ${exam?.exam_name ?? ""}   |   Term ${exam?.term ?? ""}, ${exam?.year ?? ""}`],
     [`Generated: ${new Date().toLocaleDateString()}`],
     [],
-    ["Rank", "Student Name", "Admission No.", "Total Marks", "Average (%)", "Grade", "Points"],
-    ...rankings.map(r => [r.rank, r.student_name, r.admission_number, r.total_marks, r.average, r.grade, r.points]),
+    ["Rank", "Student Name", "Admission No.", "Class", "Status", "Total KJJ Points", "Maximum Possible", "KJJ Total", "Subjects Assessed", "Average (%)", "Level"],
+    ...rankings.map(r => [
+      formatKjjRank(r.rank, r.rankStatus), r.student_name, r.admission_number, r.class_name,
+      r.rankStatus === "dns" ? "Did Not Sit" : r.rankStatus === "ranked" ? "Ranked" : "Incomplete (not ranked)",
+      r.kjj.dns ? 0 : r.kjj.total,
+      r.kjj.complete || r.kjj.dns ? r.kjj.max : r.kjj.maxAssessed,
+      formatKjjTotal(r.kjj),
+      `${r.kjj.assessed} of ${r.kjj.included}`,
+      r.kjj.dns ? 0 : r.average,
+      r.kjj.dns ? "DNS" : r.grade,
+    ]),
+    [],
+    ...[...RANKING_POLICY_LINES, ...notes].map(n => [n]),
   ]);
   wsRankings["!cols"] = [
-    { wch: 6 }, { wch: 30 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 10 },
+    { wch: 8 }, { wch: 30 }, { wch: 16 }, { wch: 14 }, { wch: 22 }, { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 8 },
   ];
   XLSX.utils.book_append_sheet(wb, wsRankings, "Student Rankings");
 
@@ -727,36 +748,18 @@ const Reports = () => {
   const subjectCount  = reportResults.length || 1;
   const percentage    = useMemo(() => Math.round((totalMarks / (subjectCount * 100)) * 100), [totalMarks, subjectCount]);
   const overallGrade  = cbcGrade(percentage);
-  const overallPoints = useMemo(() => Math.round(reportResults.reduce((s, r) => s + r.points, 0) / subjectCount), [reportResults, subjectCount]);
+  
   const band          = bandFromScore(percentage);
   const teacherRemark   = CLASS_TEACHER_REMARKS[band];
   const principalRemark = PRINCIPAL_REMARKS[band];
 
-  /* ── rankings ── */
-  const rankings: RankingRow[] = useMemo(() => {
-    const totals: Record<number, { sum: number; count: number }> = {};
-    allResultsRaw.forEach((r: any) => {
-      if (!totals[r.student_id]) totals[r.student_id] = { sum: 0, count: 0 };
-      totals[r.student_id].sum   += Number(r.marks);
-      totals[r.student_id].count += 1;
-    });
-    return Object.entries(totals)
-      .map(([sid, v]) => {
-        const st  = studentsRaw.find((s: any) => s.id === Number(sid));
-        const avg = v.count ? Math.round(v.sum / v.count) : 0;
-        return {
-          student_id:       Number(sid),
-          student_name:     st?.name ?? "—",
-          admission_number: st?.admission_number ?? "—",
-          total_marks:      Math.round(v.sum),
-          average: avg,
-          grade:   cbcGrade(avg),
-          points:  cbcPoints(avg),
-        };
-      })
-      .sort((a, b) => b.total_marks - a.total_marks)
-      .map((r, i) => ({ ...r, rank: i + 1 }));
-  }, [allResultsRaw, studentsRaw]);
+  /* ── rankings (total KJJ points, per grade) ── */
+  const rankingBundle = useMemo(
+    () => buildClassKjjRankings(allResultsRaw, studentsRaw),
+    [allResultsRaw, studentsRaw]
+  );
+  const rankings: RankingRow[] = rankingBundle.rows;
+  const rankingNotes = rankingBundle.notes;
 
   /* ── subject rankings (best → least) ── */
   const subjectRankings: SubjectRankRow[] = useMemo(() => {
@@ -810,8 +813,12 @@ const Reports = () => {
     return best;
   }, [prevExam, prevResultsRaw, allResultsRaw, studentsRaw]);
 
-  const totalStudents = rankings.length;
-  const studentRank   = rankings.find(r => r.student_id === selectedStudentId)?.rank ?? "—";
+  const selectedRanking = rankings.find(r => r.student_id === selectedStudentId);
+  const studentPosition = positionText(selectedRanking);
+  const kjjTotalText    = selectedRanking ? formatKjjTotal(selectedRanking.kjj) : "—";
+  const kjjNote         = selectedRanking && !selectedRanking.kjj.dns && !selectedRanking.kjj.complete
+    ? `${formatKjjCoverage(selectedRanking.kjj)} — total shown is out of ${selectedRanking.kjj.maxAssessed}; learners with missing marks are not ranked.`
+    : undefined;
   const formattedDate = new Date().toLocaleDateString();
   const showReport    = !!selectedStudentId && !!selectedExamId && reportResults.length > 0;
 
@@ -822,8 +829,8 @@ const Reports = () => {
     drawReportPage(doc, {
       school, student: selectedStudent, exam: selectedExam,
       rows: reportResults, totalMarks, pct: percentage,
-      grade: overallGrade, points: overallPoints,
-      rank: studentRank, total: totalStudents,
+      grade: overallGrade, kjjTotal: kjjTotalText, kjjNote,
+      position: studentPosition,
       teacherRemark, principalRemark, date: formattedDate,
     });
     addBorderToAllPages(doc);
@@ -853,18 +860,10 @@ const Reports = () => {
       const mergedDoc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
       let firstPage = true;
 
-      /* Build rankings for this exam on-the-fly so rank numbers are correct */
-      const bulkTotals: Record<number, { sum: number; count: number }> = {};
-      (bulkResults ?? []).forEach((r: any) => {
-        if (!bulkTotals[r.student_id]) bulkTotals[r.student_id] = { sum: 0, count: 0 };
-        bulkTotals[r.student_id].sum   += Number(r.marks);
-        bulkTotals[r.student_id].count += 1;
-      });
-      const bulkRankMap: Record<number, number> = {};
-      Object.entries(bulkTotals)
-        .sort(([, a], [, b]) => b.sum - a.sum)
-        .forEach(([sid], i) => { bulkRankMap[Number(sid)] = i + 1; });
-      const bulkTotal = Object.keys(bulkTotals).length;
+      /* Build rankings for this exam on-the-fly (same KJJ routine as the Rankings tab) */
+      const bulkRankings = buildClassKjjRankings(bulkResults ?? [], studentsRaw);
+      const bulkRankMap = new Map<number, RankingRow>();
+      bulkRankings.rows.forEach(r => bulkRankMap.set(r.student_id, r));
 
       for (let i = 0; i < ids.length; i++) {
         const sid     = ids[i];
@@ -895,7 +894,7 @@ const Reports = () => {
         const cnt    = rows.length || 1;
         const pct    = Math.round((tot / (cnt * 100)) * 100);
         const bd     = bandFromScore(pct);
-        const rnk    = bulkRankMap[sid] ?? "—";
+        const bulkRow = bulkRankMap.get(sid);
 
         if (!firstPage) mergedDoc.addPage();
         firstPage = false;
@@ -904,8 +903,11 @@ const Reports = () => {
           school, student, exam: bulkExam,
           rows, totalMarks: tot, pct,
           grade:  cbcGrade(pct),
-          points: Math.round(rows.reduce((s, r) => s + r.points, 0) / cnt),
-          rank: rnk, total: bulkTotal,
+          kjjTotal: bulkRow ? formatKjjTotal(bulkRow.kjj) : "—",
+          kjjNote: bulkRow && !bulkRow.kjj.dns && !bulkRow.kjj.complete
+            ? `${formatKjjCoverage(bulkRow.kjj)} — total shown is out of ${bulkRow.kjj.maxAssessed}; learners with missing marks are not ranked.`
+            : undefined,
+          position: positionText(bulkRow),
           teacherRemark:   CLASS_TEACHER_REMARKS[bd],
           principalRemark: PRINCIPAL_REMARKS[bd],
           date: formattedDate,
@@ -1012,12 +1014,12 @@ const Reports = () => {
             {selectedExam && rankings.length > 0 && (
               <div className="flex gap-2">
                 <button
-                  onClick={() => exportRankingsExcel({ school, exam: selectedExam, rankings, subjectRankings, mostImproved })}
+                  onClick={() => exportRankingsExcel({ school, exam: selectedExam, rankings, subjectRankings, mostImproved, notes: rankingNotes })}
                   className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-2.5 rounded-xl text-sm font-medium transition-all">
                   <FileSpreadsheet className="w-4 h-4" /> Excel
                 </button>
                 <button
-                  onClick={() => exportRankingsPDF({ school, exam: selectedExam, rankings, subjectRankings, mostImproved })}
+                  onClick={() => exportRankingsPDF({ school, exam: selectedExam, rankings, subjectRankings, mostImproved, notes: rankingNotes })}
                   className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2.5 rounded-xl text-sm font-medium transition-all">
                   <FileText className="w-4 h-4" /> PDF
                 </button>
@@ -1092,7 +1094,7 @@ const Reports = () => {
                     { icon: <GraduationCap className="w-4 h-4" />, label: "Grade",         value: (selectedStudent?.grades as any)?.grade_name },
                     { icon: <ClipboardList className="w-4 h-4" />, label: "Exam",          value: selectedExam?.exam_name },
                     { icon: <CalendarDays className="w-4 h-4" />,  label: "Term & Year",   value: `Term ${selectedExam?.term}, ${selectedExam?.year}` },
-                    { icon: <Trophy className="w-4 h-4" />,        label: "Position",      value: `${studentRank} of ${totalStudents}` },
+                    { icon: <Trophy className="w-4 h-4" />,        label: "Position",      value: studentPosition },
                   ].map(f => (
                     <div key={f.label} className="bg-slate-50 rounded-xl p-3 border border-slate-100">
                       <div className="flex items-center gap-1.5 text-slate-400 mb-1">
@@ -1148,7 +1150,7 @@ const Reports = () => {
                     { label: "Total Marks",   value: totalMarks,    icon: <Award className="w-4 h-4" /> },
                     { label: "Percentage",    value: `${percentage}%`, icon: <Star className="w-4 h-4" /> },
                     { label: "Overall Grade", value: overallGrade,  icon: <GraduationCap className="w-4 h-4" /> },
-                    { label: "Points",        value: overallPoints, icon: <Trophy className="w-4 h-4" /> },
+                    { label: "KJJ Total Points", value: kjjTotalText, icon: <Trophy className="w-4 h-4" /> },
                   ].map(s => (
                     <div key={s.label} className="bg-slate-800 text-white rounded-xl p-4 flex items-center gap-3">
                       <div className="text-amber-400">{s.icon}</div>
@@ -1272,12 +1274,18 @@ const Reports = () => {
 
                 {/* Student Rankings */}
                 <div>
-                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Student Rankings</h3>
+                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Student Rankings — Total KJJ Points</h3>
+                  {rankingNotes.length > 0 && (
+                    <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-xs px-3 py-2 space-y-0.5">
+                      {rankingNotes.map(n => <div key={n}>⚠ {n}</div>)}
+                    </div>
+                  )}
+                  <p className="text-[11px] text-slate-400 mb-2">Ranked by total KJJ points (EE1 = 8 … BE2 = 1), highest first — not divided by the number of subjects. Equal totals share a rank. Learners with missing marks are not ranked.</p>
                   <div className="overflow-x-auto rounded-xl border border-slate-200">
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="bg-slate-800 text-white">
-                          {["Rank", "Student Name", "Admission No.", "Total Marks", "Average", "Grade", "Points"].map(h => (
+                          {["Rank", "Student Name", "Admission No.", "Class", "KJJ Total", "Average", "Level"].map(h => (
                             <th key={h} className="px-4 py-3 text-left text-xs font-medium tracking-wide">{h}</th>
                           ))}
                         </tr>
@@ -1287,15 +1295,23 @@ const Reports = () => {
                           <tr key={i}
                             className={`border-t border-slate-100 transition-colors hover:bg-slate-50
                               ${item.rank === 1 ? "bg-amber-50" : item.rank === 2 ? "bg-slate-50" : item.rank === 3 ? "bg-orange-50/50" : "bg-white"}`}>
-                            <td className="px-4 py-3 font-bold text-slate-700">#{item.rank}</td>
-                            <td className="px-4 py-3 font-medium text-slate-800">{item.student_name}</td>
-                            <td className="px-4 py-3 text-slate-500 text-xs">{item.admission_number}</td>
-                            <td className="px-4 py-3 text-center font-bold text-slate-900">{item.total_marks}</td>
-                            <td className="px-4 py-3 text-center text-slate-700">{item.average}%</td>
-                            <td className="px-4 py-3 text-center">
-                              <span className="inline-block px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-700">{item.grade}</span>
+                            <td className="px-4 py-3 font-bold text-slate-700">{item.rank !== null ? `#${item.rank}` : formatKjjRank(item.rank, item.rankStatus)}</td>
+                            <td className="px-4 py-3 font-medium text-slate-800">
+                              {item.student_name}
+                              {item.rankStatus === "incomplete" && (
+                                <span className="ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700" title="Missing marks — not ranked against learners with full coverage">Incomplete · not ranked</span>
+                              )}
                             </td>
-                            <td className="px-4 py-3 text-center font-semibold text-slate-700">{item.points}</td>
+                            <td className="px-4 py-3 text-slate-500 text-xs">{item.admission_number}</td>
+                            <td className="px-4 py-3 text-slate-500 text-xs">{item.class_name}</td>
+                            <td className="px-4 py-3 text-center font-bold text-slate-900 whitespace-nowrap">
+                              {formatKjjTotal(item.kjj)}
+                              {formatKjjCoverage(item.kjj) && <div className="text-[10px] font-normal text-amber-700">{formatKjjCoverage(item.kjj)}</div>}
+                            </td>
+                            <td className="px-4 py-3 text-center text-slate-700">{item.kjj.dns ? "—" : `${item.average}%`}</td>
+                            <td className="px-4 py-3 text-center">
+                              <span className="inline-block px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-700">{item.kjj.dns ? "DNS" : item.grade}</span>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -1522,4 +1538,3 @@ const SummaryCard = ({ title, value, icon }: any) => (
 );
 
 export default Reports;
-                        

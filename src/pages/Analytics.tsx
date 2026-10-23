@@ -1,7 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useAuth } from '../useAuth';
 import { Exam, Grade, Subject, Mark, Student } from '../types';
-import { getOverallGrade } from '../lib/utils';
+import {
+  getKjjLevel, isValidMark, resolveSubjectSet, buildKjjRanking, countRanked, formatKjjTotal,
+  formatKjjCoverage, formatKjjRank, KJJ_MAX_POINTS_PER_SUBJECT,
+  type KjjTotals, type KjjRankStatus,
+} from '../lib/kjj';
 import { fetchWithProxy } from '../lib/fetchProxy';
 import { useData } from '../hooks/useData';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
@@ -18,28 +22,19 @@ interface jsPDFWithAutoTable extends jsPDF {
 interface AnalyticsData {
   distribution: { name: string; value: number }[];
   subjectAverages: { name: string; average: number }[];
-  rankedStudents: { name: string; avgPoints: number; totalScore: number; subjectMarks: { [key: number]: number | string } }[];
+  rankedStudents: { name: string; kjj: KjjTotals; rank: number | null; rankStatus: KjjRankStatus; avg: number; subjectMarks: { [key: number]: number | string } }[];
   subjects: Subject[];
+  notes: string[];
   stats: {
     totalStudents: number;
+    rankedCount: number;
     mostCommon: string;
     classAverage: string;
-    top5: { name: string; avgPoints: number }[];
-    bottom5: { name: string; avgPoints: number }[];
+    top5: { name: string; rank: number; kjjText: string }[];
+    bottom5: { name: string; rank: number; kjjText: string }[];
     mostImproved?: { name: string; improvement: number };
   };
 }
-
-// ── Grade-band subject count rule (CBC Kenya) ──────────────────────────────
-// Grades 4–6  (Upper Primary):      6 subjects
-// Grades 7–9  (Junior Secondary):   9 subjects
-// Each band has its own expected subject count — never a single shared number.
-const getExpectedSubjectCount = (gradeName: string): number => {
-  const gradeNum = parseInt(gradeName.match(/\d+/)?.[0] || '0', 10);
-  if (gradeNum >= 4 && gradeNum <= 6) return 6;
-  if (gradeNum >= 7 && gradeNum <= 9) return 9;
-  return 0; // Unknown/unsupported grade band — no fixed expectation, fall back to actual count
-};
 
 const Analytics = () => {
   const { user } = useAuth();
@@ -140,60 +135,65 @@ const Analytics = () => {
       }
 
       const gradeName = grades.find(g => g.id.toString() === selectedGrade)?.grade_name || '';
-      const expectedSubjectCount = getExpectedSubjectCount(gradeName);
+
+      // ── KJJ ranking (shared logic in ../lib/kjj) ──────────────────────────
+      // Subjects included = those (after the existing subject exclusions) that
+      // have at least one mark in this grade/exam. Ranked by TOTAL KJJ points,
+      // highest first; never divided by the number of subjects. Only learners
+      // assessed in every included subject are ranked; learners with missing
+      // marks are listed unranked; ties use competition ranking (1, 2, 2, 4).
+      const filteredIds = new Set(filteredSubjects.map((sub: Subject) => String(sub.id)));
+      const studentIdSet = new Set(students.map((st: Student) => st.id));
+      const subjectSet = resolveSubjectSet(
+        marks
+          .filter((m: Mark) => studentIdSet.has(m.student_id) && filteredIds.has(String(m.subject_id)) && isValidMark(m.score))
+          .map((m: Mark) => m.subject_id),
+        gradeName,
+      );
+      const markFor = (studentId: number, subjectId: string | number): number | null => {
+        const m = marks.find((mk: Mark) => mk.student_id === studentId && String(mk.subject_id) === String(subjectId));
+        return m && isValidMark(m.score) ? m.score : null;
+      };
+      const meanOf = (vals: (number | null | undefined)[]) => {
+        const v = vals.filter(isValidMark);
+        return v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0;
+      };
 
       const distributionMap: Record<string, number> = { EE1: 0, EE2: 0, ME1: 0, ME2: 0, AE1: 0, AE2: 0, BE1: 0, BE2: 0 };
-      const studentPerformance: { id: number; name: string; avgPoints: number; totalScore: number; subjectMarks: { [key: number]: number | string } }[] = [];
+      const entries = students.map((st: Student) => {
+        const marksBySubject: Record<string, number | null> = {};
+        subjectSet.subjectIds.forEach(sid => { marksBySubject[sid] = markFor(st.id, sid); });
+        return { item: st, marks: marksBySubject };
+      });
+      const rankedAll = buildKjjRanking<Student>(entries, subjectSet.subjectIds).filter(r => !r.kjj.dns);
 
-      students.forEach((s: Student) => {
-        const sMarks = marks.filter((m: Mark) => m.student_id === s.id && filteredSubjects.some(sub => sub.id === m.subject_id));
-        if (sMarks.length === 0) return;
-
-        // DYNAMIC DIVISOR, grade-band aware:
-        // - Normally divide by the number of subjects this student actually sat (sMarks.length).
-        // - expectedSubjectCount (6 for grades 4–6, 9 for grades 7–9) is only used as a safety
-        //   cap in case of bad/duplicate data — it is NEVER used to inflate the divisor for a
-        //   student who validly sat fewer subjects than their grade band's full count.
-        const totalScore = sMarks.reduce((acc: number, m: Mark) => acc + m.score, 0);
-        const divisor = expectedSubjectCount > 0
-          ? Math.min(sMarks.length, expectedSubjectCount)
-          : sMarks.length;
-        const avgPoints = totalScore / divisor;
-        const grade = getOverallGrade(avgPoints);
-        if (grade in distributionMap) distributionMap[grade as keyof typeof distributionMap]++;
-
+      const studentPerformance = rankedAll.map(r => {
+        const avg = meanOf(subjectSet.subjectIds.map(sid => r.marks[sid]));
+        const level = getKjjLevel(avg).code;
+        distributionMap[level]++;
         const subjectMarks: { [key: number]: number | string } = {};
         filteredSubjects.forEach((sub: Subject) => {
-          const mark = sMarks.find((m: Mark) => m.subject_id === sub.id);
-          subjectMarks[sub.id] = mark ? mark.score : '-';
+          const v = markFor(r.item.id, sub.id);
+          subjectMarks[sub.id] = v === null ? '-' : v;
         });
-
-        studentPerformance.push({
-          id: s.id,
-          name: s.name,
-          avgPoints: parseFloat(avgPoints.toFixed(1)),
-          totalScore,
-          subjectMarks
-        });
+        return {
+          id: r.item.id, name: r.item.name, kjj: r.kjj, rank: r.rank, rankStatus: r.rankStatus,
+          avg: parseFloat(avg.toFixed(1)), subjectMarks,
+        };
       });
-
-      const ranked = [...studentPerformance].sort((a, b) => b.avgPoints - a.avgPoints);
+      const ranked = studentPerformance; // already ordered: ranked (total ↓), incomplete, —
+      const rankedOnly = ranked.filter(r => r.rank !== null);
 
       let mostImproved: { name: string; improvement: number } | undefined;
       if (previousExam) {
         let maxImp = -Infinity;
         studentPerformance.forEach(s => {
-          const prevSMarks = previousMarks.filter(m => m.student_id === s.id && filteredSubjects.some(sub => sub.id === m.subject_id));
-          if (prevSMarks.length > 0) {
-            // DYNAMIC DIVISOR here too, same grade-band cap as the current exam —
-            // the previous exam's average must use the actual number of subjects
-            // the student sat then, not a fixed count.
-            const prevTotal = prevSMarks.reduce((acc, m) => acc + m.score, 0);
-            const prevDivisor = expectedSubjectCount > 0
-              ? Math.min(prevSMarks.length, expectedSubjectCount)
-              : prevSMarks.length;
-            const prevAvg = prevTotal / prevDivisor;
-            const imp = s.avgPoints - prevAvg;
+          const prevVals = previousMarks
+            .filter(m => m.student_id === s.id && filteredIds.has(String(m.subject_id)) && isValidMark(m.score))
+            .map(m => m.score);
+          if (prevVals.length > 0) {
+            // Improvement is measured on the mean mark (%) for reference — it is not a ranking.
+            const imp = s.avg - meanOf(prevVals);
             if (imp > maxImp) {
               maxImp = imp;
               mostImproved = { name: s.name, improvement: parseFloat(imp.toFixed(1)) };
@@ -217,14 +217,16 @@ const Analytics = () => {
         subjectAverages,
         rankedStudents: ranked,
         subjects: filteredSubjects,
+        notes: subjectSet.note ? [`${gradeName || 'Grade'}: ${subjectSet.note}`] : [],
         stats: {
           totalStudents: students.length,
+          rankedCount: countRanked(rankedOnly),
           mostCommon: distEntries[0]?.[0] || 'N/A',
           classAverage: studentPerformance.length > 0
-            ? (studentPerformance.reduce((acc, s) => acc + s.avgPoints, 0) / studentPerformance.length).toFixed(2)
-            : '0.00',
-          top5: ranked.slice(0, 5).map(s => ({ name: s.name, avgPoints: s.avgPoints })),
-          bottom5: ranked.slice(-5).reverse().map(s => ({ name: s.name, avgPoints: s.avgPoints })),
+            ? (studentPerformance.reduce((acc, s) => acc + s.avg, 0) / studentPerformance.length).toFixed(1)
+            : '0.0',
+          top5: rankedOnly.slice(0, 5).map(s => ({ name: s.name, rank: s.rank as number, kjjText: formatKjjTotal(s.kjj) })),
+          bottom5: rankedOnly.slice(-5).reverse().map(s => ({ name: s.name, rank: s.rank as number, kjjText: formatKjjTotal(s.kjj) })),
           mostImproved
         }
       });
@@ -242,11 +244,14 @@ const Analytics = () => {
     if (!data) return;
     const examName = exams.find(e => e.id.toString() === selectedExam)?.exam_name || 'Exam';
     const gradeName = grades.find(g => g.id.toString() === selectedGrade)?.grade_name || 'Grade';
-    const headers = ['Rank', 'Student Name', ...data.subjects.map(sub => sub.subject_name), 'Average Points', 'Total Score', 'Performance Level'];
-    const rows = data.rankedStudents.map((s, index) => [
-      index + 1, s.name,
+    const headers = ['Rank', 'Student Name', ...data.subjects.map(sub => sub.subject_name), 'Total KJJ Points', 'Maximum Possible', 'KJJ Total', 'Subjects Assessed', 'Status', 'Average (%)', 'Performance Level'];
+    const rows = data.rankedStudents.map(s => [
+      formatKjjRank(s.rank, s.rankStatus), s.name,
       ...data.subjects.map(sub => s.subjectMarks[sub.id]),
-      s.avgPoints, s.totalScore, getOverallGrade(s.avgPoints)
+      s.kjj.total, s.kjj.complete ? s.kjj.max : s.kjj.maxAssessed, formatKjjTotal(s.kjj),
+      `${s.kjj.assessed} of ${s.kjj.included}`,
+      s.rankStatus === 'ranked' ? 'Ranked' : 'Incomplete (not ranked)',
+      s.avg, getKjjLevel(s.avg).code
     ]);
     const letterhead = [
       [(user?.school_name || 'EDU NEXA ANALYTICS').toUpperCase()],
@@ -257,14 +262,20 @@ const Analytics = () => {
       [''],
       headers
     ];
-    const worksheet = XLSX.utils.aoa_to_sheet([...letterhead, ...rows]);
+    const policy = [
+      [''],
+      [`Ranking = TOTAL KJJ points (EE1=8 … BE2=1, maximum ${KJJ_MAX_POINTS_PER_SUBJECT} per subject), highest first; not divided by the number of subjects. Equal totals share a rank (1, 2, 2, 4).`],
+      ['Learners with missing subject marks show their partial total and are not ranked. Average (%) is for reference only.'],
+      ...data.notes.map(n => [n]),
+    ];
+    const worksheet = XLSX.utils.aoa_to_sheet([...letterhead, ...rows, ...policy]);
     worksheet['!merges'] = [
       { s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } },
       { s: { r: 1, c: 0 }, e: { r: 1, c: headers.length - 1 } },
       { s: { r: 2, c: 0 }, e: { r: 2, c: headers.length - 1 } },
       { s: { r: 4, c: 0 }, e: { r: 4, c: headers.length - 1 } },
     ];
-    worksheet['!cols'] = [{ wch: 8 }, { wch: 30 }, ...data.subjects.map(() => ({ wch: 12 })), { wch: 15 }, { wch: 15 }, { wch: 20 }];
+    worksheet['!cols'] = [{ wch: 8 }, { wch: 30 }, ...data.subjects.map(() => ({ wch: 12 })), { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 18 }, { wch: 22 }, { wch: 12 }, { wch: 20 }];
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Rankings");
     XLSX.writeFile(workbook, `Rankings_${gradeName}_${examName}.xlsx`);
@@ -289,14 +300,14 @@ const Analytics = () => {
     doc.text(`EXAM PERFORMANCE SUMMARY: ${gradeName} - ${examName}`, 148, 45, { align: "center" });
     doc.setFontSize(12);
     doc.text("Top 5 Students", 20, 55);
-    autoTable(doc, { startY: 60, margin: { right: 150 }, head: [['Rank', 'Name', 'Avg Points']], body: data.stats.top5.map((s, i) => [i + 1, s.name, s.avgPoints]), theme: 'striped', headStyles: { fillColor: [80, 80, 80], textColor: [255, 255, 255] } });
+    autoTable(doc, { startY: 60, margin: { right: 150 }, head: [['Rank', 'Name', 'KJJ Total']], body: data.stats.top5.map(s => [s.rank, s.name, s.kjjText]), theme: 'striped', headStyles: { fillColor: [80, 80, 80], textColor: [255, 255, 255] } });
     const top5Y = (doc as jsPDFWithAutoTable).lastAutoTable.finalY;
     doc.text("Bottom 5 Students", 160, 55);
-    autoTable(doc, { startY: 60, margin: { left: 150 }, head: [['Rank', 'Name', 'Avg Points']], body: data.stats.bottom5.map((s, i) => [data.stats.totalStudents - 4 + i, s.name, s.avgPoints]), theme: 'striped', headStyles: { fillColor: [80, 80, 80], textColor: [255, 255, 255] } });
+    autoTable(doc, { startY: 60, margin: { left: 150 }, head: [['Rank', 'Name', 'KJJ Total']], body: data.stats.bottom5.map(s => [s.rank, s.name, s.kjjText]), theme: 'striped', headStyles: { fillColor: [80, 80, 80], textColor: [255, 255, 255] } });
     const bottom5Y = (doc as jsPDFWithAutoTable).lastAutoTable.finalY;
     const summaryY = Math.max(top5Y, bottom5Y) + 15;
     doc.text("Subject Performance Analysis", 20, summaryY);
-    autoTable(doc, { startY: summaryY + 5, head: [['Subject', 'Average Points', 'Grade']], body: data.subjectAverages.map(sub => [sub.name, sub.average, getOverallGrade(sub.average)]), theme: 'grid', headStyles: { fillColor: [40, 40, 40], textColor: [255, 255, 255] } });
+    autoTable(doc, { startY: summaryY + 5, head: [['Subject', 'Average (%)', 'Level']], body: data.subjectAverages.map(sub => [sub.name, sub.average, getKjjLevel(sub.average).code]), theme: 'grid', headStyles: { fillColor: [40, 40, 40], textColor: [255, 255, 255] } });
     const subjectY = (doc as jsPDFWithAutoTable).lastAutoTable.finalY + 15;
     if (data.stats.mostImproved) {
       doc.setFont("helvetica", "bold");
@@ -307,9 +318,22 @@ const Analytics = () => {
     doc.addPage(); drawHeader();
     doc.setFontSize(14); doc.setFont("helvetica", "bold");
     doc.text(`FULL STUDENT RANKINGS: ${gradeName} - ${examName}`, 148, 45, { align: "center" });
-    const headers = ['Rank', 'Name', ...data.subjects.map(sub => sub.subject_name), 'Avg Points', 'Total', 'Grade'];
-    const body = data.rankedStudents.map((s, i) => [i + 1, s.name, ...data.subjects.map(sub => s.subjectMarks[sub.id]), s.avgPoints, s.totalScore, getOverallGrade(s.avgPoints)]);
+    const headers = ['Rank', 'Name', ...data.subjects.map(sub => sub.subject_name), 'KJJ Total', 'Avg %', 'Level'];
+    const body = data.rankedStudents.map(s => [
+      formatKjjRank(s.rank, s.rankStatus), s.name, ...data.subjects.map(sub => s.subjectMarks[sub.id]),
+      formatKjjTotal(s.kjj) + (formatKjjCoverage(s.kjj) ? `\n${formatKjjCoverage(s.kjj)}` : ''),
+      s.avg, getKjjLevel(s.avg).code,
+    ]);
     autoTable(doc, { startY: 55, head: [headers], body, theme: 'grid', styles: { fontSize: 8, cellPadding: 2 }, headStyles: { fillColor: [40, 40, 40], textColor: [255, 255, 255] } });
+    {
+      const fy = (doc as jsPDFWithAutoTable).lastAutoTable.finalY + 6;
+      doc.setFont('helvetica', 'italic'); doc.setFontSize(7); doc.setTextColor(60, 60, 60);
+      doc.text([
+        `Ranking = TOTAL KJJ points (EE1=8 … BE2=1, maximum ${KJJ_MAX_POINTS_PER_SUBJECT} per subject), highest first; not divided by the number of subjects. Equal totals share a rank (1, 2, 2, 4).`,
+        'Learners with missing subject marks show their partial total and are not ranked. Average (%) is for reference only.',
+        ...data.notes,
+      ], 20, fy, { maxWidth: 257 });
+    }
     addBorderToAllPages(doc);
     doc.save(`Performance_Report_${gradeName}_${examName}.pdf`);
   };
@@ -345,7 +369,7 @@ const Analytics = () => {
       </header>
 
       <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 flex flex-wrap gap-6">
-        {/* School selector for super admin */}
+       {/* School selector for super admin */}
         {isSuperAdmin && (
           <div className="space-y-1 flex-1 min-w-[200px]">
             <label className="text-xs font-bold text-slate-500 uppercase">School</label>
@@ -382,7 +406,7 @@ const Analytics = () => {
         <div className="space-y-8">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
-              <p className="text-sm font-medium text-slate-500">Class Average Points</p>
+              <p className="text-sm font-medium text-slate-500">Class Average (%)</p>
               <p className="text-3xl font-bold text-blue-600">{data.stats.classAverage}</p>
             </div>
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
@@ -406,10 +430,10 @@ const Analytics = () => {
                 {data.stats.top5.map((s, i) => (
                   <div key={i} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
                     <div className="flex items-center gap-3">
-                      <span className="w-6 h-6 flex items-center justify-center bg-green-100 text-green-700 rounded-full text-xs font-bold">{i + 1}</span>
+                      <span className="w-6 h-6 flex items-center justify-center bg-green-100 text-green-700 rounded-full text-xs font-bold">{s.rank}</span>
                       <span className="text-sm font-medium text-slate-700">{s.name}</span>
                     </div>
-                    <span className="text-sm font-bold text-slate-900">{s.avgPoints} pts</span>
+                    <span className="text-sm font-bold text-slate-900">{s.kjjText}</span>
                   </div>
                 ))}
               </div>
@@ -420,10 +444,10 @@ const Analytics = () => {
                 {data.stats.bottom5.map((s, i) => (
                   <div key={i} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
                     <div className="flex items-center gap-3">
-                      <span className="w-6 h-6 flex items-center justify-center bg-red-100 text-red-700 rounded-full text-xs font-bold">{data.stats.totalStudents - 4 + i}</span>
+                      <span className="w-6 h-6 flex items-center justify-center bg-red-100 text-red-700 rounded-full text-xs font-bold">{s.rank}</span>
                       <span className="text-sm font-medium text-slate-700">{s.name}</span>
                     </div>
-                    <span className="text-sm font-bold text-slate-900">{s.avgPoints} pts</span>
+                    <span className="text-sm font-bold text-slate-900">{s.kjjText}</span>
                   </div>
                 ))}
               </div>
@@ -466,7 +490,13 @@ const Analytics = () => {
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
             <div className="p-6 border-b border-slate-100 flex items-center gap-3">
               <Award size={20} className="text-blue-600" />
-              <h3 className="text-lg font-bold text-slate-900">Full Student Rankings</h3>
+              <h3 className="text-lg font-bold text-slate-900">Full Student Rankings — Total KJJ Points</h3>
+            </div>
+            <div className="px-6 pt-4 space-y-2">
+              {data.notes.map(n => (
+                <div key={n} className="rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-xs px-3 py-2">⚠ {n}</div>
+              ))}
+              <p className="text-[11px] text-slate-400">Ranked by total KJJ points (EE1 = 8 … BE2 = 1), highest first — not divided by the number of subjects. Equal totals share a rank. Learners with missing marks are not ranked. {data.stats.rankedCount} of {data.rankedStudents.length} learners ranked.</p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -477,23 +507,31 @@ const Analytics = () => {
                     {data.subjects.map(sub => (
                       <th key={sub.id} className="px-4 py-3 text-center font-bold">{sub.subject_name}</th>
                     ))}
-                    <th className="px-4 py-3 text-center font-bold">Avg Pts</th>
-                    <th className="px-4 py-3 text-center font-bold">Total</th>
-                    <th className="px-4 py-3 text-center font-bold">Grade</th>
+                    <th className="px-4 py-3 text-center font-bold">KJJ Total</th>
+                    <th className="px-4 py-3 text-center font-bold">Avg %</th>
+                    <th className="px-4 py-3 text-center font-bold">Level</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {data.rankedStudents.map((s, i) => (
-                    <tr key={i} className={`hover:bg-slate-50 transition-colors ${i < 3 ? 'bg-amber-50/30' : ''}`}>
-                      <td className="px-4 py-3 font-bold text-slate-400">{i + 1}</td>
-                      <td className="px-4 py-3 font-bold text-slate-900">{s.name}</td>
+                    <tr key={i} className={`hover:bg-slate-50 transition-colors ${s.rank !== null && s.rank <= 3 ? 'bg-amber-50/30' : ''}`}>
+                      <td className="px-4 py-3 font-bold text-slate-400">{formatKjjRank(s.rank, s.rankStatus)}</td>
+                      <td className="px-4 py-3 font-bold text-slate-900">
+                        {s.name}
+                        {s.rankStatus === 'incomplete' && (
+                          <span className="ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700" title="Missing marks — not ranked against learners with full coverage">Incomplete · not ranked</span>
+                        )}
+                      </td>
                       {data.subjects.map(sub => (
                         <td key={sub.id} className="px-4 py-3 text-center text-slate-600">{s.subjectMarks[sub.id]}</td>
                       ))}
-                      <td className="px-4 py-3 text-center font-bold text-blue-600">{s.avgPoints}</td>
-                      <td className="px-4 py-3 text-center text-slate-600">{s.totalScore}</td>
+                      <td className="px-4 py-3 text-center font-bold text-blue-600 whitespace-nowrap">
+                        {formatKjjTotal(s.kjj)}
+                        {formatKjjCoverage(s.kjj) && <div className="text-[10px] font-normal text-amber-700">{formatKjjCoverage(s.kjj)}</div>}
+                      </td>
+                      <td className="px-4 py-3 text-center text-slate-600">{s.avg}%</td>
                       <td className="px-4 py-3 text-center">
-                        <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded-md text-xs font-bold">{getOverallGrade(s.avgPoints)}</span>
+                        <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded-md text-xs font-bold">{getKjjLevel(s.avg).code}</span>
                       </td>
                     </tr>
                   ))}
@@ -521,4 +559,3 @@ const Analytics = () => {
 };
 
 export default Analytics;
-       

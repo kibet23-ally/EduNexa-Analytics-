@@ -21,6 +21,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { TableSkeleton } from '../components/ui/Skeleton';
 import * as XLSX from 'xlsx';
 
+import { getKjjLevel } from '../lib/kjj';
 interface Assignment {
   id: number;
   teacher_id: string;
@@ -33,22 +34,21 @@ interface Assignment {
 /* =========================
  * CBC RUBRICS
  * ========================= */
+const RUBRIC_UI: Record<string, { desc: string; tone: string; from: string; to: string }> = {
+  EE1: { desc: 'Exceeding Expectations', tone: 'emerald', from: 'from-emerald-500', to: 'to-emerald-600' },
+  EE2: { desc: 'Exceeding Expectations', tone: 'emerald', from: 'from-emerald-400', to: 'to-emerald-500' },
+  ME1: { desc: 'Meeting Expectations', tone: 'blue', from: 'from-blue-500', to: 'to-blue-600' },
+  ME2: { desc: 'Meeting Expectations', tone: 'blue', from: 'from-blue-400', to: 'to-blue-500' },
+  AE1: { desc: 'Approaching Expectations', tone: 'amber', from: 'from-amber-500', to: 'to-amber-600' },
+  AE2: { desc: 'Approaching Expectations', tone: 'amber', from: 'from-amber-400', to: 'to-amber-500' },
+  BE1: { desc: 'Below Expectations', tone: 'red', from: 'from-red-400', to: 'to-red-500' },
+  BE2: { desc: 'Below Expectations', tone: 'red', from: 'from-red-500', to: 'to-red-700' },
+};
+// Level boundaries come from the shared KJJ rubric (../lib/kjj) so a mark shows
+// the same level here as on every ranking, report card, PDF and export.
 const getRubric = (percent: number) => {
-  if (percent >= 90)
-    return { label: 'EE1', desc: 'Exceeding Expectations', tone: 'emerald', from: 'from-emerald-500', to: 'to-emerald-600' };
-  if (percent >= 75)
-    return { label: 'EE2', desc: 'Exceeding Expectations', tone: 'emerald', from: 'from-emerald-400', to: 'to-emerald-500' };
-  if (percent >= 58)
-    return { label: 'ME1', desc: 'Meeting Expectations', tone: 'blue', from: 'from-blue-500', to: 'to-blue-600' };
-  if (percent >= 41)
-    return { label: 'ME2', desc: 'Meeting Expectations', tone: 'blue', from: 'from-blue-400', to: 'to-blue-500' };
-  if (percent >= 31)
-    return { label: 'AE1', desc: 'Approaching Expectations', tone: 'amber', from: 'from-amber-500', to: 'to-amber-600' };
-  if (percent >= 21)
-    return { label: 'AE2', desc: 'Approaching Expectations', tone: 'amber', from: 'from-amber-400', to: 'to-amber-500' };
-  if (percent >= 11)
-    return { label: 'BE1', desc: 'Below Expectations', tone: 'red', from: 'from-red-400', to: 'to-red-500' };
-  return { label: 'BE2', desc: 'Below Expectations', tone: 'red', from: 'from-red-500', to: 'to-red-700' };
+  const lvl = getKjjLevel(percent);
+  return { label: lvl.code, ...RUBRIC_UI[lvl.code] };
 };
 
 const toneStyles: Record<string, { chip: string; bar: string; text: string }> = {
